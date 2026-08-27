@@ -232,7 +232,7 @@ def launch_setup(context, *args, **kwargs):
         output="screen",
     )
 
-    # ---- Our additions (D435 camera bridge + MoveIt Servo) ----
+    # ---- Our additions (D435 + overview camera bridge + MoveIt Servo) ----
     gz_camera_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
@@ -242,6 +242,9 @@ def launch_setup(context, *args, **kwargs):
             "/d435/image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/d435/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/d435/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
+            # Fixed scene camera (eye-to-hand)
+            "/overview/image@sensor_msgs/msg/Image[gz.msgs.Image",
+            "/overview/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
         ],
         output="screen",
     )

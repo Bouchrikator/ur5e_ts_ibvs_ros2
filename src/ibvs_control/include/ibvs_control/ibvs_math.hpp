@@ -68,4 +68,23 @@ inline double edgeFactor(double u, double v, double width, double height,
 
 inline double clampAbs(double x, double lim) { return std::clamp(x, -lim, lim); }
 
+// Spatial velocity-twist transform cVe: maps a twist expressed in the
+// end-effector frame to the camera frame, given the pose (R, t) of the EE
+// frame expressed in the camera frame (Chaumette & Hutchinson tutorial,
+// Part II, eq. (6.9)):  cVe = [[R, skew(t) R], [0, R]].
+// Used for eye-to-hand servoing where the control law yields a virtual
+// camera twist that must be realized by the opposite end-effector motion.
+inline Eigen::Matrix<double, 6, 6> velocityTwistMatrix(const Eigen::Matrix3d& R,
+                                                       const Eigen::Vector3d& t) {
+  Eigen::Matrix3d tx;
+  tx << 0.0, -t.z(), t.y(),
+        t.z(), 0.0, -t.x(),
+        -t.y(), t.x(), 0.0;
+  Eigen::Matrix<double, 6, 6> V = Eigen::Matrix<double, 6, 6>::Zero();
+  V.topLeftCorner<3, 3>() = R;
+  V.topRightCorner<3, 3>() = tx * R;
+  V.bottomRightCorner<3, 3>() = R;
+  return V;
+}
+
 }  // namespace ibvs_control

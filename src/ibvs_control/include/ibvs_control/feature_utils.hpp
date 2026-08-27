@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 #include <Eigen/Dense>
 #include <opencv2/core.hpp>
+#include <rclcpp/rclcpp.hpp>
 
 #include "ibvs_msgs/msg/feature_target.hpp"
 
@@ -32,7 +34,44 @@ struct DesiredFeatures {
       pixels[i] = cv::Point2f(s_star(i, 0) * fx + cx, s_star(i, 1) * fy + cy);
     }
   }
+
+  // Overwrites s* with externally tracked desired features. Used in the
+  // eye-to-hand configuration where the reference generator projects the
+  // marker goal pose (above the cube) into the fixed scene camera each frame.
+  void setFromMsg(const ibvs_msgs::msg::FeatureTarget& msg) {
+    if (s_star.rows() != 4) s_star.resize(4, 2);
+    if (s_star_flat.size() != 8) s_star_flat.resize(8);
+    for (int i = 0; i < 4; i++) {
+      s_star(i, 0) = msg.features_normalized[2 * i];
+      s_star(i, 1) = msg.features_normalized[2 * i + 1];
+      s_star_flat(2 * i) = s_star(i, 0);
+      s_star_flat(2 * i + 1) = s_star(i, 1);
+      pixels[i] = cv::Point2f(msg.corner_pixels[2 * i], msg.corner_pixels[2 * i + 1]);
+    }
+  }
 };
+
+// Optional dynamic desired features (eye-to-hand). When the
+// 'desired_feature_topic' parameter is non-empty the controller tracks an
+// external reference (the eth_reference node) instead of the static centered
+// square: every incoming message overwrites s_star, and 'received' flips true
+// after the first one so the controller can hold still until a reference
+// exists. Returns nullptr when the topic is empty (classic eye-in-hand).
+// Shared by all four controllers so the eye-to-hand wiring lives in one place.
+inline rclcpp::Subscription<ibvs_msgs::msg::FeatureTarget>::SharedPtr
+subscribeDynamicDesired(rclcpp::Node* node, DesiredFeatures& s_star, bool& received) {
+  const auto topic = node->declare_parameter<std::string>("desired_feature_topic", "");
+  if (topic.empty()) return nullptr;
+  RCLCPP_INFO(node->get_logger(), "Tracking dynamic desired features from %s",
+              topic.c_str());
+  return node->create_subscription<ibvs_msgs::msg::FeatureTarget>(
+      topic, rclcpp::SensorDataQoS(),
+      [&s_star, &received](ibvs_msgs::msg::FeatureTarget::SharedPtr msg) {
+        if (!msg->detected) return;  // keep the last known reference
+        s_star.setFromMsg(*msg);
+        received = true;
+      });
+}
 
 // Worst per-axis pixel error over the 8 normalized error components; the
 // convergence criterion requires EVERY component below the threshold.

@@ -55,6 +55,26 @@ TEST(PixelJacobian, MatchesNormalizedScaling) {
   EXPECT_DOUBLE_EQ(J(1, 3), fy);
 }
 
+TEST(VelocityTwistMatrix, IdentityWhenFramesCoincide) {
+  const auto V = velocityTwistMatrix(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero());
+  EXPECT_TRUE(V.isApprox(Eigen::Matrix<double, 6, 6>::Identity()));
+}
+
+TEST(VelocityTwistMatrix, PureTranslationCouplesRotationIntoLinear) {
+  // EE at t=(0,0,1) in the camera frame, aligned axes. An EE twist of
+  // w=(0,1,0) produces a linear velocity t x w = (-1,0,0) at the camera.
+  const Eigen::Vector3d t(0, 0, 1);
+  const auto V = velocityTwistMatrix(Eigen::Matrix3d::Identity(), t);
+  Eigen::Matrix<double, 6, 1> u_ee;
+  u_ee << 0, 0, 0, 0, 1, 0;
+  const Eigen::Matrix<double, 6, 1> u_cam = V * u_ee;
+  EXPECT_NEAR(u_cam(0), -1.0, 1e-12);
+  EXPECT_NEAR(u_cam(4), 1.0, 1e-12);  // rotation passes through unchanged
+  // The eye-to-hand mapping must invert exactly: -(V^-1) * (-(V u)) = u.
+  const Eigen::Matrix<double, 6, 1> back = -(V.inverse() * (-(V * u_ee)));
+  EXPECT_TRUE(back.isApprox(u_ee, 1e-12));
+}
+
 TEST(EdgeFactor, DampsNearBorder) {
   EXPECT_DOUBLE_EQ(edgeFactor(320, 240, 640, 480, 50.0), 1.0);   // center
   EXPECT_DOUBLE_EQ(edgeFactor(0, 240, 640, 480, 50.0), 0.3);     // on border

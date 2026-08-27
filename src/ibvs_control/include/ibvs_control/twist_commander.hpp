@@ -13,6 +13,8 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
+#include "ibvs_control/ibvs_math.hpp"
+
 namespace ibvs_control {
 
 class TwistCommander {
@@ -32,6 +34,13 @@ class TwistCommander {
     // offset from tool0 (used by QMM-MPC).
     compensate_reference_point_ =
         node->declare_parameter<bool>("compensate_reference_point", false);
+    // Eye-to-hand: the control law computes a virtual camera twist v_c as if
+    // the camera were mounted on the arm. With a fixed scene camera the robot
+    // must realize the OPPOSITE relative motion with its end-effector:
+    //   v_e = -(cVe)^-1 v_c   (Chaumette & Hutchinson, Part II, eq. (6.9))
+    // where cVe maps EE-frame twists into the camera frame.
+    eye_to_hand_ = node->declare_parameter<bool>("eye_to_hand", false);
+    ee_frame_ = node->declare_parameter<std::string>("ee_frame", "tool0");
 
     pub_ = node->create_publisher<geometry_msgs::msg::TwistStamped>(servo_topic_, 10);
 
@@ -69,10 +78,36 @@ class TwistCommander {
     Eigen::Vector3d w = u_cam.tail<3>();
     std::string frame = command_frame_;
 
-    if (!output_frame_.empty() && output_frame_ != command_frame_) {
+    // Eye-to-hand: map the virtual camera twist to the end-effector twist.
+    // TF gives the EE pose expressed in the (fixed) camera frame.
+    if (eye_to_hand_ && !u_cam.isZero()) {
+      try {
+        auto tfm = tf_buffer_.lookupTransform(command_frame_, ee_frame_, tf2::TimePointZero);
+        const auto& q = tfm.transform.rotation;
+        const Eigen::Matrix3d R = Eigen::Quaterniond(q.w, q.x, q.y, q.z).toRotationMatrix();
+        const Eigen::Vector3d t(tfm.transform.translation.x, tfm.transform.translation.y,
+                                tfm.transform.translation.z);
+        const Eigen::Matrix<double, 6, 1> u_ee =
+            -(velocityTwistMatrix(R, t).inverse() * u_cam);
+        v = u_ee.head<3>();
+        w = u_ee.tail<3>();
+      } catch (const tf2::TransformException& e) {
+        // Without the TF the command is meaningless — stop instead of guessing.
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                             "TF %s->%s unavailable (%s); commanding zero twist",
+                             command_frame_.c_str(), ee_frame_.c_str(), e.what());
+        v.setZero();
+        w.setZero();
+      }
+      frame = ee_frame_;
+    } else if (eye_to_hand_) {
+      frame = ee_frame_;  // zero twist: no TF needed, just label consistently
+    }
+
+    if (!output_frame_.empty() && output_frame_ != frame) {
       try {
         auto tfm =
-            tf_buffer_.lookupTransform(output_frame_, command_frame_, tf2::TimePointZero);
+            tf_buffer_.lookupTransform(output_frame_, frame, tf2::TimePointZero);
         const auto& q = tfm.transform.rotation;
         const Eigen::Quaterniond R(q.w, q.x, q.y, q.z);
         v = R * v;
@@ -86,8 +121,8 @@ class TwistCommander {
       } catch (const tf2::TransformException& e) {
         RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
                              "TF %s->%s unavailable (%s); publishing in %s",
-                             command_frame_.c_str(), output_frame_.c_str(), e.what(),
-                             command_frame_.c_str());
+                             frame.c_str(), output_frame_.c_str(), e.what(),
+                             frame.c_str());
       }
     }
 
@@ -107,8 +142,9 @@ class TwistCommander {
 
  private:
   rclcpp::Node* node_;
-  std::string servo_topic_, command_frame_, output_frame_;
+  std::string servo_topic_, command_frame_, output_frame_, ee_frame_;
   bool compensate_reference_point_;
+  bool eye_to_hand_;
   bool twist_mode_set_ = false;
   bool switch_pending_ = false;
   tf2_ros::Buffer tf_buffer_;

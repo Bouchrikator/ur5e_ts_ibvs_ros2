@@ -40,6 +40,7 @@
   <!-- ======== Import custom macros ======== -->
   <xacro:include filename="$(find ur5e_ts_ibvs_description)/urdf/robotiq_85_gripper.urdf.xacro"/>
   <xacro:include filename="$(find ur5e_ts_ibvs_description)/urdf/realsense_d435.urdf.xacro"/>
+  <xacro:include filename="$(find ur5e_ts_ibvs_description)/urdf/overview_camera.urdf.xacro"/>
   <xacro:include filename="$(find ur5e_ts_ibvs_description)/urdf/objects.urdf.xacro"/>
 
   <!-- ======== Properties ======== -->
@@ -106,6 +107,28 @@
     <origin xyz="${wrist_length} 0 0" rpy="0 0 0"/>
   </xacro:robotiq_85_gripper>
 
+  <!-- ======== Green marker on the gripper (eye-to-hand) ======== -->
+  <!-- Bright green plate the fixed overview camera tracks as the controlled
+       feature set. Visual-only (no collision) so planning is unaffected.
+       Same size/placement as the ROS1 setup. -->
+  <link name="ee_marker_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.05 0.05 0.005"/>
+      </geometry>
+      <material name="MarkerGreen">
+        <color rgba="0.0 1.0 0.0 1.0"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="ee_marker_joint" type="fixed">
+    <parent link="gripper_base_link"/>
+    <child link="ee_marker_link"/>
+    <!-- Sits on top of the gripper base, facing up -->
+    <origin xyz="0.0 0.0 0.04" rpy="0 0 0"/>
+  </joint>
+
   <!-- ======== Table ======== -->
   <xacro:mytable/>
 
@@ -114,6 +137,14 @@
     <child link="table"/>
     <origin xyz="0.7 0.0 ${table_height}" rpy="0 0 0"/>
   </joint>
+
+  <!-- ======== Fixed overview camera (eye-to-hand) ======== -->
+  <!-- Same mounting as ROS1: close to the workspace so the TS scheduling
+       range (Z in [0.25, 0.85] m) is well exercised. Looks down/back at the
+       cube and the gripper marker. -->
+  <xacro:overview_camera parent="table">
+    <origin xyz="0.55 0.0 0.60" rpy="${pi} ${4.0*pi/5.0} 0"/>
+  </xacro:overview_camera>
 
   <!-- ======== Red Target Cube (on table) ======== -->
   <xacro:red_target/>

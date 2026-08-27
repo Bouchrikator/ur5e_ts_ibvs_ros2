@@ -57,8 +57,10 @@ halt_all_joints_in_cartesian_mode: true
 ###############################################
 # Singularity handling
 ###############################################
-lower_singularity_threshold: 17.0
-hard_stop_singularity_threshold: 30.0
+# Same limits as the ROS1 project (moveit_servo_ur5_real.yaml): the ETH goal
+# poses sit near full reach, Jazzy defaults (17/30) hard-stop too early.
+lower_singularity_threshold: 20.0
+hard_stop_singularity_threshold: 50.0
 leaving_singularity_threshold_multiplier: 2.0
 
 ###############################################

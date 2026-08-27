@@ -84,6 +84,10 @@ class QmmMpcNode : public rclcpp::Node {
     feature_sub_ = create_subscription<ibvs_msgs::msg::FeatureTarget>(
         "/cube_detector/feature_target", rclcpp::SensorDataQoS(),
         std::bind(&QmmMpcNode::featureCb, this, std::placeholders::_1));
+    // Eye-to-hand desired features: the subscription lives in the default
+    // (mutually exclusive) callback group, so s_star_ writes are serialized
+    // with controlTimerCb even under the MultiThreadedExecutor.
+    desired_sub_ = subscribeDynamicDesired(this, s_star_, desired_received_);
 
     // The service client lives in its own callback group so a response can
     // be processed while the timers run (MultiThreadedExecutor).
@@ -143,7 +147,16 @@ class QmmMpcNode : public rclcpp::Node {
       fy_ = msg->fy;
       cx_ = msg->cx;
       cy_ = msg->cy;
-      s_star_.init(cube_w_, cube_h_, desired_Z_, fx_, fy_, cx_, cy_);
+      if (!desired_sub_) s_star_.init(cube_w_, cube_h_, desired_Z_, fx_, fy_, cx_, cy_);
+    }
+
+    // Eye-to-hand: hold still until the reference generator has seen the cube.
+    if (desired_sub_ && !desired_received_) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+                           "Waiting for desired features (eye-to-hand)");
+      commander_->publishZero();
+      busy_ = false;
+      return;
     }
 
     std::vector<cv::Point2f> corners(4);
@@ -215,17 +228,20 @@ class QmmMpcNode : public rclcpp::Node {
                                    msg->image_height, edge_margin_);
     const Eigen::VectorXd e_for_cb = e_px;
     auto corners_cb = corners;
+    // Snapshot the desired pixels: with a dynamic s* (eye-to-hand) the
+    // response callback runs on another thread and must not read s_star_.
+    const std::vector<cv::Point2f> des_px_cb(s_star_.pixels, s_star_.pixels + 4);
     solver_client_->async_send_request(
-        req, [this, e_for_cb, corners_cb, Z_used,
+        req, [this, e_for_cb, corners_cb, des_px_cb, Z_used,
               edge](rclcpp::Client<ibvs_msgs::srv::SolveMPC>::SharedFuture future) {
-          onSolverResponse(future.get(), e_for_cb, corners_cb, Z_used, edge);
+          onSolverResponse(future.get(), e_for_cb, corners_cb, des_px_cb, Z_used, edge);
           busy_ = false;
         });
   }
 
   void onSolverResponse(const ibvs_msgs::srv::SolveMPC::Response::SharedPtr resp,
                         const Eigen::VectorXd& e_px, const std::vector<cv::Point2f>& corners,
-                        double Z_used, double edge) {
+                        const std::vector<cv::Point2f>& des_px, double Z_used, double edge) {
     Eigen::Matrix<double, 6, 1> vc = Eigen::Matrix<double, 6, 1>::Zero();
     if (resp->feasible && resp->vc.size() == 6) {
       for (int i = 0; i < 6; i++) vc(i) = resp->vc[i];
@@ -257,13 +273,13 @@ class QmmMpcNode : public rclcpp::Node {
     char hud[128];
     std::snprintf(hud, sizeof(hud), "Z:%.3f gamma:%.1f solve:%.0fms %s", Z_used, resp->gamma,
                   resp->solver_time_ms, resp->feasible ? "OK" : "INFEASIBLE");
-    viz_->publish(corners, s_star_.pixels, false, hud);
+    viz_->publish(corners, des_px.data(), false, hud);
 
     double max_e = 0.0;
     for (int i = 0; i < 8; i++) max_e = std::max(max_e, std::fabs(e_px(i)));
     recorder_->record(false, e_px.norm(), resp->lyapunov_v, e_px.norm(), 0.0, Z_used,
                       desired_Z_, cmd(0), cmd(1), cmd(2), cmd(3), cmd(4), cmd(5), corners,
-                      s_star_.pixels, 0.0, 0.0, resp->solver_time_ms, resp->feasible);
+                      des_px.data(), 0.0, 0.0, resp->solver_time_ms, resp->feasible);
 
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
                          "||e||=%.1fpx max=%.1fpx gamma=%.2f solve=%.0fms vc=(%.3f,%.3f,%.3f)",
@@ -347,6 +363,8 @@ class QmmMpcNode : public rclcpp::Node {
   std::unique_ptr<VizOverlay> viz_;
 
   rclcpp::Subscription<ibvs_msgs::msg::FeatureTarget>::SharedPtr feature_sub_;
+  rclcpp::Subscription<ibvs_msgs::msg::FeatureTarget>::SharedPtr desired_sub_;
+  bool desired_received_ = false;
   rclcpp::Client<ibvs_msgs::srv::SolveMPC>::SharedPtr solver_client_;
   rclcpp::CallbackGroup::SharedPtr client_group_;
   rclcpp::TimerBase::SharedPtr control_timer_, fast_timer_;

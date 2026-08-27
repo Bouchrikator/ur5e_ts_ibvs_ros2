@@ -68,8 +68,6 @@ services:
     volumes:
       # Source code (live editing)
       - ./src:/ros2_ws/src:rw
-      # SOFA scene files (runSofa /scenes/<file>)
-      - ${HOME}/SOFA/scenes:/scenes:rw
       # Data recorder CSV logs (DataRecorder writes to $HOME/ibvs_logs)
       - ${HOME}/ibvs_logs:/root/ibvs_logs:rw
       # RealSense D435 (real robot mode)

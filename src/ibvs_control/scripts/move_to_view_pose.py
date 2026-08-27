@@ -27,6 +27,8 @@ JOINT_NAMES = [
 # Poses optimised for manipulability, workspace coverage and a downward camera.
 POSES = {
     "default": [0.0, -1.4, 1.4, -1.57, -1.57, 0.0],
+    # Eye-to-hand: wrist_3 +90 deg turns the green marker toward the overview camera.
+    "eth": [0.0, -1.4, 1.4, -1.57, -1.57, 1.57],
     "view": [0.0, -1.8, 2.0, -1.57, -1.57, 0.0],
     "high": [0.0, -1.4, 1.4, -1.57, -1.57, 3.14],
     "low": [0.0, -2.0, 2.2, -1.8, -1.57, 3.14],

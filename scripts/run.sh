@@ -6,6 +6,9 @@
 #   Simulation:  ./run.sh sim            (Gazebo + UR5 + D435 + cube)
 #                ./run.sh pose [name]    (move arm to a viewing pose)
 #   Controllers: ./run.sh ts_lmi_d | ts_lmi_c | classic | qmm   [extra args]
+#   Eye-to-hand: ./run.sh pose eth   (marker faces the scene camera)
+#                ./run.sh eth_ts_lmi_d | eth_ts_lmi_c | eth_classic | eth_qmm
+#                (fixed overview camera servos the gripper marker above the cube)
 #   Real robot:  ./run.sh real ts_lmi_d  [extra args]  (driver+camera+servo)
 #   Tools:       ./run.sh plotjuggler
 #   SOFA:        ./run.sh sofa [scene]   (host ~/SOFA/scenes → /scenes)
@@ -61,6 +64,9 @@ case "$CMD" in
   ts_lmi_d|ts_lmi_c|classic|qmm)
     in_container "ros2 launch ibvs_control ibvs.launch.py controller:=$CMD mode:=sim $*"
     ;;
+  eth_ts_lmi_d|eth_ts_lmi_c|eth_classic|eth_qmm)
+    in_container "ros2 launch ibvs_control ibvs.launch.py controller:=${CMD#eth_} mode:=sim eye_to_hand:=true $*"
+    ;;
   real)
     CTRL="${1:-ts_lmi_d}"
     shift || true
@@ -75,7 +81,7 @@ case "$CMD" in
     docker compose run --rm ur5e_ts_ibvs runSofa "$@"
     ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|real|plotjuggler|sofa}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa}"
     exit 1
     ;;
 esac

@@ -32,6 +32,7 @@ add_controller(ts_ibvs_continuous_node src/ts_ibvs_continuous_node.cpp)
 add_controller(ts_ibvs_discrete_node src/ts_ibvs_discrete_node.cpp)
 add_controller(ibvs_classic_node src/ibvs_classic_node.cpp)
 add_controller(qmm_mpc_node src/qmm_mpc_node.cpp)
+add_controller(eth_reference_node src/eth_reference_node.cpp)
 
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})

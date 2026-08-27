@@ -56,6 +56,9 @@ class CubeDetectorNode : public rclcpp::Node {
     h_low1_ = declare_parameter<int>("h_low1", 0);
     h_high1_ = declare_parameter<int>("h_high1", 10);
     h_low2_ = declare_parameter<int>("h_low2", 170);
+    // Red needs two hue ranges (hue wraps at 180); single-hue targets like
+    // the green eye-to-hand marker disable the second range.
+    use_hue_range2_ = declare_parameter<bool>("use_hue_range2", true);
     h_high2_ = declare_parameter<int>("h_high2", 179);
     s_min_ = declare_parameter<int>("s_min", 100);
     v_min_ = declare_parameter<int>("v_min", 100);
@@ -68,6 +71,9 @@ class CubeDetectorNode : public rclcpp::Node {
 
     // --- Depth sampling ---
     use_depth_ = declare_parameter<bool>("use_depth_for_Z", true);
+    // Small/far targets (eye-to-hand scene camera) make PnP depth unreliable;
+    // the area-based estimate sqrt(w*h)*f/sqrt(area) is much more robust there.
+    prefer_area_depth_ = declare_parameter<bool>("prefer_area_depth", false);
     depth_window_ = declare_parameter<int>("depth_window", 4);
     depth_min_ = declare_parameter<double>("depth_min", 0.10);
     depth_max_ = declare_parameter<double>("depth_max", 2.0);
@@ -269,9 +275,12 @@ class CubeDetectorNode : public rclcpp::Node {
     cv::Mat mask1, mask2, mask;
     cv::inRange(hsv, cv::Scalar(h_low1_, s_min_, v_min_), cv::Scalar(h_high1_, 255, 255),
                 mask1);
-    cv::inRange(hsv, cv::Scalar(h_low2_, s_min_, v_min_), cv::Scalar(h_high2_, 255, 255),
-                mask2);
-    mask = mask1 | mask2;
+    mask = mask1;
+    if (use_hue_range2_) {
+      cv::inRange(hsv, cv::Scalar(h_low2_, s_min_, v_min_), cv::Scalar(h_high2_, 255, 255),
+                  mask2);
+      mask = mask1 | mask2;
+    }
 
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
     cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
@@ -322,10 +331,13 @@ class CubeDetectorNode : public rclcpp::Node {
     prev_corners_ = corners;
     first_detection_ = false;
 
-    // Depth from geometry (PnP) with area-based fallback.
+    // Depth from geometry (PnP) with area-based fallback; prefer_area_depth
+    // skips PnP depth entirely (eye-to-hand: tiny targets, unreliable PnP).
     vpHomogeneousMatrix cMo;
     const bool pose_valid = computePoseFromCorners(corners, cMo);
-    const double z_pnp = pose_valid ? cMo[2][3] : estimateDepthFromArea(best_area);
+    const double z_pnp = (pose_valid && !prefer_area_depth_)
+                             ? cMo[2][3]
+                             : estimateDepthFromArea(best_area);
 
     double z_depth = 0.0;
     const bool depth_valid = use_depth_ && sampleTargetDepth(corners, z_depth);
@@ -402,6 +414,7 @@ class CubeDetectorNode : public rclcpp::Node {
 
   // Segmentation
   int h_low1_, h_high1_, h_low2_, h_high2_, s_min_, v_min_;
+  bool use_hue_range2_;
   double min_area_;
 
   // Temporal matching
@@ -411,6 +424,7 @@ class CubeDetectorNode : public rclcpp::Node {
 
   // Depth
   bool use_depth_;
+  bool prefer_area_depth_;
   int depth_window_;
   double depth_min_, depth_max_, Z_min_, Z_max_;
   std::mutex depth_mutex_;

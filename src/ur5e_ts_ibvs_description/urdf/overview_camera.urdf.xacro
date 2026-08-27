@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<!--
+  Fixed overview camera for the EYE-TO-HAND configuration.
+
+  A scene camera rigidly mounted above/beside the table observes both the red
+  target cube and the green marker on the gripper. Matches the ROS1 overview
+  camera: 512x512, HFOV 1.3962634 rad (80 deg) -> fx = fy ~= 305.1 px.
+
+  The link chain gives TF for free via robot_state_publisher, and the native
+  gz-sim <sensor> spawns with the model (same pattern as the wrist D435).
+  Optical frame follows REP-103: Z forward, X right, Y down.
+
+  Camera topics (gz transport, bridged to ROS 2 in ur5e_ibvs_sim.launch.py):
+    /overview/image         -> sensor_msgs/msg/Image
+    /overview/camera_info   -> sensor_msgs/msg/CameraInfo
+-->
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="overview_camera">
+
+  <xacro:property name="overview_cam_size" value="0.05"/>
+
+  <xacro:macro name="overview_camera" params="prefix:='' parent *origin">
+
+    <link name="${prefix}overview_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${overview_cam_size} ${overview_cam_size} ${overview_cam_size}"/>
+        </geometry>
+        <material name="OverviewCamRed">
+          <color rgba="0.8 0.1 0.1 1"/>
+        </material>
+      </visual>
+      <inertial>
+        <mass value="1e-5"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}overview_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${prefix}overview_link"/>
+      <xacro:insert_block name="origin"/>
+    </joint>
+
+    <!-- Optical frame (Z forward, X right, Y down) -->
+    <joint name="${prefix}overview_optical_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+      <parent link="${prefix}overview_link"/>
+      <child link="${prefix}overview_optical_frame"/>
+    </joint>
+    <link name="${prefix}overview_optical_frame"/>
+
+    <!-- gz-sim camera sensor (simulation only; same pattern as the D435) -->
+    <gazebo reference="${prefix}overview_link">
+      <sensor name="overview_camera" type="camera">
+        <always_on>true</always_on>
+        <update_rate>30</update_rate>
+        <!-- gz camera sensors publish the image on <topic> itself -->
+        <topic>overview/image</topic>
+        <gz_frame_id>${prefix}overview_optical_frame</gz_frame_id>
+        <camera>
+          <camera_info_topic>overview/camera_info</camera_info_topic>
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>512</width>
+            <height>512</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>30.0</far>
+          </clip>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.007</stddev>
+          </noise>
+        </camera>
+      </sensor>
+    </gazebo>
+
+  </xacro:macro>
+</robot>

@@ -69,6 +69,7 @@ class IbvsClassicNode : public rclcpp::Node {
     feature_sub_ = create_subscription<ibvs_msgs::msg::FeatureTarget>(
         "/cube_detector/feature_target", rclcpp::SensorDataQoS(),
         std::bind(&IbvsClassicNode::featureCb, this, std::placeholders::_1));
+    desired_sub_ = subscribeDynamicDesired(this, s_star_, desired_received_);
 
     RCLCPP_INFO(get_logger(),
                 "Classic IBVS: lambda=%.2f mu=(%.3f+%.3f exp(-e/%.2f)) conv=%.1fpx",
@@ -83,13 +84,25 @@ class IbvsClassicNode : public rclcpp::Node {
     }
     lost_count_ = 0;
 
+    // Eye-to-hand: hold still until the reference generator has seen the cube.
+    if (desired_sub_ && !desired_received_) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+                           "Waiting for desired features (eye-to-hand)");
+      commander_->publishZero();
+      return;
+    }
+
     if (msg->fx > 0 && std::fabs(msg->fx - fx_) > 1e-9) {
       fx_ = msg->fx;
       fy_ = msg->fy;
       cx_ = msg->cx;
       cy_ = msg->cy;
-      s_star_.init(cube_w_, cube_h_, desired_Z_, fx_, fy_, cx_, cy_);
-      L_star_ = stackedInteractionMatrix(s_star_.s_star, desired_Z_);
+      // Dynamic s* comes from the topic; L* stays the fixed estimate at the
+      // nominal desired pose (same policy as the ROS1 eye-to-hand node).
+      if (!desired_sub_) {
+        s_star_.init(cube_w_, cube_h_, desired_Z_, fx_, fy_, cx_, cy_);
+        L_star_ = stackedInteractionMatrix(s_star_.s_star, desired_Z_);
+      }
     }
 
     Eigen::VectorXd s_cur;
@@ -192,6 +205,8 @@ class IbvsClassicNode : public rclcpp::Node {
   std::unique_ptr<VizOverlay> viz_;
 
   rclcpp::Subscription<ibvs_msgs::msg::FeatureTarget>::SharedPtr feature_sub_;
+  rclcpp::Subscription<ibvs_msgs::msg::FeatureTarget>::SharedPtr desired_sub_;
+  bool desired_received_ = false;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr error_pub_, lyap_pub_;
 };
 
