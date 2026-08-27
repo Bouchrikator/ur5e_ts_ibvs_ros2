@@ -1,0 +1,160 @@
+<?xml version="1.0"?>
+<!--
+  Intel RealSense D435 Camera — wraps the OFFICIAL realsense2_description macro
+  (apt: ros-jazzy-realsense2-description) and adds Gazebo Harmonic (gz-sim8)
+  sensor tags for simulation.
+
+  Physical model (links, joints, meshes, frames): official realsense2_description.
+  Gazebo sensor tags: native gz-sim sensors (not a plugin) — ignored on real hardware.
+
+  For the real robot, realsense2_camera node publishes the same topic types.
+
+  Frame chain (all from official macro):
+    parent → wrist_attach → d435_bottom_screw_frame → d435_link
+           → d435_depth_frame → d435_depth_optical_frame
+           → d435_color_frame → d435_color_optical_frame
+           → d435_infra1_frame / d435_infra2_frame
+
+  Camera topics (gz transport, bridged to ROS 2):
+    /d435/color/image         →  sensor_msgs/msg/Image
+    /d435/color/camera_info   →  sensor_msgs/msg/CameraInfo
+    /d435/image               →  sensor_msgs/msg/Image  (RGBD color)
+    /d435/depth_image         →  sensor_msgs/msg/Image
+    /d435/points              →  sensor_msgs/msg/PointCloud2
+-->
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="realsense_d435">
+
+  <!-- Import official RealSense D435 macro (apt package) -->
+  <xacro:include filename="$(find realsense2_description)/urdf/_d435.urdf.xacro"/>
+
+  <xacro:property name="wrist_radius" value="0.04"/>
+  <xacro:property name="wrist_length" value="0.01"/>
+
+  <xacro:macro name="realsense_d435" params="prefix:='' parent *origin">
+
+    <!-- Wrist adapter cylinder (mechanical adapter between tool0 and camera) -->
+    <link name="${prefix}wrist_attach">
+      <visual>
+        <origin xyz="${wrist_length/2} 0 0.0" rpy="0 ${pi/2} 0"/>
+        <geometry>
+          <cylinder radius="${wrist_radius}" length="${wrist_length}"/>
+        </geometry>
+        <material name="DarkGray">
+          <color rgba="0.3 0.3 0.3 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="${wrist_length/2} 0 0.0" rpy="0 ${pi/2} 0"/>
+        <geometry>
+          <cylinder radius="${wrist_radius}" length="${wrist_length}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="${wrist_length/2} 0 0" rpy="0 ${pi/2} 0"/>
+        <mass value="0.01"/>
+        <inertia ixx="4.083e-06" ixy="0.0" ixz="0.0" iyy="4.083e-06" iyz="0.0" izz="8.0e-06"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}wrist_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${prefix}wrist_attach"/>
+      <xacro:insert_block name="origin"/>
+    </joint>
+
+    <!-- Official RealSense D435 (realsense2_description) -->
+    <xacro:sensor_d435
+      parent="${prefix}wrist_attach"
+      name="${prefix}d435"
+      use_nominal_extrinsics="true"
+      use_mesh="true">
+      <origin xyz="${wrist_length/2} 0 ${-wrist_radius - 0.025/2 - 0.005}" rpy="0 0 0"/>
+    </xacro:sensor_d435>
+
+    <!-- ======== gz-sim RGB-D Camera Sensor (simulation only) ======== -->
+    <!--
+      Native gz-sim <sensor> tags on the official depth frame.
+      These are ignored on the real robot (only effective in Gazebo).
+      The gz topic names are set via <topic> and bridged to ROS 2 in the launch file.
+    -->
+    <gazebo reference="${prefix}d435_depth_frame">
+      <sensor name="d435_rgbd" type="rgbd_camera">
+        <always_on>true</always_on>
+        <update_rate>30</update_rate>
+        <topic>d435</topic>
+        <gz_frame_id>${prefix}d435_depth_optical_frame</gz_frame_id>
+        <camera>
+          <horizontal_fov>1.518</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>10.0</far>
+          </clip>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.005</stddev>
+          </noise>
+          <depth_camera>
+            <clip>
+              <near>0.1</near>
+              <far>10.0</far>
+            </clip>
+          </depth_camera>
+          <lens>
+            <intrinsics>
+              <fx>385.0</fx>
+              <fy>385.0</fy>
+              <cx>320.5</cx>
+              <cy>240.5</cy>
+              <s>0</s>
+            </intrinsics>
+          </lens>
+        </camera>
+      </sensor>
+    </gazebo>
+
+    <!-- Separate RGB camera on color frame (aligned color, same as IBVS uses) -->
+    <gazebo reference="${prefix}d435_color_frame">
+      <sensor name="d435_color" type="camera">
+        <always_on>true</always_on>
+        <update_rate>30</update_rate>
+        <!-- gz camera sensors publish the image on <topic> itself -->
+        <topic>d435/color/image</topic>
+        <gz_frame_id>${prefix}d435_color_optical_frame</gz_frame_id>
+        <camera>
+          <camera_info_topic>d435/color/camera_info</camera_info_topic>
+          <horizontal_fov>1.211</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>10.0</far>
+          </clip>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.007</stddev>
+          </noise>
+          <lens>
+            <intrinsics>
+              <fx>554.254691191187</fx>
+              <fy>554.254691191187</fy>
+              <cx>320.5</cx>
+              <cy>240.5</cy>
+              <s>0</s>
+            </intrinsics>
+          </lens>
+        </camera>
+      </sensor>
+    </gazebo>
+
+  </xacro:macro>
+</robot>

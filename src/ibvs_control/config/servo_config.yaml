@@ -1,0 +1,71 @@
+# MoveIt Servo (Jazzy) configuration for the UR5 IBVS pipeline.
+# Loaded under the "moveit_servo" prefix by launch/servo.launch.py.
+# The IBVS controllers publish TwistStamped on /servo_node/delta_twist_cmds
+# (frame: base_link, re-expressed by TwistCommander from the camera frame).
+
+###############################################
+# Incoming commands
+###############################################
+command_in_type: "speed_units"  # twists are in m/s and rad/s (not unitless)
+scale:
+  linear: 0.5
+  rotational: 0.5
+  joint: 0.5
+incoming_command_timeout: 0.1  # seconds; halt if commands stop arriving
+
+cartesian_command_in_topic: ~/delta_twist_cmds
+joint_command_in_topic: ~/delta_joint_cmds
+pose_command_in_topic: ~/pose_target_cmds
+joint_topic: /joint_states
+
+# Twists arrive expressed in the planning frame (base_link) and are applied
+# about the end-effector frame (camera is rigidly mounted on tool0).
+apply_twist_commands_about_ee_frame: true
+
+###############################################
+# Outgoing commands
+###############################################
+command_out_topic: /joint_trajectory_controller/joint_trajectory
+command_out_type: trajectory_msgs/JointTrajectory
+publish_period: 0.034  # ~30 Hz, matches the camera rate
+max_expected_latency: 0.2  # must be > 3x publish_period (servo_node exits otherwise)
+publish_joint_positions: true
+# Positions only: Jazzy joint_trajectory_controller rejects streamed
+# trajectories whose last point has nonzero velocity.
+publish_joint_velocities: false
+publish_joint_accelerations: false
+
+###############################################
+# MoveIt / planning scene
+###############################################
+move_group_name: ur_manipulator
+active_subgroup: ""
+is_primary_planning_scene_monitor: true
+monitored_planning_scene_topic: /planning_scene
+status_topic: ~/status
+
+###############################################
+# Smoothing and limits
+###############################################
+smoothing_filter_plugin_name: "online_signal_smoothing::ButterworthFilterPlugin"
+low_pass_filter_coeff: 4.0
+override_velocity_scaling_factor: 0.0  # 0 = use URDF limits
+joint_limit_margins: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+halt_all_joints_in_joint_mode: true
+halt_all_joints_in_cartesian_mode: true
+
+###############################################
+# Singularity handling
+###############################################
+lower_singularity_threshold: 17.0
+hard_stop_singularity_threshold: 30.0
+leaving_singularity_threshold_multiplier: 2.0
+
+###############################################
+# Collision checking
+###############################################
+check_collisions: true
+collision_check_rate: 10.0
+self_collision_proximity_threshold: 0.01
+scene_collision_proximity_threshold: 0.02
+check_octomap_collisions: false

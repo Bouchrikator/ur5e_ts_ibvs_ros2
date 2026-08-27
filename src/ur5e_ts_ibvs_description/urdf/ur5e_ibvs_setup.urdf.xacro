@@ -1,0 +1,148 @@
+<?xml version="1.0"?>
+<!--
+  UR5 + Robotiq 85 Gripper + RealSense D435 + Pedestal + Table
+  for TS-IBVS visual servoing in Gazebo Harmonic (gz-sim).
+
+  This xacro extends the official ur_description URDF (apt: ros-jazzy-ur-description)
+  and ur_simulation_gz for ros2_control in Gazebo. It adds:
+    - Intel RealSense D435 camera on the wrist (official realsense2_description URDF
+      macro with gz-sim sensor overlays for simulation — overlays are ignored on real HW)
+    - Robotiq 2F-85 gripper on the wrist
+    - Pedestal (cylinder h=0.95m) under the robot
+    - Table (1.2m × 2.0m) in front of the robot
+    - Red target cube (5cm) on the table for IBVS
+
+  The ur_type parameter selects the UR model. Default is ur5 to match the real robot.
+  All UR parameters (joint limits, kinematics, physical) come from the official
+  ur_description package so simulation matches real hardware exactly.
+
+  Usage:
+    xacro ur5e_ibvs_setup.urdf.xacro \
+      ur_type:=ur5 \
+      simulation_controllers:=<path_to_controllers.yaml>
+-->
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="$(arg name)">
+
+  <!-- ======== Arguments (passed from launch) ======== -->
+  <xacro:arg name="name" default="ur"/>
+  <xacro:arg name="ur_type" default="ur5"/>
+  <xacro:arg name="tf_prefix" default=""/>
+  <xacro:arg name="safety_limits" default="true"/>
+  <xacro:arg name="safety_pos_margin" default="0.15"/>
+  <xacro:arg name="safety_k_position" default="20"/>
+  <xacro:arg name="simulation_controllers" default=""/>
+  <xacro:arg name="ros_namespace" default=""/>
+
+  <!-- ======== Import official UR macro + ros2_control ======== -->
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+  <xacro:include filename="$(find ur_simulation_gz)/urdf/ur_gz.ros2_control.xacro"/>
+
+  <!-- ======== Import custom macros ======== -->
+  <xacro:include filename="$(find ur5e_ts_ibvs_description)/urdf/robotiq_85_gripper.urdf.xacro"/>
+  <xacro:include filename="$(find ur5e_ts_ibvs_description)/urdf/realsense_d435.urdf.xacro"/>
+  <xacro:include filename="$(find ur5e_ts_ibvs_description)/urdf/objects.urdf.xacro"/>
+
+  <!-- ======== Properties ======== -->
+  <xacro:property name="pedestal_height" value="0.95"/>
+  <xacro:property name="table_height" value="0.7"/>
+  <xacro:property name="wrist_length" value="0.01"/>
+
+  <!-- ======== World / Ground ======== -->
+  <link name="world"/>
+
+  <link name="ground_plane">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry><box size="5 5 0"/></geometry>
+      <material name="ground_white"><color rgba="1 1 1 0.5"/></material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry><box size="5 5 0"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="ground_plane_joint" type="fixed">
+    <origin xyz="0 0 -0.01" rpy="0 0 0"/>
+    <parent link="world"/>
+    <child link="ground_plane"/>
+  </joint>
+
+  <!-- ======== Pedestal ======== -->
+  <xacro:mypedestal/>
+
+  <joint name="world_to_pedestal" type="fixed">
+    <parent link="world"/>
+    <child link="pedestal"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ======== UR5 Arm (official ur_description — matches real robot) ======== -->
+  <xacro:ur_robot
+    name="$(arg name)"
+    tf_prefix="$(arg tf_prefix)"
+    parent="pedestal"
+    joint_limits_parameters_file="$(find ur_description)/config/$(arg ur_type)/joint_limits.yaml"
+    kinematics_parameters_file="$(find ur_description)/config/$(arg ur_type)/default_kinematics.yaml"
+    physical_parameters_file="$(find ur_description)/config/$(arg ur_type)/physical_parameters.yaml"
+    visual_parameters_file="$(find ur_description)/config/$(arg ur_type)/visual_parameters.yaml"
+    safety_limits="$(arg safety_limits)"
+    safety_pos_margin="$(arg safety_pos_margin)"
+    safety_k_position="$(arg safety_k_position)"
+    force_abs_paths="true"
+  >
+    <origin xyz="0 0 ${pedestal_height}" rpy="0 0 0"/>
+  </xacro:ur_robot>
+
+  <!-- ======== RealSense D435 Camera ======== -->
+  <!-- The macro was written for ROS1 ee_link (x out of flange). tool0 has z out
+       of the flange, so pitch -90 deg maps tool0 onto the ee_link convention. -->
+  <xacro:realsense_d435 parent="$(arg tf_prefix)tool0">
+    <origin xyz="0 0 0" rpy="0 ${-pi/2} 0"/>
+  </xacro:realsense_d435>
+
+  <!-- ======== Robotiq 85 Gripper ======== -->
+  <xacro:robotiq_85_gripper prefix="" parent="wrist_attach">
+    <origin xyz="${wrist_length} 0 0" rpy="0 0 0"/>
+  </xacro:robotiq_85_gripper>
+
+  <!-- ======== Table ======== -->
+  <xacro:mytable/>
+
+  <joint name="world_to_table" type="fixed">
+    <parent link="world"/>
+    <child link="table"/>
+    <origin xyz="0.7 0.0 ${table_height}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ======== Red Target Cube (on table) ======== -->
+  <xacro:red_target/>
+
+  <joint name="table_to_target" type="fixed">
+    <parent link="table"/>
+    <child link="red_target"/>
+    <!-- World x=0.4 (matches ROS1 spawn -x 0.4), on the table surface -->
+    <origin xyz="-0.3 0.0 ${0.025 + 0.025}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ======== gz-sim ros2_control plugin ======== -->
+  <gazebo>
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(arg simulation_controllers)</parameters>
+      <ros>
+        <namespace>$(arg ros_namespace)</namespace>
+      </ros>
+    </plugin>
+  </gazebo>
+
+  <!-- ros2 control hardware interface -->
+  <xacro:ur_ros2_control
+    name="$(arg name)"
+    tf_prefix="$(arg tf_prefix)"
+    transmission_hw_interface=""
+  />
+
+  <gazebo reference="world">
+  </gazebo>
+
+</robot>

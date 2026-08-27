@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ibvs_control</name>
+  <version>1.0.0</version>
+  <description>
+    IBVS controllers for UR5 + RealSense D435, consuming
+    ibvs_msgs/FeatureTarget from ibvs_perception and publishing TwistStamped
+    to MoveIt Servo:
+    - ts_ibvs_continuous_node: TS-PDC with continuous-time LMI gains
+    - ts_ibvs_discrete_node:   TS-PDC with discrete-time LMI gains
+    - ibvs_classic_node:       Chaumette baseline with adaptive LM damping
+    - qmm_mpc_node:            Quasi-Min-Max MPC (Wang 2014) + Python SDP solver
+    Includes the offline LMI synthesis and TP-model tooling.
+  </description>
+  <maintainer email="boucherikator@todo.todo">boucherikator</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>tf2_ros</depend>
+  <depend>ibvs_msgs</depend>
+  <depend>moveit_msgs</depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>ibvs_perception</exec_depend>
+  <exec_depend>ur_robot_driver</exec_depend>
+  <exec_depend>ur_description</exec_depend>
+  <exec_depend>ur_moveit_config</exec_depend>
+  <exec_depend>moveit_servo</exec_depend>
+  <exec_depend>plotjuggler_ros</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

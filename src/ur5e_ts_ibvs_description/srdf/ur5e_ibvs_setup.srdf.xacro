@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Custom SRDF for UR5 + Robotiq 85 + RealSense D435 + Pedestal setup.
+  Extends the official ur_moveit_config SRDF with disable_collisions
+  for the gripper, camera, and pedestal links.
+-->
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="$(arg name)">
+
+  <xacro:arg name="name" default="ur"/>
+
+  <!-- Include the official UR SRDF macro (planning group, named states, UR collisions) -->
+  <xacro:include filename="$(find ur_moveit_config)/srdf/ur_macro.srdf.xacro"/>
+  <xacro:ur_srdf/>
+
+  <!-- ======== Passive joints (gripper — not planned by MoveIt) ======== -->
+  <passive_joints>
+    <joint name="gripper_finger1_joint"/>
+    <joint name="gripper_finger2_joint"/>
+    <joint name="gripper_finger1_inner_knuckle_joint"/>
+    <joint name="gripper_finger2_inner_knuckle_joint"/>
+    <joint name="gripper_finger1_finger_tip_joint"/>
+    <joint name="gripper_finger2_finger_tip_joint"/>
+  </passive_joints>
+
+  <!-- ======== Disable collisions: pedestal / base ======== -->
+  <disable_collisions link1="base_link_inertia" link2="pedestal" reason="Adjacent"/>
+  <disable_collisions link1="pedestal" link2="shoulder_link" reason="Never"/>
+
+  <!-- ======== Disable collisions: wrist_attach (camera adapter) ======== -->
+  <disable_collisions link1="wrist_2_link" link2="wrist_attach" reason="Never"/>
+  <disable_collisions link1="wrist_3_link" link2="wrist_attach" reason="Adjacent"/>
+  <disable_collisions link1="tool0" link2="wrist_attach" reason="Adjacent"/>
+
+  <!-- ======== Disable collisions: d435 camera ======== -->
+  <disable_collisions link1="d435_link" link2="wrist_attach" reason="Adjacent"/>
+  <disable_collisions link1="d435_link" link2="wrist_2_link" reason="Never"/>
+  <disable_collisions link1="d435_link" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="d435_link" link2="tool0" reason="Adjacent"/>
+  <disable_collisions link1="d435_link" link2="gripper_base_link" reason="Never"/>
+  <disable_collisions link1="d435_link" link2="gripper_finger1_knuckle_link" reason="Never"/>
+  <disable_collisions link1="d435_link" link2="gripper_finger2_knuckle_link" reason="Never"/>
+  <disable_collisions link1="d435_link" link2="gripper_finger1_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="d435_link" link2="gripper_finger2_inner_knuckle_link" reason="Never"/>
+
+  <!-- ======== Disable collisions: gripper_base_link ======== -->
+  <disable_collisions link1="gripper_base_link" link2="wrist_attach" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="gripper_base_link" link2="wrist_2_link" reason="Never"/>
+  <disable_collisions link1="gripper_base_link" link2="tool0" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_inner_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_inner_knuckle_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger1_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_base_link" link2="gripper_finger2_finger_tip_link" reason="Never"/>
+
+  <!-- ======== Disable collisions: gripper finger 1 internal ======== -->
+  <disable_collisions link1="gripper_finger1_knuckle_link" link2="gripper_finger1_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger1_inner_knuckle_link" link2="gripper_finger1_finger_tip_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger1_finger_link" link2="gripper_finger1_finger_tip_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger1_knuckle_link" link2="gripper_finger1_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_knuckle_link" link2="gripper_finger1_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_finger_link" link2="gripper_finger1_inner_knuckle_link" reason="Never"/>
+
+  <!-- ======== Disable collisions: gripper finger 2 internal ======== -->
+  <disable_collisions link1="gripper_finger2_knuckle_link" link2="gripper_finger2_finger_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger2_inner_knuckle_link" link2="gripper_finger2_finger_tip_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger2_finger_link" link2="gripper_finger2_finger_tip_link" reason="Adjacent"/>
+  <disable_collisions link1="gripper_finger2_knuckle_link" link2="gripper_finger2_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger2_knuckle_link" link2="gripper_finger2_finger_tip_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger2_finger_link" link2="gripper_finger2_inner_knuckle_link" reason="Never"/>
+
+  <!-- ======== Disable collisions: cross-finger ======== -->
+  <disable_collisions link1="gripper_finger1_knuckle_link" link2="gripper_finger2_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_inner_knuckle_link" link2="gripper_finger2_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_finger_link" link2="gripper_finger2_finger_link" reason="Never"/>
+  <disable_collisions link1="gripper_finger1_finger_tip_link" link2="gripper_finger2_finger_tip_link" reason="Never"/>
+
+  <!-- ======== Disable collisions: wrist links with gripper fingers ======== -->
+  <disable_collisions link1="wrist_attach" link2="gripper_finger1_knuckle_link" reason="Never"/>
+  <disable_collisions link1="wrist_attach" link2="gripper_finger2_knuckle_link" reason="Never"/>
+  <disable_collisions link1="wrist_attach" link2="gripper_finger1_inner_knuckle_link" reason="Never"/>
+  <disable_collisions link1="wrist_attach" link2="gripper_finger2_inner_knuckle_link" reason="Never"/>
+
+</robot>

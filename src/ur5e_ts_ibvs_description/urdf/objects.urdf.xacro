@@ -1,0 +1,97 @@
+<?xml version="1.0"?>
+<!--
+  Pedestal and table objects for UR5 Gazebo simulation.
+  Pedestal: cylinder (r=0.1m, h=0.95m) — robot base sits on top.
+  Table:    box (1.2m × 2.0m × 0.05m) — work surface in front of robot.
+-->
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="furniture">
+
+  <!-- ============ Pedestal ============ -->
+  <xacro:property name="pe_radius" value="0.1"/>
+  <xacro:property name="pedestal_height" value="0.95"/>
+
+  <xacro:macro name="mypedestal" params="prefix:=''">
+    <link name="${prefix}pedestal">
+      <inertial>
+        <origin xyz="0 0 ${pedestal_height/2}" rpy="0 0 0"/>
+        <mass value="20"/>
+        <inertia ixx="1.5" ixy="0" ixz="0" iyy="1.5" iyz="0" izz="0.1"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 ${pedestal_height/2}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${pe_radius}" length="${pedestal_height}"/>
+        </geometry>
+        <material name="PedestalGray">
+          <color rgba="0.35 0.35 0.35 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${pedestal_height/2}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${pe_radius}" length="${pedestal_height}"/>
+        </geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <!-- ============ Table ============ -->
+  <xacro:property name="table_xlength" value="1.2"/>
+  <xacro:property name="table_ylength" value="2.0"/>
+  <xacro:property name="table_zlength" value="0.05"/>
+
+  <xacro:macro name="mytable" params="prefix:=''">
+    <link name="${prefix}table">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="10"/>
+        <inertia ixx="0.07" ixy="0.0" ixz="0.0"
+                 iyy="0.40" iyz="0.0" izz="0.33"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${table_xlength} ${table_ylength} ${table_zlength}"/>
+        </geometry>
+        <material name="TableDarkGrey">
+          <color rgba="0.25 0.25 0.25 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${table_xlength} ${table_ylength} ${table_zlength}"/>
+        </geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <!-- ============ Red Target Cube (for IBVS) ============ -->
+  <xacro:property name="target_size" value="0.05"/>
+
+  <xacro:macro name="red_target" params="prefix:=''">
+    <link name="${prefix}red_target">
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="0.05"/>
+        <inertia ixx="0.0000021" ixy="0" ixz="0" iyy="0.0000021" iyz="0" izz="0.0000021"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${target_size} ${target_size} ${target_size}"/>
+        </geometry>
+        <material name="TargetRed">
+          <color rgba="0.9 0.1 0.1 1"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${target_size} ${target_size} ${target_size}"/>
+        </geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+</robot>

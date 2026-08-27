@@ -1,0 +1,86 @@
+# ============================================================================
+# UR5e TS-IBVS ROS2 Stack - Docker Compose Configuration
+# ============================================================================
+# DDS: FastDDS (rmw_fastrtps_cpp)
+# ============================================================================
+
+services:
+
+  ur5e_ts_ibvs:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+
+    image: ur5e_ts_ibvs_ros2:jazzy
+    container_name: ur5e_ts_ibvs
+    hostname: ur5e_ts_ibvs
+
+    # Host mode: ROS2 DDS uses multicast for node discovery
+    network_mode: host
+
+    # Share host IPC/shm: Fast DDS uses shared-memory transport between
+    # processes on the same host; separate per-container /dev/shm makes
+    # discovery succeed but data delivery silently fail across
+    # `docker compose run` containers.
+    ipc: host
+
+    # Make our hostname resolvable (gz-transport discovery needs it;
+    # network_mode:host does not add the custom hostname to /etc/hosts)
+    extra_hosts:
+      - "ur5e_ts_ibvs:127.0.0.1"
+
+    # GPU rendering (DRI)
+    devices:
+      - /dev/dri:/dev/dri
+
+    group_add:
+      # Numeric host GIDs (names may not exist inside the image)
+      - "44"   # video
+      - "109"  # render
+
+    # NVIDIA GPU support (host toolkit is in CDI mode; the legacy
+    # deploy/device-reservation hook is not supported there)
+    runtime: nvidia
+
+    environment:
+      # NVIDIA GPU
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - __NV_PRIME_RENDER_OFFLOAD=1
+      - __GLX_VENDOR_LIBRARY_NAME=nvidia
+
+      # ROS2
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+      # Gazebo transport: force loopback (container hostname is otherwise
+      # unresolvable → gz discovery between server/GUI/bridge silently fails)
+      - GZ_IP=127.0.0.1
+
+      # Display (Gazebo, RViz, PlotJuggler)
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - LIBGL_ALWAYS_SOFTWARE=0
+
+      # Fix XDG_RUNTIME_DIR warning
+      - XDG_RUNTIME_DIR=/tmp/runtime-root
+
+    volumes:
+      # Source code (live editing)
+      - ./src:/ros2_ws/src:rw
+      # SOFA scene files (runSofa /scenes/<file>)
+      - ${HOME}/SOFA/scenes:/scenes:rw
+      # Data recorder CSV logs (DataRecorder writes to $HOME/ibvs_logs)
+      - ${HOME}/ibvs_logs:/root/ibvs_logs:rw
+      # RealSense D435 (real robot mode)
+      - /dev/bus/usb:/dev/bus/usb
+      # X11 socket
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # X11 auth
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+
+    restart: "no"
+    init: true
+    stdin_open: true
+    tty: true
+    command: ["bash"]

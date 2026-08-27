@@ -1,0 +1,6 @@
+# ROC convention: Google style, 100 columns.
+BasedOnStyle: Google
+ColumnLimit: 100
+IndentWidth: 2
+DerivePointerAlignment: false
+PointerAlignment: Left

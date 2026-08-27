@@ -1,0 +1,70 @@
+# SolveMPC.srv
+# Quasi-Min-Max MPC for IBVS — Wang et al. (2014)
+# "Quasi-Min-Max MPC for IBVS with TP Model Transformation"
+# Asian Journal of Control, Vol.17, No.2, pp.402-416
+#
+# Request: current per-point pixel errors, Jacobians, and visibility bounds
+# Response: optimal camera velocity screw and solver diagnostics
+
+# ===== REQUEST =====
+# Per-point pixel errors e_j = s_j - s_j* (j=1..4), flattened row-major
+# Layout: [e1_u, e1_v, e2_u, e2_v, e3_u, e3_v, e4_u, e4_v]
+float64[] errors_flat
+
+# Per-point pixel-coordinate Jacobians J_m(P_j) (j=1..4), flattened row-major
+# Each J_m is 2x6, layout: [J1_row0, J1_row1, J2_row0, J2_row1, ...]
+# Total: 4 * 2 * 6 = 48 values
+float64[] jacobians_flat
+
+# Sampling time (seconds), used as Ts in discrete model x(k+1)=x(k)+Ts*J_m*vc
+float64 ts
+
+# Velocity limits (per-component box constraints, Eq.20/21)
+float64 v_max_linear
+float64 v_max_angular
+
+# Optional split linear velocity limits for paper Eq.20/21 per-component bounds.
+# If <= 0, solver falls back to v_max_linear.
+# Layout used by solver: [v_max_lateral, v_max_lateral, v_max_depth,
+#                         v_max_angular, v_max_angular, v_max_angular]
+float64 v_max_lateral
+float64 v_max_depth
+
+# Rectangular image-plane visibility bounds (pixels)
+# These define the field-of-view constraint region.
+# Per-point error bounds are computed from these and desired_positions_flat.
+float64 u_min
+float64 u_max
+float64 v_min
+float64 v_max
+
+# Desired pixel positions s_j* (j=1..4), flattened
+# Layout: [u1*, v1*, u2*, v2*, u3*, v3*, u4*, v4*]
+# Used to compute per-point error bounds: e.g. eu_max_j = u_max - uj*
+float64[] desired_positions_flat
+
+# ===== RESPONSE =====
+---
+# Optimal camera velocity screw v_c(k|k) = [vx, vy, vz, wx, wy, wz]
+float64[] vc
+
+# Optimal cost bound gamma
+float64 gamma
+
+# Whether the SDP was feasible
+bool feasible
+
+# Solver wall-clock time (milliseconds)
+float64 solver_time_ms
+
+# Lyapunov value V(k) = sum_j V_j(k)
+float64 lyapunov_v
+
+# Q matrix (2x2 symmetric PD), row-major [q11, q12, q21, q22]
+float64[] q_flat
+
+# Y matrix (6x2), row-major, 12 values
+float64[] y_flat
+
+# Solver status string (e.g. "optimal", "infeasible", "solver_error")
+string solver_status
