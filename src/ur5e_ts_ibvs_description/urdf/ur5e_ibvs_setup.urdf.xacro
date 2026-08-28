@@ -129,6 +129,33 @@
     <origin xyz="0.0 0.0 0.04" rpy="0 0 0"/>
   </joint>
 
+  <!-- ======== Cable frames (SOFA Cosserat coupling) ======== -->
+  <!-- Physical clamp point of the cable between the fingertips. The SOFA
+       cable base is driven by base_link -> cable_grasp_frame. x points out
+       of the fingers = initial cable direction. -->
+  <link name="cable_grasp_frame"/>
+  <joint name="cable_grasp_joint" type="fixed">
+    <parent link="gripper_base_link"/>
+    <child link="cable_grasp_frame"/>
+    <origin xyz="0.14 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Table fixture clamping the far cable end (planar shaping setup).
+       +x = initial cable direction (world +y); cable free end lands near
+       world (0.45, 0.35), inside the arm workspace. Small visible clamp. -->
+  <link name="cable_fixture_frame">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.03 0.03 0.05"/></geometry>
+      <material name="FixtureYellow"><color rgba="0.9 0.8 0.1 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="cable_fixture_joint" type="fixed">
+    <parent link="table"/>
+    <child link="cable_fixture_frame"/>
+    <origin xyz="-0.25 -0.35 0.03" rpy="0 0 ${pi/2}"/>
+  </joint>
+
   <!-- ======== Table ======== -->
   <xacro:mytable/>
 
@@ -152,8 +179,8 @@
   <joint name="table_to_target" type="fixed">
     <parent link="table"/>
     <child link="red_target"/>
-    <!-- World x=0.4 (matches ROS1 spawn -x 0.4), on the table surface -->
-    <origin xyz="-0.3 0.0 ${0.025 + 0.025}" rpy="0 0 0"/>
+    <!-- Moved to the far table corner, clear of the cable workspace -->
+    <origin xyz="-0.3 -0.7 ${0.025 + 0.025}" rpy="0 0 0"/>
   </joint>
 
   <!-- ======== gz-sim ros2_control plugin ======== -->

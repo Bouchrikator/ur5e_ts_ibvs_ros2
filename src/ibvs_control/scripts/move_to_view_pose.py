@@ -35,6 +35,10 @@ POSES = {
     "left": [-0.5, -1.8, 1.8, -1.57, -1.57, 3.14],
     "right": [0.5, -1.8, 1.8, -1.57, -1.57, 3.14],
     "table": [0.0, -0.45, 1.85, -3.0, -1.57, 0.0],
+    # Grasp point (tool0 + 0.15 z) at the cable free end, 1 cm above the
+    # tabletop, tool z straight down -> triggers the cable snap latch.
+    # Solved by damped-least-squares IK against the sim-verified DH model.
+    "cable": [0.425, -0.6344, 1.9149, -2.8513, -1.5708, 0.0],
 }
 
 

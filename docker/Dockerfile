@@ -218,6 +218,24 @@ RUN printf '%s\n' \
     'exec /opt/sofa/bin/runSofa "${PY_PLUGIN[@]}" "$@"' \
     > /usr/local/bin/runSofa && chmod +x /usr/local/bin/runSofa
 
+# --- Cosserat plugin (cable physics), pinned release for SOFA v25.12 -------
+# The binary links against dev-suffix sonames (.so.25.12.99) while the SOFA
+# release ships .so.25.12.00 -> compatibility symlinks next to the plugin lib.
+ARG COSSERAT_URL=https://github.com/SofaDefrost/Cosserat/releases/download/release-v25.12/Cosserat_v25.12_for-SOFA-v25.12_Linux.zip
+ARG COSSERAT_SHA256=e6d9476e6543f0cff7a0819ddbbbf1b51401cee1f4147346d89a9ab02f19bb8c
+RUN curl -L -o /tmp/cosserat.zip "$COSSERAT_URL" && \
+    echo "${COSSERAT_SHA256}  /tmp/cosserat.zip" | sha256sum -c - && \
+    mkdir -p /tmp/cosserat-extract && \
+    unzip -q /tmp/cosserat.zip -d /tmp/cosserat-extract && \
+    SRC="$(find /tmp/cosserat-extract -mindepth 1 -maxdepth 1 -type d | head -n1)" && \
+    mkdir -p /opt/sofa/plugins/Cosserat && \
+    cp -a "$SRC"/. /opt/sofa/plugins/Cosserat/ && \
+    rm -rf /tmp/cosserat.zip /tmp/cosserat-extract && \
+    cd /opt/sofa/plugins/Cosserat/lib && \
+    for f in /opt/sofa/lib/libSofa*.so.25.12.00; do \
+        b=$(basename "$f"); ln -sf "$f" "${b%25.12.00}25.12.99"; \
+    done
+
 # ============================================================================
 # STAGE 7: Workspace Setup
 # ============================================================================

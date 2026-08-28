@@ -6,12 +6,13 @@
 #   Simulation:  ./run.sh sim            (Gazebo + UR5 + D435 + cube)
 #                ./run.sh pose [name]    (move arm to a viewing pose)
 #   Controllers: ./run.sh ts_lmi_d | ts_lmi_c | classic | qmm   [extra args]
-#   Eye-to-hand: ./run.sh pose eth   (marker faces the scene camera)
-#                ./run.sh eth_ts_lmi_d | eth_ts_lmi_c | eth_classic | eth_qmm
+#   Eye-to-hand: ./run.sh eth_ts_lmi_d | eth_ts_lmi_c | eth_classic | eth_qmm
 #                (fixed overview camera servos the gripper marker above the cube)
 #   Real robot:  ./run.sh real ts_lmi_d  [extra args]  (driver+camera+servo)
 #   Tools:       ./run.sh plotjuggler
 #   SOFA:        ./run.sh sofa [scene]   (host ~/SOFA/scenes → /scenes)
+#   Cable:       ./run.sh cable_plugin_test | cable_forward_test
+#                ./run.sh cable_sim      (Gazebo UR5e + SOFA Cosserat cable)
 #
 # Extra args are forwarded to `ros2 launch ibvs_control ibvs.launch.py`,
 # e.g. ./run.sh ts_lmi_d cube_size_x:=0.075 use_servo:=false
@@ -27,6 +28,15 @@ xhost +local:docker 2>/dev/null || true
 
 in_container() {
   docker compose run --rm ur5e_ts_ibvs bash -c \
+    "source /ros2_ws/install/setup.bash && $*"
+}
+
+# Cable commands run in the persistent container (docker compose up -d):
+# its overlay carries the Cosserat plugin + cable packages until the image
+# is rebuilt with ./run.sh build.
+in_live() {
+  docker compose up -d >/dev/null 2>&1
+  docker compose exec ur5e_ts_ibvs bash -c \
     "source /ros2_ws/install/setup.bash && $*"
 }
 
@@ -59,7 +69,7 @@ case "$CMD" in
     in_container "ros2 launch ur5e_ts_ibvs_description ur5e_ibvs_sim.launch.py $*"
     ;;
   pose)
-    in_container "ros2 run ibvs_control move_to_view_pose.py ${1:-default} --sim"
+    in_live "ros2 run ibvs_control move_to_view_pose.py ${1:-default} --sim"
     ;;
   ts_lmi_d|ts_lmi_c|classic|qmm)
     in_container "ros2 launch ibvs_control ibvs.launch.py controller:=$CMD mode:=sim $*"
@@ -80,8 +90,17 @@ case "$CMD" in
     # runSofa wrapper auto-loads SofaPython3 for .py scenes
     docker compose run --rm ur5e_ts_ibvs runSofa "$@"
     ;;
+  cable_plugin_test)
+    in_live "ros2 run cable_identification cable_plugin_test"
+    ;;
+  cable_forward_test)
+    in_live "ros2 run cable_identification cable_forward_test"
+    ;;
+  cable_sim)
+    in_live "ros2 launch cable_bringup cable_sim.launch.py $*"
+    ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cable_plugin_test|cable_forward_test|cable_sim}"
     exit 1
     ;;
 esac
