@@ -13,6 +13,10 @@
 #   SOFA:        ./run.sh sofa [scene]   (host ~/SOFA/scenes → /scenes)
 #   Cable:       ./run.sh cable_plugin_test | cable_forward_test
 #                ./run.sh cable_sim      (Gazebo UR5e + SOFA Cosserat cable)
+#                ./run.sh cable_identify_sim  (2 SOFA models + EI identification)
+#                ./run.sh cable_closed_loop  (truth + estimator + outer loop)
+#   Cable ident: ./run.sh cable_dataset -> cable_basis -> cable_identify -> cable_lmi
+#                ./run.sh cable_unit_tests
 #
 # Extra args are forwarded to `ros2 launch ibvs_control ibvs.launch.py`,
 # e.g. ./run.sh ts_lmi_d cube_size_x:=0.075 use_servo:=false
@@ -96,11 +100,50 @@ case "$CMD" in
   cable_forward_test)
     in_live "ros2 run cable_identification cable_forward_test"
     ;;
+  optimus_smoke_test)
+    in_live "ros2 run cable_identification optimus_smoke_test"
+    ;;
   cable_sim)
     in_live "ros2 launch cable_bringup cable_sim.launch.py $*"
     ;;
+  cable_closed_loop)
+    in_live "ros2 launch cable_bringup cable_closed_loop_sim.launch.py $*"
+    ;;
+  cable_identify_sim)
+    # Plan milestone: truth + estimator SOFA models, noisy synthetic markers,
+    # online EI identification, and deliberately NO controller yet.
+    in_live "ros2 launch cable_bringup cable_closed_loop_sim.launch.py \
+      enable_optimus:=true enable_control:=false \
+      observation_source:=synthetic $*"
+    ;;
+  cable_dataset)
+    # Headless SOFA excitation rollouts -> identification dataset
+    in_live "ros2 run cable_ts_control generate_sofa_dataset \
+      --config \$(ros2 pkg prefix cable_identification)/share/cable_identification/config/cable_truth.yaml \
+      --output /ros2_ws/cable_dataset.npz $*"
+    ;;
+  cable_basis)
+    in_live "ros2 run cable_ts_control build_modal_basis \
+      --dataset /ros2_ws/cable_dataset.npz \
+      --output /ros2_ws/cable_modal_basis.yaml $*"
+    ;;
+  cable_identify)
+    in_live "ros2 run cable_ts_control identify_ts_vertices \
+      --dataset /ros2_ws/cable_dataset.npz \
+      --basis /ros2_ws/cable_modal_basis.yaml \
+      --output /ros2_ws/cable_ts_model.yaml $*"
+    ;;
+  cable_lmi)
+    in_live "ros2 run cable_ts_control solve_cable_ts_lmi \
+      --model /ros2_ws/cable_ts_model.yaml \
+      --output /ros2_ws/cable_ts_gains.yaml $*"
+    ;;
+  cable_unit_tests)
+    in_live "colcon test --packages-select cable_perception cable_ts_control \
+      --event-handlers console_direct+ && colcon test-result --verbose"
+    ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cable_plugin_test|cable_forward_test|cable_sim}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_sim|cable_identify_sim|cable_closed_loop|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
     exit 1
     ;;
 esac

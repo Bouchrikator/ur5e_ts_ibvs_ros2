@@ -95,6 +95,7 @@ class RosCouplingController(Sofa.Core.Controller):
             g = self._lookup("cable_grasp_frame")
             if g is not None:
                 self.cable.set_base_pose(g)
+
     def onAnimateEndEvent(self, _):
         if not self.ros_ok:
             return

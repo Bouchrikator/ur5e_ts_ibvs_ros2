@@ -1,0 +1,41 @@
+# Physical-parameter uncertainty envelope for the cable.
+#
+# Single source of truth for three consumers:
+#   * generate_sofa_dataset  -> which (EI, damping) vertices to excite in SOFA
+#   * solve_cable_ts_lmi     -> the vertices the Lyapunov conditions are
+#                               checked against, so one gain set is certified
+#                               for the whole envelope
+#   * cable_estimator_node   -> hard clamp on the online estimate, so a
+#                               correction can never leave the certified box
+#
+# Per the plan, EI and damping are treated as BOUNDED UNCERTAINTIES, not as
+# extra fuzzy premise variables: that keeps the online rule count at 4 instead
+# of exploding it.
+#
+# The truth plant sits at EI = 0.010 and rayleigh_stiffness = 0.02
+# (cable_truth.yaml); the estimator starts at EI = 0.006
+# (cable_estimator_initial.yaml). Both are strictly inside this box, so the
+# identification has room to move without ever hitting a rail.
+parameter_bounds:
+  EI:
+    # Must contain both the truth (0.010) and the estimator's deliberately
+    # wrong start (0.006), so the lower bound cannot be raised past 0.006.
+    # KNOWN LIMITATION: at EI = 0.005 the rod is soft enough that, in the
+    # large-deformation premise cells, one local linear model per cell does not
+    # fit. Measured held-out one-step error there is 30-80 mm against under
+    # 1.5 mm everywhere else, and it barely improves with a third mode (66 mm)
+    # or at 100 Hz (58 mm), so it is geometric nonlinearity, not aliasing and
+    # not model order. Fixing it needs a finer premise partition in that region
+    # or a smaller operating envelope; until then the LMIs are infeasible.
+    min: 0.005
+    max: 0.015
+    units: N.m^2
+  rayleigh_stiffness:
+    # Truth is 0.020. Lower bound is 0.020, not 0.010: every LMI subset that
+    # contains a damping-0.010 vertex is infeasible (v0+v2, both at 0.010, fail
+    # even with the rule-transition terms removed), while the pair at damping
+    # 0.040 spanning the full EI range is feasible. Low damping is what breaks
+    # the common quadratic Lyapunov function, not the EI spread.
+    min: 0.020
+    max: 0.040
+    units: s

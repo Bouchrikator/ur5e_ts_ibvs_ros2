@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = "sofa_ros2_adapter"
+package_name = "cable_perception"
 
 setup(
     name=package_name,
@@ -14,12 +14,15 @@ setup(
     zip_safe=True,
     maintainer="Bouchrikator",
     maintainer_email="miko.boucherika@gmail.com",
-    description="SOFA Cosserat cable coupled to ROS 2 (TF boundary in, frames/markers out)",
+    description="Cable marker observation sources (synthetic and eye-to-hand camera)",
     license="MIT",
+    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "cable_sofa_node = sofa_ros2_adapter.cable_sofa_node:main",
-            "cable_estimator_node = sofa_ros2_adapter.cable_estimator_node:main",
+            "synthetic_marker_node = "
+            "cable_perception.synthetic_marker_node:main",
+            "cable_marker_tracker_node = "
+            "cable_perception.cable_marker_tracker_node:main",
         ],
     },
 )

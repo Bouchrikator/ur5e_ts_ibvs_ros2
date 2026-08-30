@@ -1,0 +1,27 @@
+# Geometry and setup shared by the truth plant and the estimator.
+# Physical parameters live in cable_truth.yaml / cable_estimator_initial.yaml:
+# keeping them out of here is what makes the identification non-circular.
+cable:
+  length_m: 0.7
+  radius_m: 0.004
+  mass_kg: 0.07
+  EA_N: 5000.0          # axial rigidity (declared; reduced model is bend/twist)
+  GA_N: 2000.0          # shear rigidity
+  number_of_sections: 16
+  number_of_frames: 40
+  timestep_s: 0.01
+  # Normalized curvilinear coordinates of the virtual markers
+  marker_s_over_l: [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0]
+  # Table shaping: the rod rests on the table -> no effective gravity, and the
+  # motion is constrained to the base plane instead of modelling contact.
+  gravity: [0.0, 0.0, 0.0]
+  planar: true
+  grasp_tip: true
+  # Stiff enough that attachment compliance is not mistaken for cable bending
+  # compliance during identification (forward test asserts <= 1 mm tip error).
+  grasp_stiffness: 20000.0
+  grasp_angular_stiffness: 500.0
+  attach_mode: explicit    # a supervisor requests the grasp; no proximity magic
+  attach_distance_m: 0.15  # xy proximity to the free end for the snap
+  attach_height_m: 0.01    # gripper within 1 cm of the table plane to snap
+  attach_ramp_s: 0.5       # quick smooth snap once conditions are met

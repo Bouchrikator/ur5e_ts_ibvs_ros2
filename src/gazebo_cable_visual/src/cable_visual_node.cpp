@@ -1,11 +1,12 @@
 // Visual-only cable in Gazebo Harmonic, driven by SOFA centerline frames.
 //
-// Subscribes /cable/sofa_frames (PoseArray in base_link), transforms to the
+// Subscribes the SOFA truth frames (PoseArray in base_link), transforms to the
 // Gazebo world frame via TF, spawns one static cylinder per frame pair
 // (no collision, no physics) and updates all poses with a single native
 // gz-transport set_pose_vector request per cycle — no CLI subprocess, so
 // updates keep up with the robot and the cable moves smoothly.
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -52,6 +53,19 @@ Vec3 rotate(const Quat & q, const Vec3 & v)
           v.z + q.w * tz + (q.x * ty - q.y * tx)};
 }
 
+// Marker colours, one hue per identity, matching the HSV windows in
+// cable_marker_tracker_node. Persistent identity is the whole point: a
+// uniformly coloured cable gives the tracker no way to tell marker 3 from 5.
+constexpr double kMarkerRgb[7][3] = {
+  {1.00, 0.17, 0.00},   // red
+  {1.00, 0.53, 0.00},   // orange
+  {1.00, 0.93, 0.00},   // yellow
+  {0.00, 1.00, 0.00},   // green
+  {0.00, 0.93, 1.00},   // cyan
+  {0.00, 0.17, 1.00},   // blue
+  {0.83, 0.00, 1.00},   // magenta
+};
+
 }  // namespace
 
 class CableVisualNode : public rclcpp::Node
@@ -63,13 +77,20 @@ public:
     world_ = declare_parameter<std::string>("world", "ibvs_world");
     world_frame_ = declare_parameter<std::string>("world_frame", "world");
     radius_ = declare_parameter<double>("radius", 0.006);
+    marker_radius_ = declare_parameter<double>("marker_radius", 0.011);
+    marker_s_ = declare_parameter<std::vector<double>>(
+      "marker_s_over_l", {0.10, 0.25, 0.40, 0.55, 0.70, 0.85, 1.00});
     const double rate = declare_parameter<double>("update_rate_hz", 30.0);
+    // Visual cable follows the TRUTH plant only: rendering the estimator would
+    // show a shape that does not exist in the experiment.
+    const auto frames_topic =
+      declare_parameter<std::string>("frames_topic", "/cable/truth/frames");
 
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
 
     sub_ = create_subscription<geometry_msgs::msg::PoseArray>(
-      "/cable/sofa_frames", rclcpp::QoS(1).best_effort(),
+      frames_topic, rclcpp::QoS(1).best_effort(),
       [this](geometry_msgs::msg::PoseArray::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(mtx_);
         latest_ = std::move(msg);
@@ -105,6 +126,60 @@ private:
         if (i > 60) break;  // beyond any plausible segment count
       }
     }
+    for (size_t i = 0; i < marker_s_.size(); ++i) {
+      gz::msgs::Entity req;
+      req.set_name("cable_marker_" + std::to_string(i));
+      req.set_type(gz::msgs::Entity::MODEL);
+      gz::msgs::Boolean rep;
+      bool result = false;
+      gz_node_.Request("/world/" + world_ + "/remove", req, 300, rep, result);
+    }
+  }
+
+  // Frame index carrying each marker, from its normalised arc length.
+  std::vector<size_t> markerIndices(size_t n_points) const
+  {
+    std::vector<size_t> out;
+    out.reserve(marker_s_.size());
+    for (double s : marker_s_) {
+      const double clamped = std::min(std::max(s, 0.0), 1.0);
+      out.push_back(static_cast<size_t>(
+        std::lround(clamped * static_cast<double>(n_points - 1))));
+    }
+    return out;
+  }
+
+  bool spawnMarkers(const std::vector<Vec3> & pts)
+  {
+    bool ok_all = true;
+    const auto indices = markerIndices(pts.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      const double * c = kMarkerRgb[i % 7];
+      std::ostringstream sdf;
+      sdf << "<?xml version='1.0'?><sdf version='1.9'>"
+          << "<model name='cable_marker_" << i << "'><static>true</static>"
+          << "<link name='link'><visual name='v'><geometry><sphere>"
+          << "<radius>" << marker_radius_ << "</radius>"
+          << "</sphere></geometry><material>"
+          << "<ambient>" << c[0] << " " << c[1] << " " << c[2] << " 1</ambient>"
+          << "<diffuse>" << c[0] << " " << c[1] << " " << c[2] << " 1</diffuse>"
+          << "<emissive>" << 0.4 * c[0] << " " << 0.4 * c[1] << " "
+          << 0.4 * c[2] << " 1</emissive>"
+          << "</material></visual></link></model></sdf>";
+
+      gz::msgs::EntityFactory req;
+      req.set_sdf(sdf.str());
+      req.set_name("cable_marker_" + std::to_string(i));
+      req.set_allow_renaming(false);
+      const Vec3 & p0 = pts[indices[i]];
+      auto * p = req.mutable_pose();
+      p->mutable_position()->set_x(p0.x);
+      p->mutable_position()->set_y(p0.y);
+      p->mutable_position()->set_z(p0.z);
+      p->mutable_orientation()->set_w(1.0);
+      ok_all &= gzRequestBool("/world/" + world_ + "/create", req);
+    }
+    return ok_all;
   }
 
   struct Segment { Vec3 mid; Quat q; double len; };
@@ -137,8 +212,8 @@ private:
           << "<radius>" << radius_ << "</radius>"
           << "<length>" << segs[i].len * 1.1 << "</length>"
           << "</cylinder></geometry><material>"
-          << "<ambient>0.85 0.35 0.05 1</ambient>"
-          << "<diffuse>0.85 0.35 0.05 1</diffuse>"
+          << "<ambient>0.25 0.25 0.27 1</ambient>"
+          << "<diffuse>0.25 0.25 0.27 1</diffuse>"
           << "</material></visual></link></model></sdf>";
 
       gz::msgs::EntityFactory req;
@@ -189,9 +264,12 @@ private:
 
     if (spawned_ == 0) {
       const bool ok = spawn(segs);
+      const bool ok_markers = spawnMarkers(pts);
       spawned_ = static_cast<int>(segs.size());
-      RCLCPP_INFO(get_logger(), "spawned %d cable segments in '%s' (ok=%d)",
-                  spawned_, world_.c_str(), ok);
+      RCLCPP_INFO(get_logger(),
+                  "spawned %d cable segments + %zu coloured markers in '%s' "
+                  "(ok=%d markers_ok=%d)",
+                  spawned_, marker_s_.size(), world_.c_str(), ok, ok_markers);
       return;
     }
 
@@ -209,11 +287,23 @@ private:
       p->mutable_orientation()->set_z(segs[i].q.z);
       p->mutable_orientation()->set_w(segs[i].q.w);
     }
+    const auto indices = markerIndices(pts.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      const Vec3 & m = pts[indices[i]];
+      auto * p = req.add_pose();
+      p->set_name("cable_marker_" + std::to_string(i));
+      p->mutable_position()->set_x(m.x);
+      p->mutable_position()->set_y(m.y);
+      p->mutable_position()->set_z(m.z);
+      p->mutable_orientation()->set_w(1.0);
+    }
     gzRequestBool("/world/" + world_ + "/set_pose_vector", req);
   }
 
   std::string world_, world_frame_;
   double radius_{0.006};
+  double marker_radius_{0.011};
+  std::vector<double> marker_s_;
   int spawned_{0};
 
   std::mutex mtx_;

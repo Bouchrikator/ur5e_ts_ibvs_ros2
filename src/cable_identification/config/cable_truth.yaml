@@ -1,0 +1,11 @@
+# SOFA TRUTH plant: generates the real simulated cable deformation, drives the
+# Gazebo visual cable and publishes /cable/truth/{frames,markers}.
+#
+# These values are the "hidden" ground truth the estimator must recover.
+# Do NOT read them from the estimator side.
+cable:
+  base: cable_common.yaml
+  EI_Nm2: 0.010            # bending rigidity
+  GJ_Nm2: 0.008            # torsional rigidity (Cosserat data field name: GI)
+  rayleigh_mass_per_s: 0.10
+  rayleigh_stiffness_s: 0.02

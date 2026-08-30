@@ -90,9 +90,11 @@ def main():
     err = math.dist(tip_t, target[:3])
     base = list(cable.frame_poses()[0][:3])
     base_ok = math.dist(base, [0.0, 0.0, 0.0]) < 1e-3
-    results.append(("grasped tip reaches target (<5 mm), base clamped",
-                    err < 0.005 and base_ok,
-                    f"tip={['%.3f' % v for v in tip_t]} err={err*1000:.1f} mm base_ok={base_ok}"))
+    # 1 mm, not 5: above that the estimator cannot tell attachment compliance
+    # apart from cable bending compliance.
+    results.append(("grasped tip reaches target (<1 mm), base clamped",
+                    err < 0.001 and base_ok,
+                    f"tip={['%.3f' % v for v in tip_t]} err={err*1000:.2f} mm base_ok={base_ok}"))
 
     print()
     failed = 0

@@ -13,6 +13,9 @@
   <exec_depend>sofa_ros2_adapter</exec_depend>
   <exec_depend>gazebo_cable_visual</exec_depend>
   <exec_depend>cable_identification</exec_depend>
+  <exec_depend>cable_perception</exec_depend>
+  <exec_depend>cable_ts_control</exec_depend>
+  <exec_depend>ibvs_control</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -41,6 +41,12 @@ def launch_setup(context, *args, **kwargs):
 
     sim = mode == "sim"
     eth = LaunchConfiguration("eye_to_hand").perform(context).lower() in ("true", "1")
+    reference_source = LaunchConfiguration("reference_source").perform(context).lower()
+    if reference_source not in ("cube", "cable"):
+        raise RuntimeError("reference_source must be 'cube' or 'cable'")
+    desired_feature_topic = ("/eth_reference/feature_target"
+                             if reference_source == "cube"
+                             else "/cable/desired_feature_target")
     use_sim_time = {"use_sim_time": sim}
     share = FindPackageShare("ibvs_control")
 
@@ -125,19 +131,24 @@ def launch_setup(context, *args, **kwargs):
         ))
 
         # ---- reference generator: cube pose -> desired marker features ----
-        actions.append(Node(
-            package="ibvs_control",
-            executable="eth_reference_node",
-            name="eth_reference",
-            output="screen",
-            parameters=[use_sim_time, {
-                "camera_frame": camera_frame,
-                "base_frame": "base_link",
-                "approach_height": ParameterValue(
-                    LaunchConfiguration("approach_height"), value_type=float),
-                "marker_size": marker_size,
-            }],
-        ))
+        # reference_source:=cable hands this job to the outer cable TS loop,
+        # which publishes /cable/desired_feature_target instead. Either way a
+        # SINGLE reference reaches the controller, and the controller stays
+        # the only publisher of /servo_node/delta_twist_cmds.
+        if reference_source == "cube":
+            actions.append(Node(
+                package="ibvs_control",
+                executable="eth_reference_node",
+                name="eth_reference",
+                output="screen",
+                parameters=[use_sim_time, {
+                    "camera_frame": camera_frame,
+                    "base_frame": "base_link",
+                    "approach_height": ParameterValue(
+                        LaunchConfiguration("approach_height"), value_type=float),
+                    "marker_size": marker_size,
+                }],
+            ))
 
     # ---- control: selected controller ------------------------------------
     controller_params = [use_sim_time, {
@@ -155,7 +166,7 @@ def launch_setup(context, *args, **kwargs):
         controller_remaps = [("/cube_detector/feature_target",
                               "/marker_detector/feature_target")]
         controller_params.append({
-            "desired_feature_topic": "/eth_reference/feature_target",
+            "desired_feature_topic": desired_feature_topic,
             "eye_to_hand": True,
             "ee_frame": "tool0",
             # ETH depth range (marker as seen by the fixed camera); same
@@ -269,6 +280,10 @@ def generate_launch_description():
         DeclareLaunchArgument("eye_to_hand", default_value="false",
                               description="Fixed scene camera: servo the gripper marker "
                                           "to hover approach_height above the cube"),
+        DeclareLaunchArgument("reference_source", default_value="cube",
+                              description="Source of the desired features (ETH): "
+                                          "'cube' = fixed cube reference node, "
+                                          "'cable' = outer cable TS loop"),
         DeclareLaunchArgument("approach_height", default_value="0.12",
                               description="Marker goal height above the cube (m, ETH)"),
         DeclareLaunchArgument("marker_size", default_value="0.05",

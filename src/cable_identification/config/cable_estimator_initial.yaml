@@ -1,0 +1,11 @@
+# SOFA ESTIMATOR model: same geometry and boundary conditions as the truth
+# plant, but started from deliberately WRONG physical parameters so that the
+# identification result is meaningful.
+#
+# EI is ~40% low and GJ ~50% high with respect to cable_truth.yaml.
+cable:
+  base: cable_common.yaml
+  EI_Nm2: 0.006
+  GJ_Nm2: 0.012
+  rayleigh_mass_per_s: 0.10
+  rayleigh_stiffness_s: 0.02

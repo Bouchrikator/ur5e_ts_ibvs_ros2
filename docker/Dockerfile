@@ -236,6 +236,41 @@ RUN curl -L -o /tmp/cosserat.zip "$COSSERAT_URL" && \
         b=$(basename "$f"); ln -sf "$f" "${b%25.12.00}25.12.99"; \
     done
 
+# --- Optimus plugin (stochastic parameter identification), OPT-IN ----------
+# There is no binary release for SOFA v25.12 (the latest is for 21.12), so the
+# plugin is compiled from source against /opt/sofa. It is off by default
+# because the build is slow and the API compatibility is not guaranteed:
+#
+#     docker compose build --build-arg WITH_OPTIMUS=true
+#
+# The compatibility gate is `ros2 run cable_identification optimus_smoke_test`,
+# which instantiates every component the estimator needs and prints the data
+# fields it actually exposes. Do NOT wire Optimus to Cosserat before that test
+# passes.
+ARG WITH_OPTIMUS=false
+ARG OPTIMUS_REF=master
+RUN if [ "$WITH_OPTIMUS" = "true" ]; then \
+        apt-get update && \
+        apt-get install -y --no-install-recommends \
+            libeigen3-dev libblas-dev liblapack-dev libpython3-dev && \
+        rm -rf /var/lib/apt/lists/* && \
+        git clone --depth 1 -b "$OPTIMUS_REF" \
+            https://github.com/sofa-framework/Optimus.git /tmp/Optimus && \
+        cmake -S /tmp/Optimus -B /tmp/Optimus/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/opt/sofa \
+            -DCMAKE_INSTALL_PREFIX=/opt/sofa/plugins/Optimus \
+            -DPLUGIN_OPTIMUS=ON \
+            -DSOFA_BUILD_TESTS=OFF \
+            -DSTOCHASTIC_FILTERING=ON && \
+        cmake --build /tmp/Optimus/build --target install -j"$(nproc)" && \
+        rm -rf /tmp/Optimus && \
+        echo "Optimus installed to /opt/sofa/plugins/Optimus"; \
+    else \
+        echo "Optimus skipped (build with --build-arg WITH_OPTIMUS=true)"; \
+    fi
+ENV OPTIMUS_ROOT=/opt/sofa/plugins/Optimus
+
 # ============================================================================
 # STAGE 7: Workspace Setup
 # ============================================================================
@@ -265,9 +300,12 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Build workspace (need bash for 'source')
+# Sequential with capped compiler jobs: the default 16-way parallelism OOMs on
+# an 8 GB machine and kills the build half way through.
 SHELL ["/bin/bash", "-c"]
 RUN source /opt/ros/jazzy/setup.bash && \
-    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
+    MAKEFLAGS=-j2 colcon build --executor sequential --parallel-workers 1 \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # ============================================================================
 # STAGE 8: ROS2 Environment Setup

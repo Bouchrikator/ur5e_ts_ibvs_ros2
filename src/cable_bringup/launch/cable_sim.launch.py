@@ -47,6 +47,7 @@ def generate_launch_description():
         condition=UnlessCondition(sofa_gui),
         parameters=[{
             "use_sim_time": True,
+            "role": "truth",
             "cable_config": cable_config,
             "base_frame": "base_link",
             "grasp_frame": "cable_grasp_frame",
@@ -84,7 +85,7 @@ def generate_launch_description():
             "cable_config",
             default_value=PathJoinSubstitution([
                 FindPackageShare("cable_identification"),
-                "config", "cable_initial.yaml"])),
+                "config", "cable_truth.yaml"])),
         sim,
         # give Gazebo + TF a moment before coupling the cable
         TimerAction(period=6.0, actions=[cable_sofa, cable_sofa_gui, cable_visual]),

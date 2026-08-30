@@ -13,6 +13,8 @@ The Cosserat data field ``GI`` receives the torsional rigidity GJ [N.m^2].
 Units: SI (m, kg, s, N).
 """
 
+import os
+
 import yaml
 
 DEFAULT_CONFIG = {
@@ -37,6 +39,15 @@ DEFAULT_CONFIG = {
     "attach_distance_m": 0.15,   # xy proximity to the free end
     "attach_height_m": 0.01,     # gripper must be this close to the table plane
     "attach_ramp_s": 0.5,
+    # "proximity" latches on its own; "explicit" waits for a supervisor request
+    "attach_mode": "proximity",
+    # Tip attachment compliance. Too soft and the estimator cannot tell
+    # attachment compliance apart from cable bending compliance.
+    "grasp_stiffness": 2.0e4,
+    "grasp_angular_stiffness": 5.0e2,
+    # Constrain the cable to the z = base plane (table shaping without contact)
+    "planar": False,
+    "planar_stiffness": 1.0e4,
 }
 
 # Core SOFA component plugins the scene needs (plus Cosserat itself)
@@ -46,17 +57,42 @@ REQUIRED_PLUGINS = [
     "Sofa.Component.LinearSolver.Direct",
     "Sofa.Component.StateContainer",
     "Sofa.Component.SolidMechanics.Spring",
+    "Sofa.Component.Constraint.Projective",
     "Sofa.Component.Mass",
     "Cosserat",
 ]
 
+# Physical parameters the estimator is allowed to update online.
+IDENTIFIABLE_PARAMETERS = ("EI", "GJ", "EA", "GA",
+                           "rayleigh_stiffness", "rayleigh_mass")
 
-def load_config(path=None):
+
+def load_config(path=None, _seen=None):
+    """Load a cable config.
+
+    A config may declare ``base: <path>`` (relative to itself) to inherit
+    another file and override only some keys. Truth and estimator configs use
+    this so they cannot drift apart on geometry — only on the physical
+    parameters that are being identified.
+    """
     cfg = dict(DEFAULT_CONFIG)
-    if path:
-        with open(path, "r") as f:
-            data = yaml.safe_load(f) or {}
-        cfg.update(data.get("cable", data))
+    if not path:
+        return cfg
+
+    path = os.path.abspath(path)
+    _seen = _seen or []
+    if path in _seen:
+        raise ValueError(f"circular cable config include: {path}")
+
+    with open(path, "r") as f:
+        data = yaml.safe_load(f) or {}
+    section = data.get("cable", data)
+
+    base = section.pop("base", None)
+    if base:
+        parent = os.path.join(os.path.dirname(path), base)
+        cfg.update(load_config(parent, _seen + [path]))
+    cfg.update(section)
     return cfg
 
 
@@ -103,7 +139,7 @@ class CableHandles:
     """Live handles into the built scene used by the adapter/identification code."""
 
     def __init__(self, solver_node, base_mo, strain_mo, force_field, frames_mo, cfg,
-                 grasp_target_mo=None):
+                 grasp_target_mo=None, ode_solver=None):
         self.solver_node = solver_node
         self.base_mo = base_mo
         self.strain_mo = strain_mo
@@ -111,6 +147,7 @@ class CableHandles:
         self.frames_mo = frames_mo
         self.cfg = cfg
         self.grasp_target_mo = grasp_target_mo
+        self.ode_solver = ode_solver
         self.marker_indices = marker_frame_indices(cfg)
 
     def set_base_pose(self, pose7):
@@ -125,6 +162,28 @@ class CableHandles:
         with self.grasp_target_mo.position.writeable() as p:
             p[0] = pose7
 
+    def save_state(self):
+        """Snapshot the independent DOFs so a what-if rollout can be undone.
+
+        Frames are mapped from the strains and the base, so those two plus the
+        strain velocity fully determine the configuration. Sigma-point
+        evaluation replays the cable under trial parameters and must leave the
+        estimator exactly where it found it.
+        """
+        return {
+            "strain": self.strain_mo.position.value.copy(),
+            "strain_velocity": self.strain_mo.velocity.value.copy(),
+            "base": self.base_mo.position.value.copy(),
+        }
+
+    def restore_state(self, state):
+        with self.strain_mo.position.writeable() as p:
+            p[:] = state["strain"]
+        with self.strain_mo.velocity.writeable() as v:
+            v[:] = state["strain_velocity"]
+        with self.base_mo.position.writeable() as p:
+            p[:] = state["base"]
+
     def frame_poses(self):
         return self.frames_mo.position.value.copy()
 
@@ -135,12 +194,32 @@ class CableHandles:
         poses = self.frames_mo.position.value
         return [list(poses[i][:3]) for i in self.marker_indices]
 
+    def get_parameter(self, name):
+        """Read back a physical parameter (SI units)."""
+        if name == "rayleigh_mass":
+            return float(self.ode_solver.findData("rayleighMass").value)
+        field = _FORCE_FIELD_DATA[name]
+        return float(self.force_field.findData(field).value)
+
     def set_parameter(self, name, value):
-        """Update EI/GI(=GJ)/EA/GA (or rayleigh) and reinit the force field."""
-        field = {"EI": "EI", "GJ": "GI", "GI": "GI", "EA": "EA", "GA": "GA",
-                 "rayleigh_stiffness": "rayleighStiffness"}[name]
-        self.force_field.findData(field).value = float(value)
+        """Update a physical parameter and reinit the affected components.
+
+        Rayleigh damping lives on BOTH the ODE solver and the force field, so
+        `rayleigh_stiffness` updates the two of them to stay consistent.
+        """
+        value = float(value)
+        if name == "rayleigh_mass":
+            self.ode_solver.findData("rayleighMass").value = value
+            return
+        field = _FORCE_FIELD_DATA[name]
+        self.force_field.findData(field).value = value
+        if name == "rayleigh_stiffness" and self.ode_solver is not None:
+            self.ode_solver.findData("rayleighStiffness").value = value
         self.force_field.reinit()
+
+
+_FORCE_FIELD_DATA = {"EI": "EI", "GJ": "GI", "GI": "GI", "EA": "EA", "GA": "GA",
+                     "rayleigh_stiffness": "rayleighStiffness"}
 
 
 def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
@@ -151,9 +230,10 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
     show_scale = 0.03 if show else 0.0
 
     solver = parent.addChild(f"{name}_solver")
-    solver.addObject("EulerImplicitSolver",
-                     rayleighMass=float(cfg["rayleigh_mass_per_s"]),
-                     rayleighStiffness=float(cfg["rayleigh_stiffness_s"]))
+    ode_solver = solver.addObject(
+        "EulerImplicitSolver",
+        rayleighMass=float(cfg["rayleigh_mass_per_s"]),
+        rayleighStiffness=float(cfg["rayleigh_stiffness_s"]))
     solver.addObject("SparseLDLSolver", name="solver",
                      template="CompressedRowSparseMatrixd")
 
@@ -203,10 +283,23 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             showObjectScale=show_scale)
         frames_node.addObject(
             "RestShapeSpringsForceField", name="graspSpring", template="Rigid3d",
-            stiffness=2e3, angularStiffness=50.0,
+            stiffness=float(cfg["grasp_stiffness"]),
+            angularStiffness=float(cfg["grasp_angular_stiffness"]),
             points=[len(frames) - 1],
             external_rest_shape=grasp_target_mo.getLinkPath(),
             external_points=[0])
 
+    if cfg.get("planar"):
+        # Simplified table: the rod may only bend in the plane of its base.
+        # The constraint must sit on the INDEPENDENT dofs. FramesMO is a mapped
+        # state, and SOFA rejects projective constraints there ("only main
+        # mechanical states have an associated submatrix"), which makes the
+        # constraint a silent no-op. Strain = (torsion, bend_y, bend_z), so
+        # freeing bend_z alone keeps the centerline in the base xy-plane.
+        coord.addObject(
+            "PartialFixedProjectiveConstraint", name="planarConstraint",
+            indices=list(range(len(strains))),
+            fixedDirections=[1, 1, 0])
+
     return CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
-                        grasp_target_mo)
+                        grasp_target_mo, ode_solver)

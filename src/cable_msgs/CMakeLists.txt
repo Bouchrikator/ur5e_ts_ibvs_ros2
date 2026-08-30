@@ -10,6 +10,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CableMarker.msg"
   "msg/CableMarkerArray.msg"
   "msg/CableParameterEstimate.msg"
+  "msg/CableState.msg"
+  "msg/CableShapeTarget.msg"
+  "msg/GraspState.msg"
   DEPENDENCIES std_msgs geometry_msgs
 )
 

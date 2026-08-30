@@ -1,13 +1,26 @@
 """Grasp coupling for the table-shaping setup (shared by node and GUI scene).
 
 Cable base = table fixture (static). Cable tip = bilaterally constrained to a
-kinematic target. The target stays at the straight tip until the gripper
-comes within `attach_distance_m` of it, then latches and ramps to the gripper
-pose over `attach_ramp_s` (seamless: orientation offset captured at latch),
-after which it tracks the gripper 1:1.
+kinematic target. The target stays at the straight tip until the grasp is
+engaged, then ramps to the gripper pose over `attach_ramp_s` (seamless:
+orientation offset captured at latch), after which it tracks the gripper 1:1.
+
+Two engagement policies, selected by `attach_mode`:
+
+  "proximity"  legacy: latches by itself as soon as the gripper is in range.
+  "explicit"   an external supervisor calls request_attach(); the latch only
+               fires once the geometric condition is ALSO satisfied. This is
+               the deterministic policy used for identification experiments.
+
+Only the latch DECISION differs between the two; the ramp/tracking mechanics
+are shared.
 """
 
 import math
+
+DETACHED = 0
+REQUESTED = 1
+ATTACHED = 2
 
 
 def _q_mul(a, b):
@@ -44,17 +57,55 @@ def _q_rot(q, v):
 
 
 class GraspCoupling:
-    def __init__(self, cable):
+    def __init__(self, cable, attach_mode=None):
         self.cable = cable
         self.attach_distance = float(cable.cfg.get("attach_distance_m", 0.15))
         self.attach_height = float(cable.cfg.get("attach_height_m", 0.01))
         self.ramp_s = float(cable.cfg.get("attach_ramp_s", 0.5))
+        self.attach_mode = attach_mode or cable.cfg.get("attach_mode", "proximity")
         self.fixture_set = False
-        self.latched = False
+        self.state = DETACHED
         self._fixture_z = None
         self._t_latch = None
         self._tip0 = None      # tip pose at latch
         self._q_offset = None  # grasp_q^-1 * tip_q at latch (seamless)
+        self._distance = float("inf")
+        self._height = float("inf")
+
+    @property
+    def latched(self):
+        return self.state == ATTACHED
+
+    @property
+    def distance_to_tip(self):
+        return self._distance
+
+    @property
+    def height_above_plane(self):
+        return self._height
+
+    def request_attach(self):
+        """Arm the latch (explicit mode). Returns False if already attached."""
+        if self.state == ATTACHED:
+            return False
+        self.state = REQUESTED
+        return True
+
+    def request_detach(self):
+        """Release the tip; it stays where the physics leaves it."""
+        if self.state == DETACHED:
+            return False
+        self.state = DETACHED
+        self._t_latch = None
+        self._tip0 = None
+        self._q_offset = None
+        self.sync_target_to_tip()
+        return True
+
+    def in_range(self):
+        """Geometric attach condition, evaluated on the last update_grasp call."""
+        return (self._distance <= self.attach_distance
+                and -0.05 <= self._height <= self.attach_height)
 
     def on_fixture(self, pose7):
         """Relocate the (still straight) cable onto the fixture, once.
@@ -81,15 +132,15 @@ class GraspCoupling:
         if not self.fixture_set:
             return False
         tip = self.cable.tip_pose()
+        self._distance = math.dist(grasp_pose7[:2], tip[:2])
+        self._height = grasp_pose7[2] - self._fixture_z
 
-        if not self.latched:
-            # snap only when the gripper is at table height (within
-            # attach_height of the cable plane) AND near the free end
-            dxy = math.dist(grasp_pose7[:2], tip[:2])
-            dz = grasp_pose7[2] - self._fixture_z
-            if dxy > self.attach_distance or dz > self.attach_height or dz < -0.05:
+        if self.state != ATTACHED:
+            # "explicit" waits for a supervisor request; "proximity" self-arms
+            armed = self.state == REQUESTED or self.attach_mode == "proximity"
+            if not armed or not self.in_range():
                 return False
-            self.latched = True
+            self.state = ATTACHED
             self._t_latch = now_s
             self._tip0 = tip
             gq = tuple(grasp_pose7[3:7])

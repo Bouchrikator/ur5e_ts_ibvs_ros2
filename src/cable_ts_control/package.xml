@@ -1,19 +1,27 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>sofa_ros2_adapter</name>
+  <name>cable_ts_control</name>
   <version>0.1.0</version>
-  <description>Runs the SOFA Cosserat cable in-process with rclpy: TF-driven boundary, publishes centerline frames and markers</description>
+  <description>Outer cable shape loop: modal state reduction, Takagi-Sugeno PDC control, reference projection into the eye-to-hand IBVS loop, and mission sequencing.</description>
   <maintainer email="miko.boucherika@gmail.com">Bouchrikator</maintainer>
   <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>cable_msgs</exec_depend>
   <exec_depend>cable_identification</exec_depend>
+  <exec_depend>ibvs_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
