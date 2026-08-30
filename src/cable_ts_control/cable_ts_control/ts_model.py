@@ -65,7 +65,8 @@ class CableTsModel:
     """Vertex matrices of the reduced cable plus the PDC gains."""
 
     def __init__(self, a_vertices, b_vertices, premise_bounds, sample_time,
-                 gains=None, lyapunov=None, parameter_bounds=None):
+                 gains=None, lyapunov=None, parameter_bounds=None,
+                 n_modes=None):
         self.a_vertices = [np.asarray(a, dtype=float) for a in a_vertices]
         self.b_vertices = [np.asarray(b, dtype=float) for b in b_vertices]
         self.premise_bounds = [tuple(float(v) for v in pair) for pair in premise_bounds]
@@ -73,6 +74,9 @@ class CableTsModel:
         self.gains = None if gains is None else [np.asarray(k, dtype=float) for k in gains]
         self.lyapunov = None if lyapunov is None else np.asarray(lyapunov, dtype=float)
         self.parameter_bounds = parameter_bounds or {}
+        # Explicit, because the state may carry more than [q, qdot]: with the
+        # gripper position appended, state_dim // 2 is simply wrong.
+        self.n_modes = (self.state_dim // 2 if n_modes is None else int(n_modes))
         self._validate()
 
     def _validate(self):
@@ -167,6 +171,7 @@ class CableTsModel:
             "state_dim": int(self.state_dim),
             "input_dim": int(self.input_dim),
             "n_rules": int(self.n_rules),
+            "n_modes": int(self.n_modes),
             "sample_time": self.sample_time,
             "premise_bounds": [list(pair) for pair in self.premise_bounds],
             "A": [a.flatten(order="C").tolist() for a in self.a_vertices],
@@ -198,7 +203,8 @@ class CableTsModel:
         lyapunov = (np.asarray(section["P"], dtype=float).reshape((n, n), order="C")
                     if "P" in section else None)
         return cls(a, b, section["premise_bounds"], section["sample_time"],
-                   gains, lyapunov, section.get("parameter_bounds"))
+                   gains, lyapunov, section.get("parameter_bounds"),
+                   section.get("n_modes"))
 
     @classmethod
     def load(cls, path, gains_path=None):

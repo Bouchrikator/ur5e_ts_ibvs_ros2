@@ -264,7 +264,8 @@ def main(argv=None):
             "values": parameter_values.tolist(),
             "A": [[a.flatten().tolist() for a in group] for group in a_sets],
             "B": [[b.flatten().tolist() for b in group] for group in b_sets],
-        })
+        },
+        n_modes=n_modes)
     model.save(args.output)
     print(f"\nwrote {args.output}")
     return 0

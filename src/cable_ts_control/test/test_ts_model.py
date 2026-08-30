@@ -221,3 +221,35 @@ def test_gains_can_be_loaded_from_a_separate_file(tmp_path):
     assert loaded.gains is not None
     assert loaded.gains[0] == pytest.approx(gains[0])
     assert loaded.lyapunov == pytest.approx(np.eye(4))
+
+
+# -- the mode count is not the state dimension ---------------------------
+
+
+def test_n_modes_defaults_to_half_the_state():
+    """Backward compatible for the plain [q, qdot] state."""
+    assert make_model().n_modes == 2
+
+
+def test_n_modes_is_independent_of_the_state_dimension():
+    """With the gripper appended the state is [q, qdot, p_g]: 6 dims, 2 modes.
+
+    Inferring it as state_dim // 2 gives 3 and silently mis-sizes every target.
+    """
+    a = [np.eye(6) for _ in range(4)]
+    b = [np.zeros((6, 2)) for _ in range(4)]
+    model = CableTsModel(a, b, [(-1.0, 1.0), (-1.0, 1.0)], 0.04, n_modes=2)
+
+    assert model.state_dim == 6
+    assert model.n_modes == 2
+
+
+def test_n_modes_survives_a_save_load_round_trip(tmp_path):
+    a = [np.eye(6) for _ in range(4)]
+    b = [np.zeros((6, 2)) for _ in range(4)]
+    model = CableTsModel(a, b, [(-1.0, 1.0), (-1.0, 1.0)], 0.04, n_modes=2)
+
+    path = tmp_path / "model.yaml"
+    model.save(path)
+
+    assert CableTsModel.load(path).n_modes == 2

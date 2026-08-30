@@ -108,18 +108,31 @@ class CableTsControllerNode(Node):
     def _on_state(self, msg):
         if not msg.valid:
             return
-        self._state = np.asarray(msg.state, dtype=float)
+        state = np.asarray(msg.state, dtype=float)
+        if state.size != self.model.state_dim:
+            # The reducer and the identified model must agree on the state, or
+            # the gains are applied to something they were never designed for.
+            self.get_logger().error(
+                f"reduced state has {state.size} entries but the model expects "
+                f"{self.model.state_dim}; refusing to control",
+                throttle_duration_sec=10.0)
+            return
+        self._state = state
         self._state_stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
 
     def _on_target(self, msg):
         q_star = np.asarray(msg.modal_coordinates, dtype=float)
-        n_modes = self.model.state_dim // 2
+        n_modes = self.model.n_modes
         if q_star.size != n_modes:
             self.get_logger().warn(
                 f"target has {q_star.size} modal coordinates, expected {n_modes}")
             return
-        # A shape target is a rest condition: reach it and stop there.
-        self._target = np.concatenate([q_star, np.zeros(n_modes)])
+        # A shape target is a rest condition: reach it and stop there. Any
+        # remaining state entries (the gripper) are regulated to their
+        # reference, which is zero by construction of the identified model.
+        target = np.zeros(self.model.state_dim)
+        target[:n_modes] = q_star
+        self._target = target
 
     def _on_parameter(self, msg):
         if msg.std_dev > self.max_std_dev:
