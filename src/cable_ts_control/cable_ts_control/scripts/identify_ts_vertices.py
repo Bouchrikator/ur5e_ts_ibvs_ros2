@@ -90,6 +90,14 @@ def main(argv=None):
     parser.add_argument("--allow-active-damping", action="store_true",
                         help="skip the PSD projection of the fitted stiffness "
                              "and damping")
+    parser.add_argument("--coherence", type=float, default=0.0,
+                        help="penalty pulling each rule towards the mean rule. "
+                             "Raising it buys LMI feasibility, but it does so "
+                             "by collapsing the rules together: at 10 the rule "
+                             "spread falls from 1.92 to 0.02 and the model is "
+                             "effectively one LTI system, with the free-running "
+                             "error rising from 289 to 938 mm. Off by default "
+                             "so it cannot silently hide a modelling problem")
     parser.add_argument("--ridge", type=float, default=1e-8)
     args = parser.parse_args(argv)
 
@@ -199,7 +207,8 @@ def main(argv=None):
             a_vertices, b_vertices = fit_structured_fuzzy_model(
                 states, commands, next_states, memberships, dt, n_modes,
                 ridge=args.ridge,
-                enforce_passive=not args.allow_active_damping)
+                enforce_passive=not args.allow_active_damping,
+                coherence=args.coherence)
             offsets = None
 
         rho = max(float(np.max(np.abs(np.linalg.eigvals(a))))

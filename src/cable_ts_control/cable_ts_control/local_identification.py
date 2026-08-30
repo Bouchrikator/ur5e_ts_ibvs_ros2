@@ -128,7 +128,7 @@ def fit_fuzzy_model(states, commands, next_states, memberships, ridge=0.0,
 
 def fit_structured_fuzzy_model(states, commands, next_states, memberships, dt,
                                n_modes, ridge=0.0, enforce_passive=True,
-                               floor_ratio=0.05):
+                               floor_ratio=0.05, coherence=0.0):
     """Second-order structured fit of the reduced cable.
 
     An unstructured fit has to discover from data that a cable is a mechanical
@@ -151,6 +151,12 @@ def fit_structured_fuzzy_model(states, commands, next_states, memberships, dt,
 
     The continuous model is discretised exactly, not by forward Euler: at a
     40 ms period an Euler step of a stiff rod is not a stability guarantee.
+
+    ``coherence`` penalises each rule's deviation from the mean rule. The
+    plant is smooth, so local models at neighbouring corners of the premise box
+    must be close; without the penalty the fit lets them drift far apart, and a
+    single Lyapunov matrix then cannot cover all of them even though each rule
+    is individually stabilisable.
 
     Returns ``(a_vertices, b_vertices)`` already in discrete time.
     """
@@ -182,6 +188,13 @@ def fit_structured_fuzzy_model(states, commands, next_states, memberships, dt,
         regressor = np.vstack([regressor, np.sqrt(ridge) * np.eye(width)])
         acceleration = np.vstack(
             [acceleration, np.zeros((width, acceleration.shape[1]))])
+    if coherence > 0.0:
+        # Shrink towards the mean rule, not towards zero.
+        centring = np.kron(np.eye(n_rules) - np.ones((n_rules, n_rules)) / n_rules,
+                           np.eye(block))
+        regressor = np.vstack([regressor, np.sqrt(coherence) * centring])
+        acceleration = np.vstack(
+            [acceleration, np.zeros((len(centring), acceleration.shape[1]))])
     theta, *_ = np.linalg.lstsq(regressor, acceleration, rcond=None)
 
     a_vertices, b_vertices = [], []

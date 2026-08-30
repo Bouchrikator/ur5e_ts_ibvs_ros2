@@ -304,26 +304,58 @@ full EI uncertainty range is now certifiable at fixed damping.
 
 ### 4.7 What is still open
 
-The damping extremes still break the shared certificate. That is suspicious
-rather than physical — more damping should make stabilisation *easier* — and
-the most likely culprit is the lag of the causal velocity filter growing with
-damping, which the model cannot represent. Narrowing the damping band to
-`[0.018, 0.022]` did not by itself restore feasibility, so the remaining work
-is:
+**The LMI implementation is not the problem.** It was checked line by line
+against Tanaka & Wang (2001): the basic conditions match (3.19)–(3.20) and the
+relaxed ones match (3.27)–(3.28). Taking the Schur complement of the
+implemented blocks returns `G'PG − P + (s−1)PYP < 0` and `H'PH − P − PYP ≤ 0`,
+i.e. exactly Theorem 10 with `Q = PYP`.
+
+Three hypotheses were tested:
+
+| Hypothesis | Result |
+|---|---|
+| Bad state scaling | **no** — three similarity transforms, all still infeasible |
+| Not enough gain freedom | **no** — parameters as premises (16 rules, 16 gains) still infeasible |
+| Rules too dissimilar | **yes** |
+
+Within a *single* parameter vertex the four rules differ by
+`max‖Aᵢ−Aⱼ‖ = 1.92` against `‖A‖ ≈ 2.5`, and `max‖Bᵢ−Bⱼ‖ = 2.05` against
+`‖B‖ ≈ 1.0`. Local linearisations of one smooth plant at neighbouring corners
+of the premise box should be far closer than that.
+
+A coherence penalty shrinking each rule towards the mean rule (`--coherence`)
+confirms the mechanism, and does produce a certified controller:
+
+| coherence | rule spread ‖ΔA‖ | 4-vertex LMI | free-running error |
+|---|---|---|---|
+| 0 | 1.92 | infeasible | 289 mm |
+| 1 | 0.12 | infeasible | 833 mm |
+| 10 | **0.02** | **feasible**, `max eig(G'PG−P) = 3.7e-09`, `ρ = 0.9954` | 938 mm |
+
+**This is not the fix.** At coherence 10 the rules are nearly identical, so the
+TS model has collapsed to a single LTI system — the fuzzy structure that
+justifies PDC has been regularised away — and the free-running error more than
+triples. The one-step error is flat (4.36–4.48 mm) across the whole sweep, so
+the penalty buys certifiability without buying accuracy. It is off by default
+for that reason: a diagnostic, not a solution.
+
+The real remaining work, in order:
 
 1. **Equilibrium-centred state.** The regulator LMIs assume the origin is an
    equilibrium. `q* = [0, 0]` is the PCA mean of a dynamic dataset, not a
-   static cable equilibrium, so a forcing term
-   `(Σ hᵢ Aᵢ x* − x*)` is missing from the analysis. Find a real
-   `(q*, p_g*)` pair by settling SOFA at a held gripper pose.
-2. **Basis from training trajectories only.** It is currently built from all
-   trajectories, which leaks validation information into the representation.
-3. **Marker-space error budget.** 2 modes reconstruct to ~13 mm, which cannot
-   support a 5 mm marker-space claim; select the mode count on held-out marker
-   error, not explained energy.
-4. **Runtime state.** The reducer still publishes `[q, q̇]`; the identified
-   model now expects `[q, q̇, p_g]`, so the controller must be updated before
-   these gains could run.
+   static cable equilibrium, so a forcing term `(Σ hᵢ Aᵢ x* − x*)` is missing
+   from the analysis. Settle SOFA at a held gripper pose for a real
+   `(q*, p_g*)`.
+2. **Marker-space error budget.** 2 modes reconstruct to ~13 mm, which cannot
+   support a 5 mm marker-space claim. That the one-step error sits at ~4.4 mm
+   regardless of every fitting change points here: the basis, not the fit, is
+   the accuracy floor. Choose the mode count on held-out marker error, not
+   explained energy.
+3. **Basis from training trajectories only** — currently built from all of
+   them, leaking validation information into the representation.
+4. **Runtime state.** The reducer still publishes `[q, q̇]`; the model now
+   expects `[q, q̇, p_g]`, so the controller must be updated before any gains
+   could run.
 
 ---
 
