@@ -32,6 +32,10 @@ namespace
 struct Vec3 { double x, y, z; };
 struct Quat { double x, y, z, w; };
 
+// Leftover fiducials from an earlier run must be cleared even when this run
+// spawns none, so the sweep uses a fixed bound rather than the marker count.
+constexpr size_t kMaxMarkers = 16;
+
 Quat quatZTo(const Vec3 & d)
 {
   if (d.z > 0.999999) return {0, 0, 0, 1};
@@ -54,8 +58,11 @@ Vec3 rotate(const Quat & q, const Vec3 & v)
 }
 
 // Marker colours, one hue per identity, matching the HSV windows in
-// cable_marker_tracker_node. Persistent identity is the whole point: a
-// uniformly coloured cable gives the tracker no way to tell marker 3 from 5.
+// cable_marker_tracker_node. These spheres are an OPT-IN fiducial baseline,
+// off by default: a real cable carries no coloured beads, and
+// cable_dlo_detector_node recovers the centreline from the cable itself
+// (Keipour et al., RA-L 2022). Set marker_s_over_l to enable them when you
+// want to compare against the fiducial-based tracker.
 constexpr double kMarkerRgb[7][3] = {
   {1.00, 0.17, 0.00},   // red
   {1.00, 0.53, 0.00},   // orange
@@ -79,7 +86,7 @@ public:
     radius_ = declare_parameter<double>("radius", 0.006);
     marker_radius_ = declare_parameter<double>("marker_radius", 0.011);
     marker_s_ = declare_parameter<std::vector<double>>(
-      "marker_s_over_l", {0.10, 0.25, 0.40, 0.55, 0.70, 0.85, 1.00});
+      "marker_s_over_l", std::vector<double>{});
     const double rate = declare_parameter<double>("update_rate_hz", 30.0);
     // Visual cable follows the TRUTH plant only: rendering the estimator would
     // show a shape that does not exist in the experiment.
@@ -126,7 +133,7 @@ private:
         if (i > 60) break;  // beyond any plausible segment count
       }
     }
-    for (size_t i = 0; i < marker_s_.size(); ++i) {
+    for (size_t i = 0; i < kMaxMarkers; ++i) {
       gz::msgs::Entity req;
       req.set_name("cable_marker_" + std::to_string(i));
       req.set_type(gz::msgs::Entity::MODEL);

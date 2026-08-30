@@ -28,26 +28,26 @@ def make_dataset(n_samples=200, seed=0):
 
 
 def test_basis_columns_are_orthonormal():
-    _, phi, _ = build_modal_basis(make_dataset(), n_modes=2)
+    _, phi, _, _ = build_modal_basis(make_dataset(), n_modes=2)
 
     assert phi.T @ phi == pytest.approx(np.eye(2), abs=1e-9)
 
 
 def test_mean_matches_the_dataset_mean():
     shapes = make_dataset()
-    mean, _, _ = build_modal_basis(shapes, n_modes=2)
+    mean, _, _, _ = build_modal_basis(shapes, n_modes=2)
 
     assert mean == pytest.approx(shapes.mean(axis=0))
 
 
 def test_two_modes_capture_almost_all_the_energy():
-    _, _, singular_values = build_modal_basis(make_dataset(), n_modes=2)
+    _, _, singular_values, _ = build_modal_basis(make_dataset(), n_modes=2)
 
     assert explained_variance_ratio(singular_values, 2) > 0.999
 
 
 def test_explained_variance_is_monotonic():
-    _, _, singular_values = build_modal_basis(make_dataset(), n_modes=3)
+    _, _, singular_values, _ = build_modal_basis(make_dataset(), n_modes=3)
     ratios = [explained_variance_ratio(singular_values, k) for k in (1, 2, 3)]
 
     assert ratios[0] <= ratios[1] <= ratios[2]
@@ -55,7 +55,7 @@ def test_explained_variance_is_monotonic():
 
 def test_project_and_reconstruct_round_trip_a_training_shape():
     shapes = make_dataset()
-    mean, phi, _ = build_modal_basis(shapes, n_modes=2)
+    mean, phi, _, _ = build_modal_basis(shapes, n_modes=2)
     basis = ModalBasis(mean, phi)
 
     recovered = basis.reconstruct(basis.project(shapes[0]))
@@ -65,7 +65,7 @@ def test_project_and_reconstruct_round_trip_a_training_shape():
 
 def test_reconstruction_rmse_is_small_on_training_data():
     shapes = make_dataset()
-    mean, phi, _ = build_modal_basis(shapes, n_modes=2)
+    mean, phi, _, _ = build_modal_basis(shapes, n_modes=2)
     basis = ModalBasis(mean, phi)
 
     assert basis.reconstruction_rmse(shapes[5]) < 1e-4
@@ -74,7 +74,7 @@ def test_reconstruction_rmse_is_small_on_training_data():
 def test_projection_recovers_amplitudes_despite_missing_markers():
     """Dropout must not stop the reduced state from being identified."""
     shapes = make_dataset()
-    mean, phi, _ = build_modal_basis(shapes, n_modes=2)
+    mean, phi, _, _ = build_modal_basis(shapes, n_modes=2)
     basis = ModalBasis(mean, phi)
 
     full = basis.project(shapes[3])
@@ -88,7 +88,7 @@ def test_projection_recovers_amplitudes_despite_missing_markers():
 
 def test_projection_fails_when_too_few_entries_remain():
     shapes = make_dataset()
-    mean, phi, _ = build_modal_basis(shapes, n_modes=2)
+    mean, phi, _, _ = build_modal_basis(shapes, n_modes=2)
     basis = ModalBasis(mean, phi)
 
     valid = np.zeros(shapes.shape[1], dtype=bool)
@@ -99,7 +99,7 @@ def test_projection_fails_when_too_few_entries_remain():
 
 
 def test_wrong_sized_shape_vector_is_rejected():
-    mean, phi, _ = build_modal_basis(make_dataset(), n_modes=2)
+    mean, phi, _, _ = build_modal_basis(make_dataset(), n_modes=2)
     basis = ModalBasis(mean, phi)
 
     with pytest.raises(ValueError):
@@ -107,7 +107,7 @@ def test_wrong_sized_shape_vector_is_rejected():
 
 
 def test_wrong_sized_amplitudes_are_rejected():
-    mean, phi, _ = build_modal_basis(make_dataset(), n_modes=2)
+    mean, phi, _, _ = build_modal_basis(make_dataset(), n_modes=2)
     basis = ModalBasis(mean, phi)
 
     with pytest.raises(ValueError):
@@ -121,7 +121,7 @@ def test_requesting_more_modes_than_the_data_supports_is_rejected():
 
 def test_yaml_round_trip_preserves_the_basis(tmp_path):
     shapes = make_dataset()
-    mean, phi, singular_values = build_modal_basis(shapes, n_modes=2)
+    mean, phi, singular_values, _ = build_modal_basis(shapes, n_modes=2)
     basis = ModalBasis(mean, phi, [0.1, 0.5, 1.0], singular_values)
 
     path = tmp_path / "basis.yaml"

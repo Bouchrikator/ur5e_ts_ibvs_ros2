@@ -8,6 +8,19 @@ to exactly one 3-D point through a ray/plane intersection.
 import numpy as np
 
 
+def quaternion_to_matrix(x, y, z, w):
+    """Rotation matrix of a unit quaternion (no external dependency)."""
+    n = np.sqrt(x * x + y * y + z * z + w * w)
+    if n == 0.0:
+        raise ValueError("zero-norm quaternion")
+    x, y, z, w = x / n, y / n, z / n, w / n
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
 def pixel_to_ray(u, v, fx, fy, cx, cy):
     """Unit direction of the optical ray through pixel (u, v), camera frame."""
     if fx == 0.0 or fy == 0.0:

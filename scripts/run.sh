@@ -11,6 +11,7 @@
 #   Real robot:  ./run.sh real ts_lmi_d  [extra args]  (driver+camera+servo)
 #   Tools:       ./run.sh plotjuggler
 #   SOFA:        ./run.sh sofa [scene]   (host ~/SOFA/scenes → /scenes)
+#                ./run.sh cosserat       (restore the Cosserat plugin)
 #   Cable:       ./run.sh cable_plugin_test | cable_forward_test
 #                ./run.sh cable_sim      (Gazebo UR5e + SOFA Cosserat cable)
 #                ./run.sh cable_identify_sim  (2 SOFA models + EI identification)
@@ -35,11 +36,17 @@ in_container() {
     "source /ros2_ws/install/setup.bash && $*"
 }
 
-# Cable commands run in the persistent container (docker compose up -d):
-# its overlay carries the Cosserat plugin + cable packages until the image
-# is rebuilt with ./run.sh build.
+# Cable commands run in the persistent container (docker compose up -d).
+# Cosserat lives in the container overlay, so a `compose down` destroys it;
+# ensure_cosserat reinstalls the pinned release (idempotent, ~1 min) instead of
+# forcing a full image rebuild.
+ensure_cosserat() {
+  docker compose exec -T ur5e_ts_ibvs bash /ros2_ws/scripts/install_cosserat.sh
+}
+
 in_live() {
   docker compose up -d >/dev/null 2>&1
+  ensure_cosserat
   docker compose exec ur5e_ts_ibvs bash -c \
     "source /ros2_ws/install/setup.bash && $*"
 }
@@ -94,6 +101,10 @@ case "$CMD" in
     # runSofa wrapper auto-loads SofaPython3 for .py scenes
     docker compose run --rm ur5e_ts_ibvs runSofa "$@"
     ;;
+  cosserat)
+    docker compose up -d >/dev/null 2>&1
+    ensure_cosserat
+    ;;
   cable_plugin_test)
     in_live "ros2 run cable_identification cable_plugin_test"
     ;;
@@ -143,7 +154,7 @@ case "$CMD" in
       --event-handlers console_direct+ && colcon test-result --verbose"
     ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_sim|cable_identify_sim|cable_closed_loop|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_sim|cable_identify_sim|cable_closed_loop|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
     exit 1
     ;;
 esac

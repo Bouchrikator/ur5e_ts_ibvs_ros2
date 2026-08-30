@@ -54,14 +54,15 @@ def generate_launch_description():
         }],
     )
 
-    # sofa_gui:=true -> the coupled cable runs inside the runSofa GUI instead
+    # sofa_gui:=true -> the SAME truth plant runs inside the runSofa GUI.
+    # Exactly one of the two owns the physics, hence the mirrored conditions.
     cable_sofa_gui = ExecuteProcess(
         cmd=["runSofa", "-a",
              PathJoinSubstitution([FindPackageShare("cable_identification"),
                                    "sofa", "cable_scene.py"])],
         output="screen",
         condition=IfCondition(sofa_gui),
-        additional_env={"CABLE_CONFIG": ""},
+        additional_env={"CABLE_CONFIG": cable_config},
     )
 
     cable_visual = Node(
@@ -79,8 +80,10 @@ def generate_launch_description():
         DeclareLaunchArgument("ur_type", default_value="ur5e"),
         DeclareLaunchArgument("gazebo_gui", default_value="true"),
         DeclareLaunchArgument("launch_rviz", default_value="false"),
-        DeclareLaunchArgument("sofa_gui", default_value="false",
-                              description="Run the cable in the runSofa GUI"),
+        # This launch exists to LOOK at the simulation, so the SOFA window is
+        # on by default here. The experiment launch stays headless.
+        DeclareLaunchArgument("sofa_gui", default_value="true",
+                              description="Run the truth cable in the runSofa GUI"),
         DeclareLaunchArgument(
             "cable_config",
             default_value=PathJoinSubstitution([

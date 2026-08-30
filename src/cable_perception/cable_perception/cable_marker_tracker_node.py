@@ -23,20 +23,8 @@ from sensor_msgs.msg import CameraInfo, Image
 
 from cable_msgs.msg import CableMarker, CableMarkerArray
 
-from cable_perception.table_projection import project_pixels_to_plane
-
-
-def quaternion_to_matrix(x, y, z, w):
-    """Rotation matrix of a unit quaternion (no external dependency)."""
-    n = np.sqrt(x * x + y * y + z * z + w * w)
-    if n == 0.0:
-        raise ValueError("zero-norm quaternion")
-    x, y, z, w = x / n, y / n, z / n, w / n
-    return np.array([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ])
+from cable_perception.table_projection import (
+    project_pixels_to_plane, quaternion_to_matrix)
 
 
 def detect_colour_blob(hsv, lower, upper, min_area_px):

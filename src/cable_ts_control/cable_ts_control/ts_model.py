@@ -20,6 +20,8 @@ scripts, the LMI solver and the controller node.
 import numpy as np
 import yaml
 
+from cable_ts_control.premises import ModalPremises, premise_map_from_dict
+
 
 def triangular_memberships(value, lower, upper):
     """Two complementary memberships of a scalar premise on [lower, upper].
@@ -66,7 +68,7 @@ class CableTsModel:
 
     def __init__(self, a_vertices, b_vertices, premise_bounds, sample_time,
                  gains=None, lyapunov=None, parameter_bounds=None,
-                 n_modes=None):
+                 n_modes=None, premise_map=None):
         self.a_vertices = [np.asarray(a, dtype=float) for a in a_vertices]
         self.b_vertices = [np.asarray(b, dtype=float) for b in b_vertices]
         self.premise_bounds = [tuple(float(v) for v in pair) for pair in premise_bounds]
@@ -74,6 +76,9 @@ class CableTsModel:
         self.gains = None if gains is None else [np.asarray(k, dtype=float) for k in gains]
         self.lyapunov = None if lyapunov is None else np.asarray(lyapunov, dtype=float)
         self.parameter_bounds = parameter_bounds or {}
+        # How the premises are computed from the state. The default reproduces
+        # the original convention, premises = leading state components.
+        self.premise_map = premise_map or ModalPremises(len(self.premise_bounds))
         # Explicit, because the state may carry more than [q, qdot]: with the
         # gripper position appended, state_dim // 2 is simply wrong.
         self.n_modes = (self.state_dim // 2 if n_modes is None else int(n_modes))
@@ -100,6 +105,10 @@ class CableTsModel:
                     raise ValueError(f"every gain must be {m}x{n}, got {k.shape}")
         if self.sample_time <= 0.0:
             raise ValueError("sample_time must be > 0")
+        if self.premise_map.n_premises != len(self.premise_bounds):
+            raise ValueError(
+                f"premise map yields {self.premise_map.n_premises} premises "
+                f"but {len(self.premise_bounds)} bound pairs were given")
 
     @property
     def state_dim(self):
@@ -128,7 +137,7 @@ class CableTsModel:
         state = np.asarray(state, dtype=float)
         command = np.asarray(command, dtype=float)
         if premises is None:
-            premises = state[:len(self.premise_bounds)]
+            premises = self.premise_map(state)
         a, b, _ = self.blend(premises)
         return a @ state + b @ command
 
@@ -139,7 +148,7 @@ class CableTsModel:
         state = np.asarray(state, dtype=float)
         reference = np.asarray(reference, dtype=float)
         error = state - reference
-        h = self.memberships(state[:len(self.premise_bounds)])
+        h = self.memberships(self.premise_map(state))
         gain = sum(w * k for w, k in zip(h, self.gains))
         return -gain @ error, h
 
@@ -174,6 +183,7 @@ class CableTsModel:
             "n_modes": int(self.n_modes),
             "sample_time": self.sample_time,
             "premise_bounds": [list(pair) for pair in self.premise_bounds],
+            "premise_map": self.premise_map.to_dict(),
             "A": [a.flatten(order="C").tolist() for a in self.a_vertices],
             "B": [b.flatten(order="C").tolist() for b in self.b_vertices],
         }
@@ -204,7 +214,8 @@ class CableTsModel:
                     if "P" in section else None)
         return cls(a, b, section["premise_bounds"], section["sample_time"],
                    gains, lyapunov, section.get("parameter_bounds"),
-                   section.get("n_modes"))
+                   section.get("n_modes"),
+                   premise_map_from_dict(section.get("premise_map")))
 
     @classmethod
     def load(cls, path, gains_path=None):

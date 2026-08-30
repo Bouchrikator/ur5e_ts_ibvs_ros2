@@ -14,6 +14,7 @@ SOFA in the loop.
 
 import numpy as np
 
+from cable_ts_control.premises import ModalPremises
 from cable_ts_control.ts_model import rule_memberships
 
 
@@ -128,7 +129,8 @@ def fit_fuzzy_model(states, commands, next_states, memberships, ridge=0.0,
 
 def fit_structured_fuzzy_model(states, commands, next_states, memberships, dt,
                                n_modes, ridge=0.0, enforce_passive=True,
-                               floor_ratio=0.05, coherence=0.0):
+                               floor_ratio=0.05, coherence=0.0,
+                               input_feedthrough=True):
     """Second-order structured fit of the reduced cable.
 
     An unstructured fit has to discover from data that a cable is a mechanical
@@ -158,6 +160,16 @@ def fit_structured_fuzzy_model(states, commands, next_states, memberships, dt,
     single Lyapunov matrix then cannot cover all of them even though each rule
     is individually stabilisable.
 
+    ``input_feedthrough`` keeps the direct ``G u`` term. With the boundary
+    block in the basis the gripper acts on the cable through its POSITION,
+    which is already the state ``g``; the grasp damper acts on the relative
+    velocity, and the tip's own velocity is part of ``qdot``. What is left for
+    ``G`` is nearly collinear with the ``D qdot`` column, so the two trade off
+    freely and every rule picks a different split - which is what drives the
+    rule input matrices apart. Setting it False is a constitutive statement
+    (a position-driven boundary), and its cost is visible in the held-out
+    error, so it can be checked rather than assumed.
+
     Returns ``(a_vertices, b_vertices)`` already in discrete time.
     """
     from scipy.linalg import expm
@@ -178,9 +190,11 @@ def fit_structured_fuzzy_model(states, commands, next_states, memberships, dt,
     acceleration = (next_states[:, n_modes:2 * n_modes]
                     - states[:, n_modes:2 * n_modes]) / dt
     features = states
-    block = n_state + n_input
+    block = n_state + (n_input if input_feedthrough else 0)
+    columns = ([np.hstack([features, commands])] if input_feedthrough
+               else [features])
     regressor = (memberships[:, :, None]
-                 * np.hstack([features, commands])[:, None, :]).reshape(
+                 * np.hstack(columns)[:, None, :]).reshape(
         len(states), n_rules * block)
 
     if ridge > 0.0:
@@ -203,7 +217,8 @@ def fit_structured_fuzzy_model(states, commands, next_states, memberships, dt,
         stiffness = -chunk[:n_modes].T
         damping = -chunk[n_modes:2 * n_modes].T
         boundary = chunk[2 * n_modes:n_state].T
-        gain = chunk[n_state:].T
+        gain = (chunk[n_state:].T if input_feedthrough
+                else np.zeros((n_modes, n_input)))
 
         if enforce_passive:
             stiffness = _project_psd(stiffness, floor_ratio)
@@ -245,15 +260,15 @@ def _project_psd(matrix, floor_ratio=0.0):
 
 
 def blended_predict(a_vertices, b_vertices, premise_bounds, states, commands,
-                    offsets=None):
+                    offsets=None, premise_map=None):
     """One-step predictions of the full fuzzy model, from true states."""
-    n_premises = len(premise_bounds)
+    premise_map = premise_map or ModalPremises(len(premise_bounds))
     states = np.asarray(states, dtype=float)
     commands = np.asarray(commands, dtype=float)
 
     predicted = np.zeros_like(states)
     for step, (state, command) in enumerate(zip(states, commands)):
-        weights = rule_memberships(state[:n_premises], premise_bounds)
+        weights = rule_memberships(premise_map(state), premise_bounds)
         a = sum(w * m for w, m in zip(weights, a_vertices))
         b = sum(w * m for w, m in zip(weights, b_vertices))
         value = a @ state + b @ command
@@ -264,20 +279,20 @@ def blended_predict(a_vertices, b_vertices, premise_bounds, states, commands,
 
 
 def blended_rollout(a_vertices, b_vertices, premise_bounds, initial_state,
-                    commands, offsets=None):
+                    commands, offsets=None, premise_map=None):
     """Free-running trajectory of the FULL fuzzy model.
 
     The memberships are recomputed from the predicted premise at every step,
     which is what the plant and controller actually do. Freezing one local
     model for the whole horizon measures something the model never claims.
     """
-    n_premises = len(premise_bounds)
+    premise_map = premise_map or ModalPremises(len(premise_bounds))
     state = np.asarray(initial_state, dtype=float).copy()
     commands = np.asarray(commands, dtype=float)
 
     predicted = np.zeros((len(commands), state.size))
     for step, command in enumerate(commands):
-        weights = rule_memberships(state[:n_premises], premise_bounds)
+        weights = rule_memberships(premise_map(state), premise_bounds)
         a = sum(w * m for w, m in zip(weights, a_vertices))
         b = sum(w * m for w, m in zip(weights, b_vertices))
         state = a @ state + b @ command
@@ -289,7 +304,7 @@ def blended_rollout(a_vertices, b_vertices, premise_bounds, initial_state,
 
 def blended_rollout_rmse(a_vertices, b_vertices, premise_bounds, initial_state,
                          commands, reference_states, offsets=None,
-                         position_dim=None):
+                         position_dim=None, premise_map=None):
     """RMS error of a full fuzzy rollout against a contiguous reference.
 
     ``reference_states`` must be the real successors of ``commands`` in their
@@ -300,7 +315,7 @@ def blended_rollout_rmse(a_vertices, b_vertices, premise_bounds, initial_state,
         raise ValueError("commands and reference_states must have the same length")
 
     predicted = blended_rollout(a_vertices, b_vertices, premise_bounds,
-                                initial_state, commands, offsets)
+                                initial_state, commands, offsets, premise_map)
     residual = predicted - reference_states
     if position_dim is not None:
         residual = residual[:, :position_dim]

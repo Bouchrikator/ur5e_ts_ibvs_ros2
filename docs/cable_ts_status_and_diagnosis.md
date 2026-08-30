@@ -9,15 +9,31 @@ reproduce each number are given.
 ## 1. Summary
 
 The plant, the observation pipeline and the online parameter identification
-work and are verified. The **reduced TS model cannot yet be certified**: the
-LMI synthesis is infeasible because the four local rule models drift too far
-apart to share one quadratic Lyapunov function. Section 4 is the full
-diagnosis, including two retracted claims from the first version of this
-document.
+work and are verified. The reduced model is now good enough to be worth
+certifying — the free-running rollout is inside the 50 mm gate on a matched
+dataset for the first time — but the **PDC synthesis is still infeasible**.
+Section 4 is the full diagnosis.
 
-Current model: state `[q₁ q₂ q̇₁ q̇₂ p_gx p_gy]` (6), input `[v_x v_y]` (2),
-4 rules, `Ts = 0.04 s` (25 Hz). Envelope `EI ∈ [0.005, 0.015]`,
+Current model: 3 modes, state `[q₁ q₂ q₃ q̇₁ q̇₂ q̇₃ p_gx p_gy]` (8), input
+`[v_x v_y]` (2), 4 rules, `Ts = 0.04 s` (25 Hz). Envelope `EI ∈ [0.005, 0.015]`,
 `rayleigh_stiffness ∈ [0.018, 0.022]`.
+
+Four real bugs were found and fixed on 2026-08-30 (sections 5.11–5.14). Their
+combined effect, measured on one fixed dataset (400 steps × 5 trajectories × 4
+parameter vertices) so that only the pipeline changed:
+
+| metric | before | after |
+|---|---|---|
+| basis reconstruction (3 modes) | 8.87 mm | **3.50 mm** |
+| held-out one-step, marker space | 12.35 mm | **3.76 mm** |
+| held-out free-running rollout | 109.5 mm | **32.5 mm** |
+| `corr(q, gripper)` | 0.76 | **0.00** |
+| 4-vertex LMI | infeasible | infeasible |
+
+On the shipped defaults (600 steps × 6 trajectories, a longer and wider
+excitation) the same pipeline gives 3.50 mm reconstruction, 4.13 mm one-step
+and 56.8 mm rollout. The rollout is the harsh metric and it is still the one to
+watch.
 
 | Plan step | Status |
 |---|---|
@@ -28,21 +44,20 @@ Current model: state `[q₁ q₂ q̇₁ q̇₂ p_gx p_gy]` (6), input `[v_x v_y]
 | 2.4 — Table model | **Done.** Planar constraint (was a silent no-op, see 5.1) |
 | 3 — Truth / estimator split | **Done.** Verified non-circular |
 | 4.1 — Synthetic observations | **Done** |
-| 4.2 — Camera tracker | **Code done, never run against a live camera** |
+| 4.2 — Camera observations | **Done, never run against a live camera.** Now marker-free (5.15) |
 | 5 — Optimus | **Substituted.** In-process UKF; Optimus itself is *not* installed |
-| 6 — Reduced TS model | **Done.** 2 modes, 95.1 % energy, 13.4 mm reconstruction |
-| 7 — TS vertices from SOFA | **Done.** 16/16 cells, held-out one-step 3.9–4.5 mm |
+| 6 — Reduced model | **Done.** Craig-Bampton split, 3 modes, 3.50 mm |
+| 7 — TS vertices from SOFA | **Done.** 16/16 cells, held-out one-step 3.76 mm |
 | 8 — PDC synthesis | **BLOCKED.** LMIs infeasible — section 4 |
 | 9 — Outer cable TS node | **Done, but Python not C++** (plan asked for `.cpp`) |
 | 10 — TS-IBVS integration | **Code done, never run** |
 | 11 — Closed-loop launch | **Done.** Parses; never launched end-to-end |
 | 12 — Validation order | **Runs 1–2 done, 3–14 not executed** |
 
-Unit tests: **148 passing** (28 identification + 26 perception + 94 control).
-`flake8 --select=E,W,F` reports 0 issues. Head is `da6d7da`.
+Unit tests: **190 passing** (28 identification + 48 perception + 114 control).
 
-**Nothing in the control loop can run today**: no gains exist (section 3.1) and
-the runtime state does not match the identified model (section 3.7).
+**The control loop still cannot run**: no gains exist (section 3.1). The
+runtime state mismatch of the previous revision is fixed (section 5.14).
 
 ---
 
@@ -96,27 +111,30 @@ Publishes the four topics the plan asks for: `/cable/parameter_estimate`,
 ### 2.4 TS identification (plan steps 6–7)
 
 ```bash
-./scripts/run.sh cable_dataset    # 8000 samples: 4 vertices x 5 trajectories
-./scripts/run.sh cable_basis      # 2 modes, 95.12 % energy, 13.4 mm rmse
+./scripts/run.sh cable_dataset    # 14400 samples: 4 vertices x 6 trajectories
+./scripts/run.sh cable_basis      # 3 modes, 99.29 % energy, 3.50 mm rmse
 ./scripts/run.sh cable_identify   # 16/16 cells
 ```
 
 The dataset is sampled at the exact controller period (40 ms = 4 SOFA
 substeps, zero-order hold) and split into train/validation by whole
 trajectory, so the rollout below is a real contiguous prediction rather than a
-walk over scattered samples.
+walk over scattered samples. Both errors are in **marker space**: the
+prediction is reconstructed through the basis and compared against the recorded
+markers, so they include the representation error and are directly comparable
+to the 5 mm shape tolerance (see 5.12).
 
-| parameter vertex | held-out one-step | blended rollout (2 s) | max ρ(A) |
+Model order, on a fixed 400 x 5 dataset:
+
+| model | basis rmse | held-out one-step | blended rollout (2 s) |
 |---|---|---|---|
-| EI 0.005, damping 0.018 | 4.14 mm | 289 mm | 1.0000 |
-| EI 0.005, damping 0.022 | 3.93 mm | 123 mm | 1.0000 |
-| EI 0.015, damping 0.018 | 4.22 mm | 194 mm | 1.0000 |
-| EI 0.015, damping 0.022 | 4.48 mm | 208 mm | 1.0000 |
+| 2 modes | 6.73 mm | 6.50 mm | 40.96 mm |
+| **3 modes** | **3.50 mm** | **3.80 mm** | **38.62 mm** |
+| 4 modes | 2.72 mm | 3.38 mm | 34.72 mm |
 
-`ρ(A) = 1.0000` is exactly right: the gripper integrator sits on the unit
-circle and the cable modes are strictly inside. The free-running error is still
-far above the 50 mm gate, so `cable_identify` only writes a model when that
-gate is relaxed explicitly.
+Three modes is the default: the smallest order whose reconstruction is inside
+the shape tolerance. Every `A_i` has `ρ(A) = 1.0000` exactly — the gripper
+integrator sits on the unit circle and the cable modes are strictly inside.
 
 ---
 
@@ -148,33 +166,31 @@ passed** because the plugin has never been built. The official binary release
 targets SOFA 21.12 while this image is 25.12 — the plan flags this as a real
 risk. The in-process UKF covers identification meanwhile.
 
-### 3.3 Cosserat lives only in the running container
+### 3.3 Cosserat restore
 
-Cosserat was installed into the live container, not baked into an image, to
-avoid a 7.2 GB rebuild on a disk with 5.6 GB free. **It is lost if the
-container is recreated** (`docker compose down`). The Dockerfile stage exists
-and is correct; the image simply has not been rebuilt. To restore:
+Cosserat used to live only in the running container, so `docker compose down`
+destroyed it. Two things changed:
+
+* the image was rebuilt, so the pinned plugin is baked in again;
+* `scripts/install_cosserat.sh` restores it into a running container from the
+  same pinned URL and checksum. It is idempotent and `run.sh` calls it before
+  every cable command, so a container recreated from an older image repairs
+  itself in about a minute instead of needing a 7 GB rebuild.
 
 ```bash
-# re-run the install block, or rebuild the image (needs ~8 GB free):
-docker compose build
+./scripts/run.sh cosserat      # restore on demand
 ```
 
-Note `docker image prune` reclaims ~0 B here: the dangling images share all
-layers with the tagged one.
+Verified by destroying the container, recreating it and watching the installer
+repair it; `cable_plugin_test` and `cable_forward_test` both pass afterwards.
 
-### 3.4 Modal reconstruction error exceeds the shape tolerance
+### 3.4 Modal reconstruction is now inside the shape tolerance
 
-The 2-mode basis reconstructs shapes to **13.4 mm RMS**, while
-`cable_target.yaml` declares a 5 mm `shape_tolerance_m`. The controller
-regulates modal coordinates, so the supervisor's tolerance is applied in modal
-space and the two are not directly comparable — but any *marker-space* claim
-below ~13 mm is not supported by this basis.
-
-This is very likely the real accuracy floor: the held-out one-step error sits
-at 3.9–4.5 mm and did **not** move for any change to the fit (joint fuzzy
-regression, gripper in the state, structured second-order form, passivity
-projection, coherence). A fit cannot beat its own representation.
+The 3-mode basis reconstructs shapes to **3.50 mm** against the 5 mm
+`shape_tolerance_m` in `cable_target.yaml`. The previous 2-mode plain-PCA basis
+sat at 13.4 mm, which was the real accuracy floor of the whole pipeline. The
+improvement is the Craig-Bampton split (5.13), not a bigger basis: at the same
+order the split alone takes 8.87 mm to 3.50 mm.
 
 ### 3.5 Never executed
 
@@ -194,28 +210,14 @@ projection, coherence). A fit cannot beat its own representation.
   from the URDF but never confirmed to sit where the fingers actually clamp. If
   it is wrong, every identified stiffness is biased.
 
-### 3.7 The runtime state does not match the identified model
+### 3.7 Resolved: the runtime state now matches the identified model
 
-Adding the gripper position to the state (section 4.5) changed the model but
-not the node that feeds it:
-
-| producer | contents | size |
-|---|---|---|
-| `cable_state_reducer_node` | `[q, q̇]` | 4 |
-| identified `cable_ts_model.yaml` | `[q, q̇, p_g]` | 6 |
-
-`cable_ts_controller_node` now checks this and refuses to run rather than
-feeding a 4-vector into a 6-state model:
-
-```
-reduced state has 4 entries but the model expects 6; refusing to control
-```
-
-The same change also exposed `n_modes = state_dim // 2`, which returns 3 for a
-2-mode model once the gripper is in the state and silently mis-sizes every
-shape target. `n_modes` is now stored explicitly in the model and covered by
-tests. **The mismatch itself is not fixed**: the reducer must publish the
-gripper position from TF before any gains could run.
+`cable_state_reducer_node` used to publish `[q, q̇]` while the identified model
+expected `[q, q̇, p_g]`, and the controller refused to run. The reducer now
+reads the gripper from TF, projects the shape through the basis' boundary block
+and publishes the full state. The boundary origin is stored in the basis file
+(`boundary_reference`), so the offline state and the runtime state are centred
+identically by construction rather than by convention. See 5.14.
 
 ---
 
@@ -338,27 +340,41 @@ also a state component the `hᵢx` blocks are linearly dependent — σ_min ≈ 
 with and without an affine term. The blended prediction is unique; the vertex
 matrices are not. The fit therefore takes the minimum-norm solution.
 
-### 4.6 Where it stands now
+### 4.6 Where it stands now (2026-08-30, after the four fixes of section 5)
 
-With the structured fit, every `A_i` has `ρ(A) = 1.0000` exactly — the gripper
-integrator, with the cable modes strictly inside. That is physically correct
-and was not true before.
+Every `A_i` has `ρ(A) = 1.0000` exactly — the gripper integrator, with the
+cable modes strictly inside. Every `(A_i, B_i)` pair is fully controllable
+(rank 6/6 at 2 modes, checked by the PBH test at every eigenvalue on or outside
+the unit circle), so each is individually stabilisable and the obstruction is
+purely the *common* Lyapunov matrix.
 
-On the current envelope (`EI ∈ [0.005, 0.015]`, damping `∈ [0.018, 0.022]`):
+Minimal infeasible subsets on the 3-mode Craig-Bampton model
+(`src/cable_ts_control/diag_lmi.py`):
 
-| subset | diagonal blocks only | with rule-transition terms |
+| subset | certified |
+|---|---|
+| one parameter vertex, 4 rules, cross terms | no, all four |
+| one rule, all four parameter vertices | rule 0 only |
+| rules 0+1, 0+3, 1+2 inside vertex 0 | yes |
+| rules 0+2, 1+3, 2+3 inside vertex 0 | no |
+
+Four candidate causes were tested and **eliminated by measurement**:
+
+| candidate | test | result |
 |---|---|---|
-| each single `(vertex, rule)` | yes, all 16 | — |
-| vertex 0 (4 rules) | yes | **yes** |
-| vertex 1 (4 rules) | yes | **yes** |
-| vertex 2 (4 rules) | yes | **yes** |
-| vertex 3 (4 rules) | yes | no |
-| all four vertices | no | no |
+| parameter box too wide | `EI ∈ [0.008, 0.012]`, ±20 % instead of 3:1 | still infeasible |
+| premise box too wide | `--premise-margin` 1.0 → 0.3 | still infeasible at every width |
+| velocity-filter lag | `--velocity-alpha` 0.4 → 1.0 | still infeasible |
+| decay margin too tight | `decay` 0.999 → 0.95 | still infeasible |
 
-Every rule *pair* inside a vertex is also feasible. Before these corrections no
-subset beyond a single rule was feasible at all, so three of four parameter
-vertices are now individually certifiable — but the shared certificate across
-the whole box still is not.
+What is left is the spread of the rule **input** matrices:
+`max‖Bᵢ−Bⱼ‖ / ‖B‖ = 1.6 … 3.3`. The rules disagree about the input gain by
+more than the gain itself, and no single `K_j` can serve them all. Section 5.14
+identifies the mechanism (the `G u` column is nearly collinear with the
+`D q̇` column, so each rule splits them differently) and shows that removing
+that term costs nothing on held-out data. Doing so moves the 3-mode problem
+from *infeasible* to *the solver returns a point that fails verification* —
+progress, but not a certificate, and the script correctly refuses to write it.
 
 ### 4.7 What is still open
 
@@ -368,18 +384,23 @@ relaxed ones match (3.27)–(3.28). Taking the Schur complement of the
 implemented blocks returns `G'PG − P + (s−1)PYP < 0` and `H'PH − P − PYP ≤ 0`,
 i.e. exactly Theorem 10 with `Q = PYP`.
 
-Three hypotheses were tested:
+Hypotheses tested, all on the corrected model:
 
 | Hypothesis | Result |
 |---|---|
 | Bad state scaling | **no** — three similarity transforms, all still infeasible |
 | Not enough gain freedom | **no** — parameters as premises (16 rules, 16 gains) still infeasible |
-| Rules too dissimilar | **yes** |
+| Uncontrollable mode | **no** — every vertex is rank 6/6 controllable |
+| Rules too dissimilar | **yes**, and it is `B` rather than `A` |
 
-Within a *single* parameter vertex the four rules differ by
-`max‖Aᵢ−Aⱼ‖ = 1.92` against `‖A‖ ≈ 2.5`, and `max‖Bᵢ−Bⱼ‖ = 2.05` against
-`‖B‖ ≈ 1.0`. Local linearisations of one smooth plant at neighbouring corners
-of the premise box should be far closer than that.
+Two premise choices were compared (`--premise-map`). `modal` uses the leading
+modal coordinates, which *are* state components; `boundary` uses the gripper's
+foreshortening `1 − ‖p_g‖/L` and bearing about the clamp, which is where the
+geometric nonlinearity of a clamped inextensible rod lives and which no state
+component duplicates. Neither makes the LMI feasible, and their held-out errors
+are within 0.1 mm of each other. `boundary` is the default because it is the
+construction Tanaka & Wang prescribe — the premises are the plant's bounded
+nonlinearities — not because it measured better.
 
 A coherence penalty shrinking each rule towards the mean rule (`--coherence`)
 confirms the mechanism, and does produce a certified controller:
@@ -393,9 +414,9 @@ confirms the mechanism, and does produce a certified controller:
 **This is not the fix.** At coherence 10 the rules are nearly identical, so the
 TS model has collapsed to a single LTI system — the fuzzy structure that
 justifies PDC has been regularised away — and the free-running error more than
-triples. The one-step error is flat (4.36–4.48 mm) across the whole sweep, so
-the penalty buys certifiability without buying accuracy. It is off by default
-for that reason: a diagnostic, not a solution.
+triples. The one-step error is flat across the whole sweep, so the penalty buys
+certifiability without buying accuracy. It is off by default for that reason: a
+diagnostic, not a solution.
 
 ### 4.8 A margin bug that made the solver lie
 
@@ -509,6 +530,117 @@ state it returned 3 for a 2-mode model, mis-sizing every shape target. The
 mode count is now stored explicitly in `cable_ts_model.yaml` and the controller
 validates the reduced state it receives (section 3.7).
 
+### 5.11 The recorded command was one sample out of step
+
+`generate_sofa_dataset` stored, at index `k`, the velocity that had led *into*
+sample `k`, while `x(k+1) = A x(k) + B u(k)` needs the one that drives `k` to
+`k+1`. The gripper is a pure integrator of the command, so the dataset carries
+an exact check of its own alignment:
+
+```
+max |(g[k+1]-g[k])/dt - u[k]|   = 6.705 m/s     <- the model's assumption
+max |(g[k+1]-g[k])/dt - u[k+1]| = 0.000 m/s     <- one-sample shift
+command rms                     = 0.275 m/s
+```
+
+The error is 24× the command itself. It was invisible in the one-step metric
+because `u` is strongly autocorrelated, but it destroys `B` and makes every
+free rollout integrate a gripper trajectory that never happened. Fixing it took
+the 2-mode rollout from 109.5 mm to 67.8 mm before any other change.
+
+`identify_ts_vertices` now refuses a misaligned dataset and names the shift.
+
+### 5.12 The acceptance metric was not comparable across model orders
+
+The held-out error was an RMS over the *modal coordinates*. Those are divided
+by the number of modes, so the reported figure shrinks when modes are added
+even if the physical error grows — and the model order was being chosen on it.
+At 2 versus 4 modes the modal figure said 4.5 mm versus 11.4 mm (add modes, get
+worse) while the marker-space figure said 12.4 mm versus 6.9 mm (add modes, get
+better). The two disagree about the direction.
+
+Both errors are now measured in marker space: the prediction is reconstructed
+through the basis and compared against the recorded markers, so the number
+includes the representation error and can be compared to the shape tolerance.
+
+### 5.13 The reduced state contained a copy of the gripper
+
+The marker set includes `s/L = 1.0`, the tip, which the gripper holds. A plain
+PCA of the shape therefore produces modal coordinates that are partly an
+algebraic function of the gripper position — measured `corr(q, p_g) = 0.7577`,
+and `p_g` is predicted from `q` alone with `R² = 0.954`. The state was not
+minimal, part of the modal acceleration was really the gripper's, and the fit
+had to absorb that somewhere.
+
+Replaced with the standard Craig-Bampton split into a constraint mode and
+fixed-interface normal modes:
+
+```
+y = y0 + Psi g + Phi q
+```
+
+`Psi g` is the quasi-static response to the prescribed boundary; `q` describes
+only what the boundary does not explain, and is orthogonal to `g` by
+construction. At equal model order:
+
+| | plain PCA | Craig-Bampton |
+|---|---|---|
+| reconstruction, 3 modes | 8.87 mm | **3.50 mm** |
+| `corr(q, gripper)` | 0.7577 | **0.0000** |
+| held-out one-step | 6.56 mm | **3.80 mm** |
+| held-out rollout | 95.3 mm | **38.6 mm** |
+
+`ModalBasis` carries the optional `psi` block and the `boundary_reference` it
+is measured from; `psi = None` reproduces the old plain PCA exactly.
+
+### 5.14 The direct input feedthrough is not identifiable
+
+The structured fit estimates a `G u` term in the modal acceleration. With the
+boundary block in place the gripper acts on the cable through its *position*,
+which is already the state `g`; the grasp damper acts on a relative velocity
+whose cable part is already `q̇`. What is left for `G` is nearly collinear with
+the `D q̇` column, so the two trade off freely and every rule picks a different
+split. That is what drives `‖ΔB‖/‖B‖` to 1.6–3.3.
+
+Dropping the term (`--no-input-feedthrough`) costs nothing on held-out data and
+*improves* the rollout:
+
+| | with `G u` | without |
+|---|---|---|
+| one-step, 3 modes | 3.80 mm | 3.76 mm |
+| rollout, 3 modes | 38.6 mm | 32.5 mm |
+| one-step, 4 modes | 3.38 mm | 3.37 mm |
+
+It is left opt-in: dropping it is a constitutive claim about the plant, and the
+default should not silently make one. The measurement is recorded here so the
+claim can be argued rather than assumed.
+
+### 5.15 The runtime state and the marker-free observation
+
+`cable_state_reducer_node` now reads the gripper from TF, projects through the
+boundary block and publishes `[q, q̇, g]`, so the runtime state matches the
+identified model (this was section 3.7). The boundary origin comes from the
+basis file, so the two cannot be centred differently.
+
+Separately, the coloured spheres are gone from the Gazebo cable
+(`marker_s_over_l` now defaults to empty). They were a simulation artefact: a
+real cable carries no fiducials, so a pipeline that depends on them cannot
+transfer. `cable_dlo_detector_node` recovers the centreline from the cable
+itself following Keipour, Bandari and Schaal, *Deformable One-Dimensional
+Object Detection for Routing and Manipulation*, RA-L 2022 (arXiv:2201.06775):
+segmentation → Zhang-Suen thinning → skeleton branches → fixed-length chain
+fitting → cost-based merging with a smooth gap fill → arc-length resampling.
+Identity, which the colours used to supply, now comes from arc length measured
+from the clamped end. The node publishes the same `/cable/observed_markers`
+contract, so nothing downstream changes. 22 unit tests, including an occluded
+cable: a 12-pixel gap is bridged and the detected chain comes to 120.0 against
+an analytic centreline of 124.0.
+
+Which of the two the pipeline uses is the "discrete features versus continuous
+curve" choice of Cuiral-Zueco and López-Nicolás, *Taxonomy of Deformable Object
+Shape Control*, RA-L 2024 (§II-C). Both are kept; the marker-free one is the
+default because it is the one that can run on hardware.
+
 ---
 
 ## 6. Running it
@@ -534,6 +666,11 @@ docker compose exec ur5e_ts_ibvs bash -c \
 ./scripts/run.sh cable_sim
 ```
 
+This brings up Gazebo *and* the runSofa window, both driving the same cable:
+the SOFA scene is the truth plant and publishes `/cable/truth/frames`,
+`/cable/truth/markers` and `/cable/grasp_state`, and the Gazebo cable follows
+those frames. Add `sofa_gui:=false` to run the plant headless instead.
+
 In a second terminal:
 
 ```bash
@@ -547,9 +684,17 @@ ros2 run tf2_ros tf2_echo base_link cable_fixture_frame
 ros2 run rqt_image_view rqt_image_view          # /overview/image
 ```
 
-Confirm: UR5e visible, cable visible, seven distinctly coloured marker spheres,
-fixture static, cable follows the gripper after attachment. This is also where
-step 2.1 (the grasp frame) finally gets checked.
+Confirm: UR5e visible, cable visible as a plain uniform cable, fixture static,
+cable follows the gripper after attachment. This is also where step 2.1 (the
+grasp frame) finally gets checked.
+
+Measured on 2026-08-30: `/cable/truth/frames` at 60 Hz from the runSofa scene,
+40 cable segments and 0 marker spheres spawned in `ibvs_world`.
+
+The coloured fiducials are opt-in now that detection is marker-free (5.15):
+set `marker_s_over_l` on `cable_visual_node` to the arc-length fractions you
+want spheres at (it defaults to empty), and run
+`cable_marker_tracker_node` instead of `cable_dlo_detector_node`.
 
 Drive the arm and attach:
 
@@ -617,23 +762,34 @@ running pytest, or the stale installed copy is tested.
 
 ## 7. Next steps, in order
 
-1. **Choose the mode count on held-out marker error.** The one-step error is
-   pinned at ~4.4 mm through every change to the fit, while the basis
-   reconstructs to 13.4 mm. The representation, not the identification, is the
-   binding constraint — and no amount of LMI work fixes that.
-2. **Build the basis from training trajectories only**, so the held-out numbers
-   mean what they say.
+Items 1–3 of the previous revision are done (model order, boundary block,
+gripper in the runtime state) and item 8 is done (the image carries Cosserat
+again, and `install_cosserat.sh` repairs a recreated container).
+
+1. **Attack the rule input spread.** `‖ΔB‖/‖B‖ = 1.6–3.3` is the last measured
+   obstruction (section 4.6). Two things to try, in this order: identify the
+   grasp coupling's damping directly from the SOFA scene rather than regressing
+   it, so `G` is *known* instead of fitted; and, failing that, adopt the
+   position-driven boundary permanently (`--no-input-feedthrough`) on the
+   strength of the held-out evidence in 5.14. Nothing else moved the
+   feasibility.
+2. **Build the basis from training trajectories only.** It is currently built
+   from all of them, so the held-out numbers are mildly optimistic.
 3. **Centre the model on a real equilibrium.** Settle SOFA at a held gripper
    pose to get `(q*, p_g*)`; the regulator LMIs assume the origin is an
-   equilibrium and `q* = 0` is only the PCA mean of a dynamic dataset.
+   equilibrium and `q* = 0` is only the mean of a dynamic dataset.
 4. Re-run identify → LMI and check `max eig(G'PG − P) < 0` *and*
    `worst |eig(A − BK)| < 1`. Never trust the solver's own status alone
-   (section 4.8).
-5. **Publish the gripper position from the state reducer** so the runtime state
-   matches the model (section 3.7).
-6. Verify the grasp frame in Gazebo (step 2.1) — it biases every identified
+   (section 4.8) — it reported *feasible* on a point with `ρ = 1.25` during
+   this work.
+5. Verify the grasp frame in Gazebo (step 2.1) — it biases every identified
    stiffness.
-7. Run validation items 3–6 with Gazebo up (section 6.2–6.3).
-8. Rebuild the image so Cosserat survives container recreation; optionally with
-   `WITH_OPTIMUS=true`, then run the compatibility gate.
-9. Only then wire the cascade (`reference_source:=cable`).
+6. Run validation items 3–6 with Gazebo up (sections 6.2–6.3), and point the
+   camera path at `cable_dlo_detector_node` so the marker-free observation is
+   exercised against a real image for the first time.
+7. Optionally rebuild with `WITH_OPTIMUS=true` and run the compatibility gate.
+8. Only then wire the cascade (`reference_source:=cable`).
+
+The throwaway diagnostics that produced the numbers in sections 4.6 and 5.11–14
+are left in `src/cable_ts_control/diag_*.py`. They are untracked scratch, not
+part of the package.

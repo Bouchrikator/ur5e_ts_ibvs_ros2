@@ -1,13 +1,21 @@
 """runSofa GUI scene for the ROS-coupled cable.
 
-Loads the same Cosserat cable as cable_sofa_node, but inside the runSofa GUI:
-a scene controller drives the base from TF (base_link -> cable_grasp_frame)
-and publishes /cable/sofa_frames + /cable/predicted_markers, so the Gazebo
-visual cable stays in sync while you inspect the physics in SOFA.
+This is the SAME truth plant as cable_sofa_node, running inside the runSofa
+GUI instead of headless: a scene controller drives the boundaries from TF and
+publishes the truth topics, so the Gazebo visual cable, the observation
+sources and the estimator all behave exactly as in the headless launch while
+you inspect the mechanics in SOFA.
+
+Only ONE of the two may run at a time — they would both claim to be the truth.
+cable_sim.launch.py enforces that with sofa_gui.
 
 Run (inside the container, sim already up with sofa_gui:=true):
     runSofa <this file>
 Without ROS running it degrades to a hanging cable under gravity.
+
+Difference from the headless node: runSofa owns the animation loop, so the
+cable advances on runSofa's clock rather than being stepped up to /clock. Use
+it to look at the physics, not to take timing measurements.
 """
 
 import os
@@ -42,10 +50,11 @@ class RosCouplingController(Sofa.Core.Controller):
             from rclpy.node import Node as RclpyNode
             import tf2_ros
             from geometry_msgs.msg import PoseArray, Pose
-            from cable_msgs.msg import CableMarker, CableMarkerArray
+            from cable_msgs.msg import CableMarker, CableMarkerArray, GraspState
 
             self._PoseArray, self._Pose = PoseArray, Pose
             self._CableMarker, self._CableMarkerArray = CableMarker, CableMarkerArray
+            self._GraspState = GraspState
             self._tf2 = tf2_ros
 
             # runSofa evaluates createScene more than once per session
@@ -59,12 +68,17 @@ class RosCouplingController(Sofa.Core.Controller):
             # spin_thread: TF fills in the background, SOFA thread just reads
             self.tf_listener = tf2_ros.TransformListener(
                 self.tf_buffer, self.node, spin_thread=True)
+            # Same contract as cable_sofa_node role=truth: this scene IS the
+            # truth plant when it runs, so nothing downstream has to change.
             self.frames_pub = self.node.create_publisher(
-                PoseArray, "/cable/sofa_frames", 10)
+                PoseArray, "/cable/truth/frames", 10)
             self.markers_pub = self.node.create_publisher(
-                CableMarkerArray, "/cable/predicted_markers", 10)
+                CableMarkerArray, "/cable/truth/markers", 10)
+            self.grasp_pub = (self.node.create_publisher(
+                GraspState, "/cable/grasp_state", 10)
+                if self.coupling is not None else None)
             self.ros_ok = True
-            print("[cable_scene] ROS coupling active (TF + publishers)")
+            print("[cable_scene] ROS coupling active (TF + truth publishers)")
         except Exception as exc:  # ROS absent -> standalone GUI physics
             print(f"[cable_scene] ROS unavailable, standalone mode: {exc}")
 
@@ -125,6 +139,15 @@ class RosCouplingController(Sofa.Core.Controller):
             m.valid = True
             ma.markers.append(m)
         self.markers_pub.publish(ma)
+
+        if self.grasp_pub is not None:
+            gs = self._GraspState()
+            gs.header = pa.header
+            gs.state = self.coupling.state
+            gs.distance_to_tip_m = float(self.coupling.distance_to_tip)
+            gs.height_above_plane_m = float(self.coupling.height_above_plane)
+            gs.in_range = bool(self.coupling.in_range())
+            self.grasp_pub.publish(gs)
 
 
 def createScene(root):

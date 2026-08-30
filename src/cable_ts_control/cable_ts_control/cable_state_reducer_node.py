@@ -1,8 +1,11 @@
 """Cable state reducer: observed markers -> reduced modal state.
 
-Turns the raw marker cloud into the ``x = [q; qdot]`` the TS-PDC controller
+Turns the raw marker cloud into the ``x = [q; qdot; g]`` the TS-PDC controller
 expects, expressed in the fixture frame so the state is independent of where
-the robot base happens to be.
+the robot base happens to be. ``g`` is the gripper displacement, read from TF:
+the input is gripper VELOCITY, so without it a displaced but stationary gripper
+keeps the cable deformed while contributing nothing to the state, and the
+reduced description is not Markov.
 
 Concerns: ROS transport and frame handling. The projection maths lives in
 ``modal_basis`` and stays unit tested.
@@ -42,6 +45,7 @@ class CableStateReducerNode(Node):
         self.declare_parameter("observed_topic", "/cable/observed_markers")
         self.declare_parameter("state_topic", "/cable/reduced_state")
         self.declare_parameter("reference_frame", "cable_fixture_frame")
+        self.declare_parameter("gripper_frame", "cable_grasp_frame")
         self.declare_parameter("velocity_filter_alpha", 0.4)
         self.declare_parameter("max_reconstruction_rmse_m", 0.05)
 
@@ -51,8 +55,12 @@ class CableStateReducerNode(Node):
         self.basis = ModalBasis.load(basis_file)
 
         self.reference_frame = self.get_parameter("reference_frame").value
+        self.gripper_frame = self.get_parameter("gripper_frame").value
         self.alpha = float(self.get_parameter("velocity_filter_alpha").value)
         self.max_rmse = float(self.get_parameter("max_reconstruction_rmse_m").value)
+        self.boundary_reference = (
+            np.zeros(2) if self.basis.boundary_reference is None
+            else np.asarray(self.basis.boundary_reference, dtype=float))
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -69,7 +77,19 @@ class CableStateReducerNode(Node):
         self.get_logger().info(
             f"cable state reducer: {self.basis.n_modes} modes over "
             f"{self.basis.dimension // 2} planar markers, frame="
-            f"{self.reference_frame}")
+            f"{self.reference_frame}, gripper={self.gripper_frame}")
+
+    # ------------------------------------------------------------------
+    def _gripper_displacement(self):
+        """Gripper position in the reference frame, minus the basis origin."""
+        try:
+            tfm = self.tf_buffer.lookup_transform(
+                self.reference_frame, self.gripper_frame, Time())
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
+                tf2_ros.ExtrapolationException):
+            return None
+        t = tfm.transform.translation
+        return np.array([t.x, t.y]) - self.boundary_reference
 
     # ------------------------------------------------------------------
     def _to_reference_frame(self, msg):
@@ -116,8 +136,16 @@ class CableStateReducerNode(Node):
         valid = np.repeat([m.valid for m in msg.markers], 2)
         markers_used = int(sum(m.valid for m in msg.markers))
 
+        gripper = self._gripper_displacement()
+        if gripper is None:
+            self.get_logger().warn(
+                f"no transform {self.reference_frame} -> {self.gripper_frame}",
+                throttle_duration_sec=5.0)
+            return
+        boundary = gripper if self.basis.psi is not None else None
+
         try:
-            q = self.basis.project(shape, valid)
+            q = self.basis.project(shape, valid, boundary)
         except ValueError:
             self.get_logger().warn(
                 f"too few valid markers ({markers_used}) to identify "
@@ -125,7 +153,7 @@ class CableStateReducerNode(Node):
             self._publish_invalid(msg.header, markers_used)
             return
 
-        residual = (shape - self.basis.reconstruct(q))[valid]
+        residual = (shape - self.basis.reconstruct(q, boundary))[valid]
         rmse = float(np.sqrt(np.mean(residual ** 2))) if residual.size else 0.0
 
         stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
@@ -147,7 +175,7 @@ class CableStateReducerNode(Node):
         state.header.frame_id = self.reference_frame
         state.modal_coordinates = q.tolist()
         state.modal_velocities = velocity.tolist()
-        state.state = np.concatenate([q, velocity]).tolist()
+        state.state = np.concatenate([q, velocity, gripper]).tolist()
         state.reconstruction_rmse = rmse
         state.markers_used = markers_used
         state.valid = True

@@ -23,6 +23,8 @@ setup(
             "cable_perception.synthetic_marker_node:main",
             "cable_marker_tracker_node = "
             "cable_perception.cable_marker_tracker_node:main",
+            "cable_dlo_detector_node = "
+            "cable_perception.cable_dlo_detector_node:main",
         ],
     },
 )

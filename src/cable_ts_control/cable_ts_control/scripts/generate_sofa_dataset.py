@@ -107,14 +107,11 @@ def run_rollout(cfg, parameters, path, control_dt, substeps, settle_steps=50):
     coupling.update_grasp(tip, 0.0)
     coupling.ramp_s = 0.0
 
-    previous = np.array(tip[:2], dtype=float)
     shapes = np.zeros((len(path), 2 * len(cable.marker_indices)))
     applied = np.zeros((len(path), 2))
     gripper = np.zeros((len(path), 2))
     for step, point in enumerate(path):
         point = np.asarray(point, dtype=float)
-        applied[step] = (point - previous) / control_dt
-        previous = point
         coupling.update_grasp(list(point) + [tip[2]] + tip[3:7],
                               step * control_dt + 1.0)
         for _ in range(substeps):
@@ -122,6 +119,13 @@ def run_rollout(cfg, parameters, path, control_dt, substeps, settle_steps=50):
         markers = np.asarray(cable.marker_positions(), dtype=float)
         shapes[step] = (markers[:, :2] - np.asarray(base[:2])).reshape(-1)
         gripper[step] = point
+        # The command stored at k is the velocity applied BETWEEN sample k and
+        # sample k+1, which is what x(k+1) = A x(k) + B u(k) means. Storing the
+        # velocity that led INTO sample k instead shifts the whole input series
+        # by one period: the fitted B then explains a transition it did not
+        # drive, and a free rollout integrates the wrong gripper trajectory.
+        following = path[step + 1] if step + 1 < len(path) else point
+        applied[step] = (np.asarray(following, dtype=float) - point) / control_dt
 
     return shapes, applied, gripper
 
@@ -223,6 +227,7 @@ def main(argv=None):
         parameter_values=np.array([[v[name] for name in sorted(bounds)]
                                    for v in vertices]),
         marker_s_over_l=np.array(cfg["marker_s_over_l"]),
+        cable_length_m=np.array([float(cfg["length_m"])]),
         timestep_s=np.array([control_dt]),
         sofa_timestep_s=np.array([sofa_dt]),
     )
