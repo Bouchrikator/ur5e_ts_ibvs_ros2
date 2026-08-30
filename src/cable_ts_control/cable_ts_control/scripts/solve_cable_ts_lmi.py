@@ -17,7 +17,7 @@ import yaml
 
 from cable_ts_control.lmi_synthesis import (
     solve_cable_ts_pdc,
-    verify_lyapunov_decrease,
+    verify_certificate,
     worst_spectral_radius,
 )
 from cable_ts_control.ts_model import CableTsModel
@@ -68,48 +68,89 @@ def main(argv=None):
                 "basic": ["basic"],
                 "relaxed": ["relaxed"]}[args.mode]
 
-    gains = lyapunov = None
-    used = None
+    certificate = None
     for attempt in attempts:
-        gains, lyapunov, feasible = solve_cable_ts_pdc(
+        candidate = solve_cable_ts_pdc(
             vertex_sets, eps=args.eps, gain_penalty=args.gain_penalty,
             verbose=args.verbose, relaxed=(attempt == "relaxed"),
             max_active_rules=args.max_active_rules)
-        print(f"  {attempt:8s}: {'feasible' if feasible else 'infeasible'}")
-        if feasible:
-            used = attempt
+        print(f"  {attempt:8s}: "
+              f"{'feasible' if candidate.feasible else 'infeasible'}"
+              f" (solver={candidate.solver_name}, "
+              f"status={candidate.solver_status})")
+        if candidate.feasible:
+            certificate = candidate
             break
 
-    if used is None:
+    if certificate is None:
         print("ERROR: the LMIs are infeasible. Widen the sampling period, "
               "narrow the parameter bounds, or re-identify the vertices.")
         return 1
 
-    worst_decrease = verify_lyapunov_decrease(vertex_sets, gains, lyapunov)
-    radius = worst_spectral_radius(vertex_sets, gains)
+    # Verify EXACTLY the inequalities that were solved. The individual
+    # spectral-radius gate on the averaged cross terms is only valid for the
+    # basic certificate; under the relaxed theorem those terms may exceed one
+    # and still be covered by the slack Q, so there it is restricted to the
+    # diagonal terms (which the relaxed conditions do make contractive).
+    report = verify_certificate(vertex_sets, certificate)
+    relaxed_used = certificate.certificate_type == "relaxed"
+    radius = worst_spectral_radius(
+        vertex_sets, certificate.gains, diagonal_only=relaxed_used)
 
-    print("\ndiscrete Lyapunov verification")
-    print(f"  max eig(G' P G - P) = {worst_decrease:.3e} "
-          f"{'< 0 OK' if worst_decrease < 0 else '>= 0 FAILED'}")
-    print(f"  worst |eig(A_i - B_i K_j)| = {radius:.6f} "
+    print(f"\ndiscrete Lyapunov verification "
+          f"({certificate.certificate_type} conditions, "
+          f"beta={certificate.beta}, s={certificate.max_active_rules})")
+    print(f"  worst diagonal residual = "
+          f"{report['worst_diagonal_residual']:.3e} "
+          f"{'< 0 OK' if report['worst_diagonal_residual'] < 0 else '>= 0 FAILED'}")
+    print(f"  worst cross residual    = "
+          f"{report['worst_cross_residual']:.3e}")
+    print(f"  worst residual / ||P||  = "
+          f"{report['worst_normalized_residual']:.3e}")
+    print(f"  min eig(P) = {report['p_min_eigenvalue']:.3e}"
+          + (f", min eig(Q) = {report['q_min_eigenvalue']:.3e}"
+             if relaxed_used else ""))
+    scope = "diagonal terms" if relaxed_used else "diagonal + averaged cross"
+    print(f"  worst |eig| over {scope} = {radius:.6f} "
           f"{'< 1 OK' if radius < 1.0 else '>= 1 FAILED'}")
 
-    if worst_decrease >= 0.0 or radius >= 1.0:
+    if not report["satisfied"] or radius >= 1.0:
         print("\nERROR: the returned gains do not certify stability; "
               "nothing was written.")
         return 1
 
-    for index, gain in enumerate(gains):
+    for index, gain in enumerate(certificate.gains):
         print(f"  K{index} norm = {np.linalg.norm(gain):.4f}")
 
     payload = {"cable_ts_model": {
-        "K": [g.flatten(order="C").tolist() for g in gains],
-        "P": lyapunov.flatten(order="C").tolist(),
-        "certificate": used,
-        "max_lyapunov_eigenvalue": float(worst_decrease),
-        "worst_spectral_radius": float(radius),
+        "K": [g.flatten(order="C").tolist() for g in certificate.gains],
+        "P": certificate.lyapunov.flatten(order="C").tolist(),
+        "certificate": certificate.certificate_type,
+        "beta": float(certificate.beta),
+        "solver": certificate.solver_name,
+        "solver_status": certificate.solver_status,
+        "verification": {
+            "worst_diagonal_residual": float(report["worst_diagonal_residual"]),
+            "worst_cross_residual": float(report["worst_cross_residual"]),
+            "worst_diagonal_residual_at_beta":
+                float(report["worst_diagonal_residual_at_beta"]),
+            "worst_cross_residual_at_beta":
+                float(report["worst_cross_residual_at_beta"]),
+            "worst_normalized_residual":
+                float(report["worst_normalized_residual"]),
+            "p_min_eigenvalue": float(report["p_min_eigenvalue"]),
+            "worst_spectral_radius": float(radius),
+            "spectral_radius_scope": scope,
+        },
         "sample_time": model.sample_time,
     }}
+    if relaxed_used:
+        payload["cable_ts_model"]["Q"] = \
+            certificate.slack.flatten(order="C").tolist()
+        payload["cable_ts_model"]["max_active_rules"] = \
+            int(certificate.max_active_rules)
+        payload["cable_ts_model"]["verification"]["q_min_eigenvalue"] = \
+            float(report["q_min_eigenvalue"])
     with open(args.output, "w") as f:
         yaml.safe_dump(payload, f, default_flow_style=False, width=200)
 

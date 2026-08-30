@@ -6,7 +6,7 @@ import numpy as np
 import yaml
 
 from cable_ts_control.lmi_synthesis import (
-    solve_cable_ts_pdc, verify_lyapunov_decrease)
+    solve_cable_ts_pdc, verify_certificate)
 from cable_ts_control.ts_model import CableTsModel
 
 path = "/tmp/cm3.yaml"
@@ -28,8 +28,12 @@ for v, (A, B) in enumerate(sets):
 
 
 def ok(vs):
-    g, p, f = solve_cable_ts_pdc(vs, eps=1e-6, relaxed=True)
-    return bool(f and verify_lyapunov_decrease(vs, g, p) < 0)
+    # NOTE: the earlier version of this diagnostic verified relaxed solves
+    # with the BASIC residual G'PG - P, which wrongly rejects valid relaxed
+    # certificates. Every minimal-infeasible-subset result produced by that
+    # version is unsound and must be regenerated.
+    cert = solve_cable_ts_pdc(vs, eps=1e-6, relaxed=True)
+    return bool(cert.feasible and verify_certificate(vs, cert)["satisfied"])
 
 
 print("\nsingle parameter vertex, all rules + cross terms:")

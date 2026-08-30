@@ -25,6 +25,8 @@
 #include <gz/msgs/entity_factory.pb.h>
 #include <gz/msgs/boolean.pb.h>
 #include <gz/msgs/entity.pb.h>
+#include <gz/msgs/empty.pb.h>
+#include <gz/msgs/scene.pb.h>
 
 namespace
 {
@@ -207,37 +209,74 @@ private:
     return out;
   }
 
+  bool createSegment(size_t i, const Segment & seg)
+  {
+    std::ostringstream sdf;
+    sdf << "<?xml version='1.0'?><sdf version='1.9'>"
+        << "<model name='cable_seg_" << i << "'><static>true</static>"
+        << "<link name='link'><visual name='v'><geometry><cylinder>"
+        << "<radius>" << radius_ << "</radius>"
+        << "<length>" << seg.len * 1.1 << "</length>"
+        << "</cylinder></geometry><material>"
+        // Saturated blue: the only blue in the scene, so the marker-free
+        // detector can segment the cable without painted fiducials.
+        << "<ambient>0.05 0.10 0.80 1</ambient>"
+        << "<diffuse>0.05 0.10 0.80 1</diffuse>"
+        << "</material></visual></link></model></sdf>";
+
+    gz::msgs::EntityFactory req;
+    req.set_sdf(sdf.str());
+    req.set_name("cable_seg_" + std::to_string(i));
+    req.set_allow_renaming(false);
+    auto * p = req.mutable_pose();
+    p->mutable_position()->set_x(seg.mid.x);
+    p->mutable_position()->set_y(seg.mid.y);
+    p->mutable_position()->set_z(seg.mid.z);
+    p->mutable_orientation()->set_x(seg.q.x);
+    p->mutable_orientation()->set_y(seg.q.y);
+    p->mutable_orientation()->set_z(seg.q.z);
+    p->mutable_orientation()->set_w(seg.q.w);
+    return gzRequestBool("/world/" + world_ + "/create", req);
+  }
+
   bool spawn(const std::vector<Segment> & segs)
   {
     removeStaleSegments();
     bool ok_all = true;
     for (size_t i = 0; i < segs.size(); ++i) {
-      std::ostringstream sdf;
-      sdf << "<?xml version='1.0'?><sdf version='1.9'>"
-          << "<model name='cable_seg_" << i << "'><static>true</static>"
-          << "<link name='link'><visual name='v'><geometry><cylinder>"
-          << "<radius>" << radius_ << "</radius>"
-          << "<length>" << segs[i].len * 1.1 << "</length>"
-          << "</cylinder></geometry><material>"
-          << "<ambient>0.25 0.25 0.27 1</ambient>"
-          << "<diffuse>0.25 0.25 0.27 1</diffuse>"
-          << "</material></visual></link></model></sdf>";
-
-      gz::msgs::EntityFactory req;
-      req.set_sdf(sdf.str());
-      req.set_name("cable_seg_" + std::to_string(i));
-      req.set_allow_renaming(false);
-      auto * p = req.mutable_pose();
-      p->mutable_position()->set_x(segs[i].mid.x);
-      p->mutable_position()->set_y(segs[i].mid.y);
-      p->mutable_position()->set_z(segs[i].mid.z);
-      p->mutable_orientation()->set_x(segs[i].q.x);
-      p->mutable_orientation()->set_y(segs[i].q.y);
-      p->mutable_orientation()->set_z(segs[i].q.z);
-      p->mutable_orientation()->set_w(segs[i].q.w);
-      ok_all &= gzRequestBool("/world/" + world_ + "/create", req);
+      ok_all &= createSegment(i, segs[i]);
     }
     return ok_all;
+  }
+
+  // The server queues create/remove asynchronously: a create racing a
+  // still-pending remove of the same name is dropped silently (verified
+  // live: two of forty segments vanished after a hot restart). Ask the
+  // scene what actually exists and respawn the difference.
+  void healMissingSegments(const std::vector<Segment> & segs)
+  {
+    gz::msgs::Scene scene;
+    gz::msgs::Empty req;
+    bool result = false;
+    if (!gz_node_.Request("/world/" + world_ + "/scene/info", req, 1000,
+                          scene, result) || !result) {
+      return;
+    }
+    std::vector<bool> present(segs.size(), false);
+    for (int m = 0; m < scene.model_size(); ++m) {
+      const std::string & nm = scene.model(m).name();
+      if (nm.rfind("cable_seg_", 0) == 0) {
+        const size_t idx = std::stoul(nm.substr(10));
+        if (idx < present.size()) present[idx] = true;
+      }
+    }
+    for (size_t i = 0; i < segs.size(); ++i) {
+      if (!present[i]) {
+        RCLCPP_WARN(get_logger(),
+                    "cable_seg_%zu missing from the scene; respawning", i);
+        createSegment(i, segs[i]);
+      }
+    }
   }
 
   void update()
@@ -305,12 +344,18 @@ private:
       p->mutable_orientation()->set_w(1.0);
     }
     gzRequestBool("/world/" + world_ + "/set_pose_vector", req);
+
+    // Cheap self-check ~ every 5 s at the default 30 Hz.
+    if (++cycles_ % 150 == 0) {
+      healMissingSegments(segs);
+    }
   }
 
   std::string world_, world_frame_;
   double radius_{0.006};
   double marker_radius_{0.011};
   std::vector<double> marker_s_;
+  unsigned long cycles_{0};
   int spawned_{0};
 
   std::mutex mtx_;

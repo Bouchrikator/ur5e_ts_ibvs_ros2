@@ -48,6 +48,12 @@ class CableStateReducerNode(Node):
         self.declare_parameter("gripper_frame", "cable_grasp_frame")
         self.declare_parameter("velocity_filter_alpha", 0.4)
         self.declare_parameter("max_reconstruction_rmse_m", 0.05)
+        # Perception hardening (audit 9.1): reject single-frame modal jumps
+        # far beyond one control step unless they persist, then lightly
+        # smooth what remains.
+        self.declare_parameter("max_modal_jump_m", 0.05)
+        self.declare_parameter("jump_confirm_samples", 3)
+        self.declare_parameter("modal_smoothing_alpha", 0.35)
 
         basis_file = self.get_parameter("modal_basis_file").value
         if not basis_file:
@@ -58,6 +64,9 @@ class CableStateReducerNode(Node):
         self.gripper_frame = self.get_parameter("gripper_frame").value
         self.alpha = float(self.get_parameter("velocity_filter_alpha").value)
         self.max_rmse = float(self.get_parameter("max_reconstruction_rmse_m").value)
+        self.max_modal_jump = float(self.get_parameter("max_modal_jump_m").value)
+        self.jump_confirm = int(self.get_parameter("jump_confirm_samples").value)
+        self.smooth_alpha = float(self.get_parameter("modal_smoothing_alpha").value)
         self.boundary_reference = (
             np.zeros(2) if self.basis.boundary_reference is None
             else np.asarray(self.basis.boundary_reference, dtype=float))
@@ -73,6 +82,9 @@ class CableStateReducerNode(Node):
 
         self._previous_stamp = None
         self._filter = ModalVelocityFilter(self.basis.n_modes, self.alpha)
+        self._q_accepted = None
+        self._q_smooth = None
+        self._jump_count = 0
 
         self.get_logger().info(
             f"cable state reducer: {self.basis.n_modes} modes over "
@@ -80,11 +92,21 @@ class CableStateReducerNode(Node):
             f"{self.reference_frame}, gripper={self.gripper_frame}")
 
     # ------------------------------------------------------------------
-    def _gripper_displacement(self):
+    def _lookup(self, target_frame, source_frame, stamp):
+        """Transform at the observation stamp, so the gripper block of the
+        state is sampled at the same instant as the markers. Falls back to
+        the latest transform when the buffer cannot extrapolate yet."""
+        try:
+            return self.tf_buffer.lookup_transform(
+                target_frame, source_frame, stamp)
+        except tf2_ros.ExtrapolationException:
+            return self.tf_buffer.lookup_transform(
+                target_frame, source_frame, Time())
+
+    def _gripper_displacement(self, stamp):
         """Gripper position in the reference frame, minus the basis origin."""
         try:
-            tfm = self.tf_buffer.lookup_transform(
-                self.reference_frame, self.gripper_frame, Time())
+            tfm = self._lookup(self.reference_frame, self.gripper_frame, stamp)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
                 tf2_ros.ExtrapolationException):
             return None
@@ -99,8 +121,8 @@ class CableStateReducerNode(Node):
         if msg.header.frame_id == self.reference_frame:
             return positions
         try:
-            tfm = self.tf_buffer.lookup_transform(
-                self.reference_frame, msg.header.frame_id, Time())
+            tfm = self._lookup(self.reference_frame, msg.header.frame_id,
+                               Time.from_msg(msg.header.stamp))
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
                 tf2_ros.ExtrapolationException):
             return None
@@ -136,7 +158,7 @@ class CableStateReducerNode(Node):
         valid = np.repeat([m.valid for m in msg.markers], 2)
         markers_used = int(sum(m.valid for m in msg.markers))
 
-        gripper = self._gripper_displacement()
+        gripper = self._gripper_displacement(Time.from_msg(msg.header.stamp))
         if gripper is None:
             self.get_logger().warn(
                 f"no transform {self.reference_frame} -> {self.gripper_frame}",
@@ -156,11 +178,6 @@ class CableStateReducerNode(Node):
         residual = (shape - self.basis.reconstruct(q, boundary))[valid]
         rmse = float(np.sqrt(np.mean(residual ** 2))) if residual.size else 0.0
 
-        stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
-        dt = stamp - self._previous_stamp if self._previous_stamp else 0.0
-        velocity = self._filter.update(q, dt)
-        self._previous_stamp = stamp
-
         if rmse > self.max_rmse:
             # The shape left the span of the identified basis: the reduced
             # state is meaningless, so say so instead of feeding the controller.
@@ -169,6 +186,36 @@ class CableStateReducerNode(Node):
                 f"{self.max_rmse * 1e3:.1f} mm", throttle_duration_sec=5.0)
             self._publish_invalid(msg.header, markers_used, rmse)
             return
+
+        # Outlier gate: a low-rmse fit can still be the WRONG on-manifold
+        # shape when marker validity flips; a jump this large in one frame
+        # is perception, not physics, unless it persists.
+        if self._q_accepted is not None and self.max_modal_jump > 0.0:
+            jump = float(np.linalg.norm(q - self._q_accepted))
+            if jump > self.max_modal_jump:
+                self._jump_count += 1
+                if self._jump_count < self.jump_confirm:
+                    self.get_logger().warn(
+                        f"modal jump {jump * 1e3:.0f} mm rejected "
+                        f"({self._jump_count}/{self.jump_confirm})",
+                        throttle_duration_sec=2.0)
+                    self._publish_invalid(msg.header, markers_used, rmse)
+                    return
+                self._q_smooth = None  # confirmed new branch: restart smoother
+        self._jump_count = 0
+        self._q_accepted = q.copy()
+
+        if self._q_smooth is None or self.smooth_alpha >= 1.0:
+            self._q_smooth = q.copy()
+        else:
+            self._q_smooth = (self.smooth_alpha * q
+                              + (1.0 - self.smooth_alpha) * self._q_smooth)
+        q = self._q_smooth
+
+        stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
+        dt = stamp - self._previous_stamp if self._previous_stamp else 0.0
+        velocity = self._filter.update(q, dt)
+        self._previous_stamp = stamp
 
         state = CableState()
         state.header = msg.header

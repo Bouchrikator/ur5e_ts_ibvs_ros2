@@ -36,19 +36,22 @@ class CableSupervisorNode(Node):
         self.declare_parameter("grasp_state_topic", "/cable/grasp_state")
         self.declare_parameter("target_topic", "/cable/target_shape")
         self.declare_parameter("status_topic", "/cable/supervisor_state")
-        self.declare_parameter("target_modal_coordinates", [0.0, 0.0])
+        self.declare_parameter("target_modal_coordinates", [0.0, 0.0, 0.0])
         self.declare_parameter("target_file", "")
-        self.declare_parameter("shape_tolerance_m", 0.005)
+        self.declare_parameter("shape_tolerance_m", 0.010)
         self.declare_parameter("hold_time_s", 2.0)
-        self.declare_parameter("state_timeout_s", 1.0)
+        self.declare_parameter("state_timeout_s", 3.0)
+        self.declare_parameter("recover_time_s", 3.0)
         self.declare_parameter("attach_service", "/cable/attach")
         self.declare_parameter("auto_start", True)
 
         self.target = np.asarray(
             self.get_parameter("target_modal_coordinates").value, dtype=float)
+        self.target_name = "supervisor"
         self.tolerance = float(self.get_parameter("shape_tolerance_m").value)
         self.hold_time = float(self.get_parameter("hold_time_s").value)
         self.state_timeout = float(self.get_parameter("state_timeout_s").value)
+        self.recover_time = float(self.get_parameter("recover_time_s").value)
         self._load_target_file()
 
         self.state = INITIALIZE
@@ -57,6 +60,7 @@ class CableSupervisorNode(Node):
         self._grasp = None
         self._attach_pending = False
         self._settled_since = None
+        self._recover_since = None
 
         self.status_pub = self.create_publisher(
             String, self.get_parameter("status_topic").value, 10)
@@ -69,6 +73,11 @@ class CableSupervisorNode(Node):
         self.create_subscription(
             GraspState, self.get_parameter("grasp_state_topic").value,
             self._on_grasp, 10)
+        # Adopt externally latched targets (e.g. a settled-equilibrium latch)
+        # instead of clobbering them with the configured one every tick.
+        self.create_subscription(
+            CableShapeTarget, self.get_parameter("target_topic").value,
+            self._on_external_target, 10)
 
         self.attach_client = self.create_client(
             Trigger, self.get_parameter("attach_service").value)
@@ -105,6 +114,21 @@ class CableSupervisorNode(Node):
     def _on_grasp(self, msg):
         self._grasp = msg
 
+    def _on_external_target(self, msg):
+        coords = np.asarray(msg.modal_coordinates, dtype=float)
+        if coords.shape != self.target.shape:
+            return
+        # Own re-publications carry the adopted name AND coordinates.
+        if (msg.target_name == self.target_name
+                and np.allclose(coords, self.target, atol=1e-12)):
+            return
+        self.target = coords
+        self.target_name = msg.target_name
+        self._settled_since = None
+        self.get_logger().info(
+            f"adopted external target '{msg.target_name}': "
+            f"{np.round(coords, 5).tolist()}")
+
     def _transition(self, new_state, reason):
         if new_state == self.state:
             return
@@ -114,7 +138,7 @@ class CableSupervisorNode(Node):
     def _publish_target(self):
         msg = CableShapeTarget()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.target_name = "supervisor"
+        msg.target_name = self.target_name
         msg.modal_coordinates = self.target.tolist()
         self.target_pub.publish(msg)
 
@@ -146,11 +170,21 @@ class CableSupervisorNode(Node):
     def _tick(self):
         self.status_pub.publish(String(data=self.state))
 
-        if self.state == FAULT:
-            return
-
         stale = (self._reduced_stamp is None
                  or self._now_s() - self._reduced_stamp > self.state_timeout)
+
+        if self.state == FAULT:
+            # Recoverable: occlusion dropouts are transient (audit 9.1); a
+            # terminal FAULT forced operators to kill the supervisor.
+            if stale or self._grasp is None:
+                self._recover_since = None
+                return
+            if self._recover_since is None:
+                self._recover_since = self._now_s()
+            elif self._now_s() - self._recover_since >= self.recover_time:
+                self._recover_since = None
+                self._transition(INITIALIZE, "reduced state healthy again")
+            return
 
         if self.state == INITIALIZE:
             if not stale and self._grasp is not None:

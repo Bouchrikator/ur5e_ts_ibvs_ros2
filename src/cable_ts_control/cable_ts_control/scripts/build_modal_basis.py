@@ -49,7 +49,8 @@ def main(argv=None):
     explained = explained_variance_ratio(singular_values, args.modes)
 
     print(f"dataset: {shapes.shape[0]} shapes of dimension {shapes.shape[1]}")
-    print("boundary block: " + ("gripper displacement (Craig-Bampton split)"
+    print("boundary block: " + ("gripper displacement "
+                                "(boundary-conditioned POD split)"
                                 if psi is not None else "none, plain PCA"))
     for index in range(min(6, len(singular_values))):
         share = explained_variance_ratio(singular_values, index + 1)

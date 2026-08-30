@@ -70,6 +70,10 @@ services:
       - ./src:/ros2_ws/src:rw
       # Host-side helper scripts (Cosserat restore after a container recreate)
       - ./scripts:/ros2_ws/scripts:ro
+      # Identification artifacts (dataset, basis, model, gains certificate):
+      # on the host so a scientific run survives the container and can be
+      # archived/committed for independent re-verification
+      - ./artifacts:/ros2_ws/artifacts:rw
       # SOFA scene files (runSofa /scenes/<file>)
       - ${HOME}/SOFA/scenes:/scenes:rw
       # Data recorder CSV logs (DataRecorder writes to $HOME/ibvs_logs)

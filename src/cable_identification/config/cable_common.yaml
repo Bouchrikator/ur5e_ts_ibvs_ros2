@@ -17,10 +17,16 @@ cable:
   gravity: [0.0, 0.0, 0.0]
   planar: true
   grasp_tip: true
-  # Stiff enough that attachment compliance is not mistaken for cable bending
-  # compliance during identification (forward test asserts <= 1 mm tip error).
-  grasp_stiffness: 20000.0
-  grasp_angular_stiffness: 500.0
+  # Attachment stiffness, chosen from a measured trade-off (spring_sweep):
+  # the spring acts on MAPPED Cosserat frames, whose geometric stiffness the
+  # implicit solver never sees, so overly stiff springs pump energy until the
+  # rod coils (at 2e4 N/m the chain collapses 0.70 -> 0.26 m within seconds
+  # of dragging). 2e3 N/m holds a 300 s attached drag with 0.21 mm tip error
+  # (identifiability spec <= 1 mm) and zero drift in chain length.
+  grasp_stiffness: 2000.0
+  # Rod-scaled: tip moments are EI*kappa ~ mNm; holding the latch orientation
+  # at 0.5+ Nm/rad stores ~0.1 Nm and pushes mm-level position error.
+  grasp_angular_stiffness: 0.05
   attach_mode: explicit    # a supervisor requests the grasp; no proximity magic
   attach_distance_m: 0.15  # xy proximity to the free end for the snap
   attach_height_m: 0.01    # gripper within 1 cm of the table plane to snap

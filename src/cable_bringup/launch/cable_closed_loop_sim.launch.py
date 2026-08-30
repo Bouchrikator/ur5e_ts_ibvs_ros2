@@ -46,8 +46,10 @@ def launch_setup(context, *args, **kwargs):
     enable_optimus = LaunchConfiguration("enable_optimus").perform(context)
     enable_control = LaunchConfiguration("enable_control").perform(context)
 
-    if observation_source not in ("synthetic", "camera"):
-        raise RuntimeError("observation_source must be 'synthetic' or 'camera'")
+    if observation_source not in ("synthetic", "camera", "camera_markers"):
+        raise RuntimeError("observation_source must be 'synthetic', 'camera' "
+                           "(marker-free DLO detector) or 'camera_markers' "
+                           "(legacy HSV fiducial tracker)")
     if architecture not in ("direct", "cascade"):
         raise RuntimeError("control_architecture must be 'direct' or 'cascade'")
 
@@ -73,6 +75,12 @@ def launch_setup(context, *args, **kwargs):
     servo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
             FindPackageShare("ibvs_control"), "launch", "servo.launch.py"])),
+        # Without these the include ran with ur_type:=ur5 and
+        # use_sim_time:=false (its declared defaults) inside a sim world.
+        launch_arguments={
+            "ur_type": LaunchConfiguration("ur_type"),
+            "use_sim_time": "true",
+        }.items(),
         condition=IfCondition(LaunchConfiguration("use_servo")),
     )
 
@@ -118,7 +126,26 @@ def launch_setup(context, *args, **kwargs):
                 "seed": LaunchConfiguration("seed"),
             }],
         )
-    else:
+    elif observation_source == "camera":
+        # Marker-free: the centreline is recovered from the cable itself
+        # (Keipour et al., 2201.06775), so the visual cable needs no painted
+        # fiducials. This is the default camera path.
+        observations = Node(
+            package="cable_perception",
+            executable="cable_dlo_detector_node",
+            output="screen",
+            parameters=[use_sim_time, {
+                "image_topic": "/overview/image",
+                "camera_info_topic": "/overview/camera_info",
+                "camera_frame": "overview_optical_frame",
+                "reference_frame": "cable_fixture_frame",
+                # The sim cable is rendered saturated blue (the only blue in
+                # the scene); the default grey window matches the robot arm.
+                "cable_hsv_lower": [100.0, 120.0, 60.0],
+                "cable_hsv_upper": [140.0, 255.0, 255.0],
+            }],
+        )
+    else:  # "camera_markers": legacy HSV fiducial tracker, opt-in baseline
         observations = Node(
             package="cable_perception",
             executable="cable_marker_tracker_node",
@@ -283,7 +310,7 @@ def generate_launch_description():
             description="Write the step 12 validation metrics to CSV"),
         DeclareLaunchArgument(
             "metrics_csv", default_value="/root/ibvs_logs/cable_metrics.csv"),
-        DeclareLaunchArgument("target_modal_coordinates", default_value="[0.0, 0.0]"),
+        DeclareLaunchArgument("target_modal_coordinates", default_value="[0.0, 0.0, 0.0]"),
         DeclareLaunchArgument("marker_noise_std_m", default_value="0.002"),
         DeclareLaunchArgument("marker_dropout", default_value="0.0"),
         DeclareLaunchArgument("marker_delay_s", default_value="0.0"),

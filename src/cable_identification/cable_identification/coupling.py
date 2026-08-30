@@ -66,11 +66,17 @@ class GraspCoupling:
         self.fixture_set = False
         self.state = DETACHED
         self._fixture_z = None
+        self._fixture_xy = None
         self._t_latch = None
         self._tip0 = None      # tip pose at latch
         self._q_offset = None  # grasp_q^-1 * tip_q at latch (seamless)
         self._distance = float("inf")
         self._height = float("inf")
+        # Detached = free tip. The spring only exists while the gripper holds
+        # the cable: left engaged it slowly pumps energy into the rod (its
+        # geometric stiffness on the mapped frames is invisible to the
+        # implicit solver) until the cable coils up.
+        self.cable.set_grasp_spring_enabled(False)
 
     @property
     def latched(self):
@@ -100,6 +106,7 @@ class GraspCoupling:
         self._tip0 = None
         self._q_offset = None
         self.sync_target_to_tip()
+        self.cable.set_grasp_spring_enabled(False)
         return True
 
     def in_range(self):
@@ -122,10 +129,29 @@ class GraspCoupling:
                q[0], q[1], q[2], q[3]]
         self.cable.set_grasp_pose(tip)
         self._fixture_z = float(pose7[2])
+        self._fixture_xy = (float(pose7[0]), float(pose7[1]))
         self.fixture_set = True
 
     def sync_target_to_tip(self):
         self.cable.set_grasp_pose(self.cable.tip_pose())
+
+    def _clamp_reachable(self, pos):
+        """Project the grasp target into the disk the rod can reach.
+
+        The rod is inextensible: a target beyond length_m of the fixture puts
+        the attachment spring in sustained tension, and tension through the
+        Cosserat mapping (whose geometric stiffness the implicit solver never
+        sees) flips transverse modes unstable — the rod coils up. Physically,
+        fingers pulling a taut cable SLIP: cap the anchor at 99% of reach.
+        """
+        fx, fy = self._fixture_xy
+        r_max = 0.99 * float(self.cable.cfg["length_m"])
+        dx, dy = pos[0] - fx, pos[1] - fy
+        r = math.hypot(dx, dy)
+        if r <= r_max:
+            return pos
+        s = r_max / r
+        return [fx + dx * s, fy + dy * s, pos[2]]
 
     def update_grasp(self, grasp_pose7, now_s):
         """Feed the current gripper pose; returns True on the latch edge."""
@@ -145,6 +171,10 @@ class GraspCoupling:
             self._tip0 = tip
             gq = tuple(grasp_pose7[3:7])
             self._q_offset = _q_mul(_q_conj(gq), tuple(tip[3:7]))
+            # Engage the attachment: target synced to the current tip so the
+            # spring starts at rest, then the ramp walks it to the gripper.
+            self.cable.set_grasp_pose(tip)
+            self.cable.set_grasp_spring_enabled(True)
             return True
 
         a = 1.0 if self.ramp_s <= 0 else min(
@@ -152,6 +182,7 @@ class GraspCoupling:
         gq = tuple(grasp_pose7[3:7])
         goal_q = _q_mul(gq, self._q_offset)
         pos = [self._tip0[i] + a * (grasp_pose7[i] - self._tip0[i]) for i in range(3)]
+        pos = self._clamp_reachable(pos)
         quat = _q_slerp(tuple(self._tip0[3:7]), goal_q, a)
         self.cable.set_grasp_pose(pos + list(quat))
         return False

@@ -11,8 +11,16 @@ reproduce each number are given.
 The plant, the observation pipeline and the online parameter identification
 work and are verified. The reduced model is now good enough to be worth
 certifying — the free-running rollout is inside the 50 mm gate on a matched
-dataset for the first time — but the **PDC synthesis is still infeasible**.
-Section 4 is the full diagnosis.
+dataset for the first time. The **basic common-quadratic PDC LMIs are
+infeasible on the identified matrices**. The earlier rejection of the relaxed
+solver points was made by a defective acceptance step (it discarded the slack
+`Q` and applied the basic gates — section 4.9, found by an external audit and
+fixed); the 2026-08-30 rerun with the corrected verifier reports **basic and
+relaxed solver-infeasible** on the regenerated 400×5 `--no-input-feedthrough`
+model — a sound negative this time — while the regenerated subset table
+materially changes the diagnosis (4.6): every rule PAIR now certifies, and
+the obstruction localises to rules 2/3 across the parameter box. Artifacts in
+`./artifacts/`; section 4 is the full diagnosis.
 
 Current model: 3 modes, state `[q₁ q₂ q₃ q̇₁ q̇₂ q̇₃ p_gx p_gy]` (8), input
 `[v_x v_y]` (2), 4 rules, `Ts = 0.04 s` (25 Hz). Envelope `EI ∈ [0.005, 0.015]`,
@@ -27,8 +35,8 @@ parameter vertices) so that only the pipeline changed:
 | basis reconstruction (3 modes) | 8.87 mm | **3.50 mm** |
 | held-out one-step, marker space | 12.35 mm | **3.76 mm** |
 | held-out free-running rollout | 109.5 mm | **32.5 mm** |
-| `corr(q, gripper)` | 0.76 | **0.00** |
-| 4-vertex LMI | infeasible | infeasible |
+| `corr(q, gripper)` | 0.76 | **0.00** (guaranteed on the fitting set — 5.13) |
+| 4-vertex LMI (basic) | infeasible | infeasible (relaxed too — sound gate, 4.9) |
 
 On the shipped defaults (600 steps × 6 trajectories, a longer and wider
 excitation) the same pipeline gives 3.50 mm reconstruction, 4.13 mm one-step
@@ -46,15 +54,15 @@ watch.
 | 4.1 — Synthetic observations | **Done** |
 | 4.2 — Camera observations | **Done, never run against a live camera.** Now marker-free (5.15) |
 | 5 — Optimus | **Substituted.** In-process UKF; Optimus itself is *not* installed |
-| 6 — Reduced model | **Done.** Craig-Bampton split, 3 modes, 3.50 mm |
+| 6 — Reduced model | **Done.** Boundary-conditioned POD split, 3 modes, 3.50 mm (naming: 5.13) |
 | 7 — TS vertices from SOFA | **Done.** 16/16 cells, held-out one-step 3.76 mm |
-| 8 — PDC synthesis | **BLOCKED.** LMIs infeasible — section 4 |
+| 8 — PDC synthesis | **BLOCKED.** Basic and relaxed solver-infeasible on the current model (sound gate, 2026-08-30 rerun) — sections 4, 4.9 |
 | 9 — Outer cable TS node | **Done, but Python not C++** (plan asked for `.cpp`) |
 | 10 — TS-IBVS integration | **Code done, never run** |
 | 11 — Closed-loop launch | **Done.** Parses; never launched end-to-end |
 | 12 — Validation order | **Runs 1–2 done, 3–14 not executed** |
 
-Unit tests: **190 passing** (28 identification + 48 perception + 114 control).
+Unit tests: **193 passing** (28 identification + 48 perception + 117 control).
 
 **The control loop still cannot run**: no gains exist (section 3.1). The
 runtime state mismatch of the previous revision is fixed (section 5.14).
@@ -122,7 +130,7 @@ trajectory, so the rollout below is a real contiguous prediction rather than a
 walk over scattered samples. Both errors are in **marker space**: the
 prediction is reconstructed through the basis and compared against the recorded
 markers, so they include the representation error and are directly comparable
-to the 5 mm shape tolerance (see 5.12).
+to the shape tolerance (see 5.12).
 
 Model order, on a fixed 400 x 5 dataset:
 
@@ -149,6 +157,14 @@ synthesising 4 PDC gains for 4 parameter vertices (state 6, input 2)
   relaxed : infeasible
 ERROR: the LMIs are infeasible.
 ```
+
+(Console from the earlier 2-mode revision — the current model is state 8:
+3 modes + velocities + gripper block. After the fixes of 5.11–5.14 the basic
+problem stayed infeasible and the relaxed solver started returning points;
+those points were rejected by a verification step that was itself wrong. The
+2026-08-30 rerun with the corrected verifier — section 4.9 — reports basic AND
+relaxed solver-infeasible on the regenerated model, so the negative stands,
+now soundly.)
 
 Full diagnosis in section 4. This blocks everything downstream:
 `cable_modal_basis.yaml`, `cable_ts_model.yaml` and `cable_ts_gains.yaml` are
@@ -186,11 +202,15 @@ repair it; `cable_plugin_test` and `cable_forward_test` both pass afterwards.
 
 ### 3.4 Modal reconstruction is now inside the shape tolerance
 
-The 3-mode basis reconstructs shapes to **3.50 mm** against the 5 mm
-`shape_tolerance_m` in `cable_target.yaml`. The previous 2-mode plain-PCA basis
-sat at 13.4 mm, which was the real accuracy floor of the whole pipeline. The
-improvement is the Craig-Bampton split (5.13), not a bigger basis: at the same
-order the split alone takes 8.87 mm to 3.50 mm.
+The 3-mode basis reconstructs shapes to **3.50 mm** against the 10 mm
+`shape_tolerance_m` in `cable_target.yaml` (raised from 5 mm: the basis error
+of 3.5 mm plus the ~4 mm detector observation noise put the sensing/model
+floor near 5.3 mm RSS, and a tolerance below the floor cannot be met — the
+final value must come from the measured end-to-end error distribution). The
+previous 2-mode plain-PCA basis sat at 13.4 mm, which was the real accuracy
+floor of the whole pipeline. The improvement is the boundary-conditioned POD
+split (5.13), not a bigger basis: at the same order the split alone takes
+8.87 mm to 3.50 mm.
 
 ### 3.5 Never executed
 
@@ -331,7 +351,7 @@ deeper causes were in the model handed to the solver, not in the solver:
 | Gripper position in the state | worst rollout 4303 → 622 mm |
 | Structured second-order fit + exact discretisation | ρ(A) exactly 1.0; rollout → ~200 mm |
 | Relaxed Tanaka-Wang conditions (`Y`, `s`) | larger feasible set |
-| `worst_spectral_radius` on averaged cross terms only | stops rejecting valid certificates |
+| `worst_spectral_radius` on averaged cross terms only | stops rejecting valid certificates; diagonal-only for relaxed ones (4.9) |
 
 A new finding along the way: **the joint fuzzy regressor is structurally rank
 deficient**. Complementary triangular memberships are exactly affine in the
@@ -343,20 +363,29 @@ matrices are not. The fit therefore takes the minimum-norm solution.
 ### 4.6 Where it stands now (2026-08-30, after the four fixes of section 5)
 
 Every `A_i` has `ρ(A) = 1.0000` exactly — the gripper integrator, with the
-cable modes strictly inside. Every `(A_i, B_i)` pair is fully controllable
-(rank 6/6 at 2 modes, checked by the PBH test at every eigenvalue on or outside
-the unit circle), so each is individually stabilisable and the obstruction is
-purely the *common* Lyapunov matrix.
+cable modes strictly inside. On the earlier 2-mode revision every
+`(A_i, B_i)` pair was fully controllable (rank 6/6, PBH at every eigenvalue on
+or outside the unit circle); **that audit has not yet been repeated on the
+current 8-state model**, and rank alone is not enough — the redo should report
+controllability-matrix singular values and a finite-horizon Gramian, not a
+binary rank.
 
-Minimal infeasible subsets on the 3-mode Craig-Bampton model
-(`src/cable_ts_control/diag_lmi.py`):
+Minimal infeasible subsets on the 3-mode model
+(`src/cable_ts_control/diag_lmi.py`), regenerated 2026-08-30 with the
+corrected acceptance step of 4.9 on the regenerated 400×5
+`--no-input-feedthrough` model. The earlier table, produced with the
+defective gate, had misclassified three of the six rule pairs:
 
-| subset | certified |
-|---|---|
-| one parameter vertex, 4 rules, cross terms | no, all four |
-| one rule, all four parameter vertices | rule 0 only |
-| rules 0+1, 0+3, 1+2 inside vertex 0 | yes |
-| rules 0+2, 1+3, 2+3 inside vertex 0 | no |
+| subset | sound gate (2026-08-30) | previous (unsound) |
+|---|---|---|
+| one parameter vertex, 4 rules, cross terms | no, all four | no, all four |
+| one rule, all four parameter vertices | rules 0 and 1 certify | rule 0 only |
+| rule pairs inside vertex 0 | **all six certify** | three of six |
+
+No rule PAIR is an obstruction any more: infeasibility needs at least three
+rules of one vertex, and rules 2/3 cannot share a Lyapunov matrix across the
+parameter box even alone. Measured per-vertex rule spread on this model:
+`‖ΔA‖/‖A‖ = 0.9–2.9`, `‖ΔB‖/‖B‖ = 0.8–3.4`.
 
 Four candidate causes were tested and **eliminated by measurement**:
 
@@ -369,20 +398,32 @@ Four candidate causes were tested and **eliminated by measurement**:
 
 What is left is the spread of the rule **input** matrices:
 `max‖Bᵢ−Bⱼ‖ / ‖B‖ = 1.6 … 3.3`. The rules disagree about the input gain by
-more than the gain itself, and no single `K_j` can serve them all. Section 5.14
+more than the gain itself, and no single `K_j` can serve them all. (Caveats:
+this norm ratio is scale-dependent, blows up when `‖B‖` is small, does not
+separate magnitude spread from a rotation of the input subspace, and carries
+no confidence interval — the principal angles between the `Im(Bᵢ)` and a
+bootstrap over trajectories are the missing measurements.) Section 5.14
 identifies the mechanism (the `G u` column is nearly collinear with the
 `D q̇` column, so each rule splits them differently) and shows that removing
-that term costs nothing on held-out data. Doing so moves the 3-mode problem
-from *infeasible* to *the solver returns a point that fails verification* —
-progress, but not a certificate, and the script correctly refuses to write it.
+that term costs nothing on held-out data — which demonstrates
+*non-identifiability under this excitation*, not that the physical feedthrough
+is zero. Dropping it moved the 3-mode problem from *infeasible* to *the solver
+returns a point* on the earlier dataset generation — a point then rejected by
+the defective verifier of section 4.9. The 2026-08-30 rerun answers the
+question for the regenerated model: `basic: infeasible, relaxed: infeasible`
+at solver level, so there is no returned point to verify and the relaxation
+does not rescue the current vertices.
 
 ### 4.7 What is still open
 
-**The LMI implementation is not the problem.** It was checked line by line
-against Tanaka & Wang (2001): the basic conditions match (3.19)–(3.20) and the
-relaxed ones match (3.27)–(3.28). Taking the Schur complement of the
-implemented blocks returns `G'PG − P + (s−1)PYP < 0` and `H'PH − P − PYP ≤ 0`,
-i.e. exactly Theorem 10 with `Q = PYP`.
+**The synthesis LMIs match the book; the acceptance step did not.** The solve
+step was checked line by line against Tanaka & Wang (2001): the basic
+conditions match (3.19)–(3.20) and the relaxed ones match (3.27)–(3.28).
+Taking the Schur complement of the implemented blocks returns
+`G'PG − P + (s−1)PYP < 0` and `H'PH − P − PYP ≤ 0`, i.e. exactly Theorem 10
+with `Q = PYP`. But the verification then threw `Y` away and checked the
+BASIC inequalities — section 4.9 — so every "relaxed point rejected" statement
+below says nothing about the relaxed theorem.
 
 Hypotheses tested, all on the corrected model:
 
@@ -390,7 +431,7 @@ Hypotheses tested, all on the corrected model:
 |---|---|
 | Bad state scaling | **no** — three similarity transforms, all still infeasible |
 | Not enough gain freedom | **no** — parameters as premises (16 rules, 16 gains) still infeasible |
-| Uncontrollable mode | **no** — every vertex is rank 6/6 controllable |
+| Uncontrollable mode | **no** — every vertex rank 6/6 on the 2-mode revision (8-state redo pending) |
 | Rules too dissimilar | **yes**, and it is `B` rather than `A` |
 
 Two premise choices were compared (`--premise-map`). `modal` uses the leading
@@ -445,6 +486,68 @@ worst |eig(A_i - B_i K_j)| = 0.995169 < 1 OK
 
 Two regression tests now assert that a "feasible" report always implies a
 strictly negative certificate, and that `decay` really bounds the decrease.
+
+### 4.9 The relaxed verifier discarded Q — external audit finding, fixed
+
+> Found by an external mathematical audit of commit `b1ea940` (2026-08-30).
+> This is the second verification defect after 4.8, and the more consequential
+> one: it did not make the solver lie, it made the acceptance step reject
+> valid answers.
+
+`solve_cable_ts_pdc` built the relaxed slack `Y ⪰ 0` into the LMIs and then
+returned only `(gains, P)`. Both acceptance checks —
+`verify_lyapunov_decrease` (`G'PG − P`) and `worst_spectral_radius` over the
+averaged cross terms — are gates for the **basic** theorem. For a relaxed
+certificate the solved inequalities are, with `Q = PYP`:
+
+```
+Gᵢᵢ' P Gᵢᵢ − βP + (s−1)Q ≺ 0
+Hᵢⱼ' P Hᵢⱼ − βP − Q      ⪯ 0
+```
+
+An averaged cross term may have `ρ(Hᵢⱼ) > 1` and still be covered, because the
+`(s−1)Q` surplus on the diagonal terms compensates it. Scalar counterexample
+(now a permanent regression test): `P=1, Q=0.5, s=2, β=0.999, Gᵢᵢ=0,
+Hᵢⱼ=1.1` — relaxed residuals `−0.499` and `−0.289`, both valid, while the old
+gates compute `1.1² − 1 = 0.21 > 0` and `ρ = 1.1 > 1` and wrongly reject.
+
+**Consequences for earlier claims in this document:**
+
+* every "the relaxed solver returns a point that fails verification"
+  statement (4.6, and the `--no-input-feedthrough` result in 5.14) is
+  unsound — those points were never checked against the relaxed theorem;
+* the minimal-infeasible-subset table in 4.6 was produced by `diag_lmi.py`
+  using the same wrong gate and must be regenerated;
+* the *basic*-condition infeasibility results are unaffected — they come from
+  the solver's own status on the basic problem, which was checked with the
+  matching basic gates.
+
+**Fix (all in `lmi_synthesis.py`, with regression tests):**
+
+* the solver returns a complete `PdcCertificate`: `Kᵢ`, `P`, `Q = PYP`, `β`,
+  `s`, certificate type, solver name and status — nothing implicit;
+* `verify_certificate` checks the inequalities the certificate actually
+  claims. The acceptance gate is the `β' = 1` (pure stability) form, which the
+  solved decay margin `β < 1` backs with real headroom against solver
+  round-off; the exact at-`β` residuals are also computed and archived;
+* the individual spectral-radius gate is restricted to the diagonal terms for
+  relaxed certificates (their condition does imply `ρ(Gᵢᵢ) < 1`; the cross
+  terms are covered by `Q`, not individually);
+* `solve_cable_ts_lmi` writes the full certificate — including `Q`, `β`, `s`,
+  solver status and all residuals — into the gains YAML, and the pipeline
+  artifacts now persist under `./artifacts/` on the host so a run can be
+  archived and independently re-verified.
+
+**Rerun result (2026-08-30):** dataset → basis → identify
+(`--no-input-feedthrough`, 400×5, reproducing the documented 3.80 mm one-step
+and 32.0 mm rollout) → LMI, all artifacts archived in `./artifacts/`. The
+corrected pipeline reports `basic: infeasible, relaxed: infeasible` from the
+solver itself — a sound negative. The subset table (4.6) regenerated with the
+sound gate DID change materially — all six rule pairs certify, rules 0 and 1
+certify across the whole parameter box — so the defect had been distorting
+the diagnosis, but repairing it does not, on its own, make the current model
+certifiable. The obstruction is now precisely located: rules 2/3 across the
+parameter box, and ≥3-rule interactions within a vertex.
 
 The remaining work is listed in section 7.
 
@@ -572,8 +675,9 @@ and `p_g` is predicted from `q` alone with `R² = 0.954`. The state was not
 minimal, part of the modal acceleration was really the gripper's, and the fit
 had to absorb that somewhere.
 
-Replaced with the standard Craig-Bampton split into a constraint mode and
-fixed-interface normal modes:
+Replaced with a boundary-conditioned POD: a regressed boundary block plus PCA
+modes of the residual (Craig-Bampton-like in structure only — see the naming
+note below):
 
 ```
 y = y0 + Psi g + Phi q
@@ -583,7 +687,7 @@ y = y0 + Psi g + Phi q
 only what the boundary does not explain, and is orthogonal to `g` by
 construction. At equal model order:
 
-| | plain PCA | Craig-Bampton |
+| | plain PCA | boundary-conditioned POD |
 |---|---|---|
 | reconstruction, 3 modes | 8.87 mm | **3.50 mm** |
 | `corr(q, gripper)` | 0.7577 | **0.0000** |
@@ -592,6 +696,18 @@ construction. At equal model order:
 
 `ModalBasis` carries the optional `psi` block and the `boundary_reference` it
 is measured from; `psi = None` reproduces the old plain PCA exactly.
+
+**Naming, precisely** (this section used to say "Craig-Bampton"): a physical
+Craig-Bampton reduction takes `Psi = −Kᵢᵢ⁻¹Kᵢᵦ` from partitioned stiffness and
+`Phi` from the fixed-interface eigenproblem, with mass orthogonality. Here
+`Psi` is an ordinary least-squares regression on data and `Phi` a PCA of the
+residual — a *boundary-conditioned POD*. Two honesty notes follow: the
+`corr(q, g) = 0` above is guaranteed **on the fitting set** by least squares
+(residuals are orthogonal to regressors), so it is evidence of a better basis,
+not proof of dynamic or statistical independence; and the basis is currently
+built from **all** trajectories before the train/validation split, which leaks
+validation information into the basis and makes held-out errors mildly
+optimistic (section 7).
 
 ### 5.14 The direct input feedthrough is not identifiable
 
@@ -640,6 +756,65 @@ Which of the two the pipeline uses is the "discrete features versus continuous
 curve" choice of Cuiral-Zueco and López-Nicolás, *Taxonomy of Deformable Object
 Shape Control*, RA-L 2024 (§II-C). Both are kept; the marker-free one is the
 default because it is the one that can run on hardware.
+
+### 5.16 The tip spring destabilized the plant whenever it was under load
+
+The first live run of the full stack (Gazebo + SOFA + camera DLO) showed the
+truth cable slowly coiling into a 5 cm clump at the fixture — chain length
+0.266 m for a 0.7 m inextensible rod, i.e. per-section curvatures near 1000
+rad/m: a diverged state, not an equilibrium.
+
+Mechanism: the tip attachment is a `RestShapeSpringsForceField` on `FramesMO`,
+a *mapped* state. Forces map back through `Jᵀ`, but the spring's **geometric
+stiffness never reaches the implicit solver** (the same class of problem as
+5.1, on the force side instead of the constraint side). Any sustained spring
+load therefore pumps energy each step. Three separate manifestations, each
+reproduced headlessly and fixed:
+
+1. **Detached hold.** The target used to pin the free tip at the analytic
+   straight pose forever. A/B repro, 600 s: pinned → chain 0.31 m,
+   `max|strain| ≈ 1000`; released → chain 0.7000 m, strain 0.000. Fix: the
+   coupling now disables the spring while `DETACHED` (a detached cable end is
+   free — the pin was unphysical anyway) and re-engages it on the latch edge,
+   with the target synced to the tip so it starts at rest.
+2. **Stiffness scale.** `grasp_stiffness` was 2·10⁴ N/m against a rod whose
+   transverse forces are millinewtons. Swept attached holds (300 s, bent
+   pose): 2·10³ N/m gives 0.21 mm attachment error (spec ≤ 1 mm) and zero
+   drift; 2·10⁴ coils the rod within seconds of dragging. Angular stiffness
+   went 500 → 0.05 Nm/rad for the same reason (tip moments are `EI·κ` ~ mNm;
+   holding the latch orientation at 5·10² stored ~1 Nm and pushed mm-level
+   position error).
+3. **Over-extension.** Driving the gripper past the rod's reach (the live
+   failure: a pan drag put the anchor 0.713 m from the fixture) leaves the
+   spring in *sustained tension*, which flips transverse modes unstable and
+   re-coils the rod. Physically, fingers pulling a taut cable slip. The
+   coupling now projects the anchor into 99 % of the reachable disk
+   (`_clamp_reachable`). Note the closed-loop target `q* = 0` (straight) sits
+   exactly on this boundary, so transient over-extension is not an edge case —
+   it is the operating point.
+
+Validation: 5-phase headless suite (detached 120 s hold, latch, 10 cm ramped
+drag with settling trace, 5 cm over-extension for 30 s, detach + 60 s
+relaxation) — chain length 0.7000 ± 0.0005 m throughout, attachment error
+2.6 mm at 97 % extension; `forward_test` 6/6 (grasped-tip error 0.46 mm < 1 mm
+at the new stiffness); 193/193 package tests; live end-to-end: pose → explicit
+attach → over-extending drag leaves chain at 0.7000 m with 7/7 valid DLO
+markers on the bent cable.
+
+Consequence for the identified artifacts: the dataset was generated with the
+old 2·10⁴ spring but in short (24 s) *attached, interior-workspace* rollouts
+where the instability had no time to express itself and the attachment error
+(0.02 mm) was negligible; with 2·10³ that error is 0.21 mm against cm-scale
+excitation — a ~1 % perturbation of the input coupling, second order next to
+the model's 3.8 mm one-step residual. The dataset is not invalidated; regard
+regeneration as hygiene for the next identification pass, not a blocker.
+
+One operational lesson recorded alongside: during the debugging a *zombie*
+truth node from a half-killed earlier launch kept publishing its coiled state
+onto `/cable/truth/frames`, interleaved with the healthy publisher — the chain
+metric flapped 0.70 / 0.27 m at ~1 Hz. Two publishers on one topic is silent
+in ROS 2; `ros2 topic info -v` (publisher count) is the discriminating probe,
+and stack restarts must verify `pgrep -f cable_sofa_node` returns exactly one.
 
 ---
 
@@ -693,8 +868,10 @@ Measured on 2026-08-30: `/cable/truth/frames` at 60 Hz from the runSofa scene,
 
 The coloured fiducials are opt-in now that detection is marker-free (5.15):
 set `marker_s_over_l` on `cable_visual_node` to the arc-length fractions you
-want spheres at (it defaults to empty), and run
-`cable_marker_tracker_node` instead of `cable_dlo_detector_node`.
+want spheres at (it defaults to empty). The closed-loop launch wires the
+marker-free `cable_dlo_detector_node` for `observation_source:=camera`;
+the legacy HSV tracker remains available as
+`observation_source:=camera_markers`.
 
 Drive the arm and attach:
 
@@ -728,13 +905,28 @@ Metrics are written to `~/ibvs_logs/cable_metrics.csv`.
 ./scripts/run.sh cable_dataset      # ~10 min of SOFA
 ./scripts/run.sh cable_basis
 ./scripts/run.sh cable_identify     # passes one-step, fails the rollout gate
-./scripts/run.sh cable_lmi          # infeasible; writes nothing
+./scripts/run.sh cable_lmi          # infeasible (sound gate, 4.9); writes nothing
+```
+
+All four artifacts (`cable_dataset.npz`, `cable_modal_basis.yaml`,
+`cable_ts_model.yaml`, `cable_ts_gains.yaml`) now land in `./artifacts/` on
+the host, so a run survives the container and can be archived with the commit
+that produced it. Every scientific claim should ship those files. The
+2026-08-30 rerun kept both configurations: the shipped 600×6 defaults and the
+documented 400×5 set (`*_400x5*`, identified with `--no-input-feedthrough`).
+Extra flags pass through, e.g.:
+
+```bash
+./scripts/run.sh cable_identify --no-input-feedthrough \
+  --dataset /ros2_ws/artifacts/cable_dataset_400x5.npz \
+  --basis /ros2_ws/artifacts/cable_modal_basis_400x5.yaml \
+  --output /ros2_ws/artifacts/cable_ts_model_400x5_nofeed.yaml
 ```
 
 ### 6.5 Unit tests
 
 ```bash
-./scripts/run.sh cable_unit_tests   # 148 tests
+./scripts/run.sh cable_unit_tests   # 193 tests
 ```
 
 ### 6.6 What cannot be run
@@ -743,9 +935,10 @@ Metrics are written to `~/ibvs_logs/cable_metrics.csv`.
 ./scripts/run.sh cable_closed_loop enable_control:=true   # no gains exist
 ```
 
-Blocked twice over: `cable_ts_gains.yaml` is never produced (section 3.1), and
-even with gains the controller would refuse on the state mismatch
-(section 3.7). Validation items 7–14 are therefore unreachable today.
+Blocked on gains: `cable_ts_gains.yaml` has never been produced (sections 3.1
+and 4.9). The state mismatch of the previous revision is fixed (3.7), so the
+gains are now the single blocker. Validation items 7–14 stay unreachable until
+the pipeline rerun with the corrected verifier.
 
 ### 6.7 Build notes
 
@@ -764,32 +957,78 @@ running pytest, or the stale installed copy is tested.
 
 Items 1–3 of the previous revision are done (model order, boundary block,
 gripper in the runtime state) and item 8 is done (the image carries Cosserat
-again, and `install_cosserat.sh` repairs a recreated container).
+again, and `install_cosserat.sh` repairs a recreated container). The verifier
+defect of section 4.9 is fixed and the decisive rerun is done: basic and
+relaxed are solver-infeasible on the current model, and the regenerated
+subsets (4.6) localise the obstruction to rules 2/3 across the parameter box
+and ≥3-rule interactions. Runtime consistency fixes landed with it (the
+controller now defaults to `1/Ts` of the identified model instead of 30 Hz,
+the camera launch path uses the marker-free detector, the reducer samples TF
+at the observation stamp, and `cable_target.yaml` matches the 3-mode state).
 
-1. **Attack the rule input spread.** `‖ΔB‖/‖B‖ = 1.6–3.3` is the last measured
-   obstruction (section 4.6). Two things to try, in this order: identify the
-   grasp coupling's damping directly from the SOFA scene rather than regressing
-   it, so `G` is *known* instead of fitted; and, failing that, adopt the
-   position-driven boundary permanently (`--no-input-feedthrough`) on the
-   strength of the held-out evidence in 5.14. Nothing else moved the
-   feasibility.
-2. **Build the basis from training trajectories only.** It is currently built
-   from all of them, so the held-out numbers are mildly optimistic.
-3. **Centre the model on a real equilibrium.** Settle SOFA at a held gripper
-   pose to get `(q*, p_g*)`; the regulator LMIs assume the origin is an
-   equilibrium and `q* = 0` is only the mean of a dynamic dataset.
-4. Re-run identify → LMI and check `max eig(G'PG − P) < 0` *and*
-   `worst |eig(A − BK)| < 1`. Never trust the solver's own status alone
-   (section 4.8) — it reported *feasible* on a point with `ρ = 1.25` during
-   this work.
-5. Verify the grasp frame in Gazebo (step 2.1) — it biases every identified
+1. **Explain rules 2/3.** They are the cells the sound subsets isolate: rules
+   0/1 certify across the whole parameter box, 2/3 do not. Check premise-cell
+   sample balance, whether the bearing premise's sign convention or the
+   excitation's asymmetry concentrates model error there, and run the
+   measurements of item 3 on those two rules first.
+2. **Redo the controllability audit on the real 8-state model** — PBH plus
+   controllability-matrix singular values and a finite-horizon Gramian, per
+   parameter vertex, not just a rank.
+3. **Attack the rule input spread with real measurements.** Bootstrap
+   confidence intervals for every `Aᵢ, Bᵢ` over trajectory resampling,
+   principal angles between the `Im(Bᵢ)`, and singular values of each `Bᵢ` —
+   `‖ΔB‖/‖B‖` alone is scale-dependent and proves nothing. Then either
+   identify the grasp coupling directly from the SOFA scene so `G` is *known*,
+   or adopt the position-driven boundary permanently on the strength of 5.14
+   plus dedicated persistently-exciting experiments (independent ± pulses and
+   multisine per axis around settled equilibria — smooth sweeps leave `g`,
+   `ġ`, `q̇` and `u` too correlated to separate `Gu` from `Dq̇`).
+4. **Build the basis from training trajectories only** (5.13 leak).
+5. **Centre the model on real equilibria and make targets reachable.** Settle
+   SOFA at held gripper poses for the equilibrium map `y_eq(g, θ)`; project
+   every desired shape onto it (`g* = argmin ‖y_eq(g) − y*‖`, then
+   `q* = Φ†(y* − y₀ − Ψg*)`), store the full `[q*, 0, g*]`, verify the
+   equilibrium residual, and reject unreachable targets. The current
+   controller zeroes the gripper reference, so any non-rest `q*` would chase a
+   non-equilibrium — `cable_target.yaml` documents this and pins `q* = 0`.
+6. **Match the dataset input channel to the runtime input channel.** The
+   dataset applies instantaneous SOFA target jumps + hold; the runtime applies
+   a velocity through Servo/robot dynamics. Either interpolate the SOFA
+   boundary continuously during substeps (velocity contract), or learn the
+   discrete increment map and command increments online (position contract) —
+   and for the cascade, identify the outer plant with the inner loop closed or
+   bound the interconnection explicitly (separate certificates for the two
+   loops do not certify the cascade).
+7. Verify the grasp frame in Gazebo (step 2.1) — it biases every identified
    stiffness.
-6. Run validation items 3–6 with Gazebo up (sections 6.2–6.3), and point the
-   camera path at `cable_dlo_detector_node` so the marker-free observation is
-   exercised against a real image for the first time.
-7. Optionally rebuild with `WITH_OPTIMUS=true` and run the compatibility gate.
-8. Only then wire the cascade (`reference_source:=cable`).
+8. Run validation items 3–6 with Gazebo up (sections 6.2–6.3); the camera path
+   now exercises `cable_dlo_detector_node` against a real image for the first
+   time. While there, make the detector's output honest about uncertainty: it
+   currently publishes `confidence = 1.0` with one constant isotropic
+   covariance, and the reducer ignores both — interpolated/occluded points
+   should carry larger, anisotropic covariance and weigh less in the modal
+   projection. Also note what the geometric samples cannot do: they are
+   arc-length resamples, not persistent material features, so they cannot
+   observe `EA` (the chain is forced to the known length), torsion, or
+   material slip along the cable.
+9. Optionally rebuild with `WITH_OPTIMUS=true` and run the compatibility gate.
+   Note the estimator currently only gates on estimate freshness — the
+   estimates do not yet update the vertices or gains, so "Optimus in the
+   loop" is observation-only until scheduled adaptation is designed.
+10. Only then wire the cascade (`reference_source:=cable`).
 
-The throwaway diagnostics that produced the numbers in sections 4.6 and 5.11–14
-are left in `src/cable_ts_control/diag_*.py`. They are untracked scratch, not
-part of the package.
+If the corrected relaxed LMI still refuses the dynamic 8-state model, the
+defensible fallback is a **quasi-static TS layer**: settle SOFA at a premise
+grid, take central-difference shape Jacobians `Jᵢ` per parameter sample,
+control the two most reachable shape directions (SVD of `J`) with
+`zₖ₊₁ = zₖ + Ts J(ρ,θ)vₖ` and PDC over `Gᵢⱼ = I − Ts Jᵢ Kⱼ` — the same
+structure as the working TS-IBVS loop, with the deformation Jacobian in place
+of the interaction matrix. Three modes stay for observation; only two
+independent static directions exist with two planar inputs, so an arbitrary
+3-vector `q*` is not a reachable static target without a third boundary input
+(e.g. gripper rotation).
+
+The throwaway diagnostics that produced the numbers in sections 4.6 and
+5.11–14 live in `src/cable_ts_control/diag_*.py` (tracked since `b1ea940`;
+`diag_lmi.py` carries the corrected acceptance step). They are scratch tools,
+not part of the package.

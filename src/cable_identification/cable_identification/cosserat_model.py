@@ -41,10 +41,12 @@ DEFAULT_CONFIG = {
     "attach_ramp_s": 0.5,
     # "proximity" latches on its own; "explicit" waits for a supervisor request
     "attach_mode": "proximity",
-    # Tip attachment compliance. Too soft and the estimator cannot tell
-    # attachment compliance apart from cable bending compliance.
-    "grasp_stiffness": 2.0e4,
-    "grasp_angular_stiffness": 5.0e2,
+    # Tip attachment compliance (see cable_common.yaml for the measured
+    # trade-off): 2e3 N/m = 0.21 mm attached error, stable over 300 s holds;
+    # 2e4 N/m destabilizes the solver through the Cosserat mapping (springs
+    # on mapped frames have no geometric stiffness) and the rod coils up.
+    "grasp_stiffness": 2000.0,
+    "grasp_angular_stiffness": 0.05,
     # Constrain the cable to the z = base plane (table shaping without contact)
     "planar": False,
     "planar_stiffness": 1.0e4,
@@ -139,7 +141,7 @@ class CableHandles:
     """Live handles into the built scene used by the adapter/identification code."""
 
     def __init__(self, solver_node, base_mo, strain_mo, force_field, frames_mo, cfg,
-                 grasp_target_mo=None, ode_solver=None):
+                 grasp_target_mo=None, ode_solver=None, grasp_spring=None):
         self.solver_node = solver_node
         self.base_mo = base_mo
         self.strain_mo = strain_mo
@@ -148,6 +150,7 @@ class CableHandles:
         self.cfg = cfg
         self.grasp_target_mo = grasp_target_mo
         self.ode_solver = ode_solver
+        self.grasp_spring = grasp_spring
         self.marker_indices = marker_frame_indices(cfg)
 
     def set_base_pose(self, pose7):
@@ -161,6 +164,24 @@ class CableHandles:
         """Move the kinematic target the cable tip is constrained to."""
         with self.grasp_target_mo.position.writeable() as p:
             p[0] = pose7
+
+    def set_grasp_spring_enabled(self, enabled):
+        """Engage/release the tip attachment spring.
+
+        While no gripper holds the cable the tip must be FREE: the spring acts
+        on the mapped Cosserat frames, whose geometric stiffness is not seen
+        by the implicit solver, and holding the tip with it for minutes pumps
+        energy into the rod until it coils up (headless A/B repro: chain
+        length 0.31 m vs 0.70 m after 600 s). Physically a detached cable end
+        is free anyway. Attached dynamics are unchanged.
+        """
+        if self.grasp_spring is None:
+            return
+        k = float(self.cfg["grasp_stiffness"]) if enabled else 0.0
+        ka = float(self.cfg["grasp_angular_stiffness"]) if enabled else 0.0
+        self.grasp_spring.findData("stiffness").value = [k]
+        self.grasp_spring.findData("angularStiffness").value = [ka]
+        self.grasp_spring.reinit()
 
     def save_state(self):
         """Snapshot the independent DOFs so a what-if rollout can be undone.
@@ -272,6 +293,7 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
         radius=float(cfg["radius_m"]))
 
     grasp_target_mo = None
+    grasp_spring = None
     if cfg.get("grasp_tip"):
         # Kinematic pose the tip is clamped to (the gripper), initialized at
         # the straight tip so the attachment starts at rest. Stiff external
@@ -281,7 +303,7 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             "MechanicalObject", template="Rigid3d", name="TargetMO",
             position=[list(frames[-1])], showObject=show_flag,
             showObjectScale=show_scale)
-        frames_node.addObject(
+        grasp_spring = frames_node.addObject(
             "RestShapeSpringsForceField", name="graspSpring", template="Rigid3d",
             stiffness=float(cfg["grasp_stiffness"]),
             angularStiffness=float(cfg["grasp_angular_stiffness"]),
@@ -302,4 +324,4 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             fixedDirections=[1, 1, 0])
 
     return CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
-                        grasp_target_mo, ode_solver)
+                        grasp_target_mo, ode_solver, grasp_spring)

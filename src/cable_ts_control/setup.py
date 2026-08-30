@@ -40,6 +40,8 @@ setup(
             "cable_ts_control.scripts.identify_ts_vertices:main",
             "solve_cable_ts_lmi = "
             "cable_ts_control.scripts.solve_cable_ts_lmi:main",
+            "settle_shape_jacobians = "
+            "cable_ts_control.scripts.settle_shape_jacobians:main",
         ],
     },
 )

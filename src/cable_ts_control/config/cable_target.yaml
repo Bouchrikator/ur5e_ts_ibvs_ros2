@@ -1,22 +1,27 @@
 # Desired cable shape for the shaping experiment (plan step 8).
 #
 # The target is expressed in MODAL coordinates q*, not in marker positions:
-# the controller regulates the reduced state x = [q1 q2 q1' q2']', so a target
-# given in the same basis needs no conversion and cannot drift from the model.
+# the controller regulates the reduced state x = [q1 q2 q3 q1' q2' q3' gx gy]'
+# (3 modes + gripper block), so a target given in the same basis needs no
+# conversion and cannot drift from the model.
 #
-# q* is only meaningful once cable_modal_basis.yaml exists, because the basis
-# defines what q1 and q2 mean. Until the identification pipeline has been run,
-# [0, 0] is the mean shape of the excitation dataset, i.e. "return the cable to
-# its nominal resting shape" — a valid and safe first closed-loop target.
-#
-# After running build_modal_basis, pick a target by projecting a measured or
-# desired marker shape onto the basis rather than by inventing numbers here.
+# EQUILIBRIUM CAVEAT — an arbitrary q* is NOT generally an equilibrium of the
+# cable: holding a non-rest shape requires a specific gripper position g*, and
+# the PDC law u = -sum h_j K_j (x - x*) only regulates targets that satisfy
+# x* = sum h_i(rho*) (A_i x* + B_i u*). Until the pipeline provides the
+# inverse-equilibrium map g* = argmin_g ||y_eq(g, theta) - y*|| and stores the
+# full triple [q*, 0, g*], the only defensible target is the rest shape
+# q* = 0 (dataset mean, g* = 0 displacement). Do not hand-edit q* to a
+# non-zero value without that map: the loop would chase a non-equilibrium.
 cable_target:
   frame: cable_fixture_frame
-  modal_coordinates: [0.0, 0.0]
+  modal_coordinates: [0.0, 0.0, 0.0]
 
   # The supervisor declares SHAPE settled below this error and, after holding
-  # it, moves to HOLD. Keep it above the marker noise (2 mm) or the state
-  # machine will chatter between SHAPE and HOLD.
-  shape_tolerance_m: 0.005
+  # it, moves to HOLD. The floor is set by the sensing/model chain, not by
+  # ambition: 3.5 mm basis reconstruction + ~4 mm detector observation noise
+  # give a ~5.3 mm root-sum-square floor before calibration, delay and model
+  # error. 10 mm keeps a defensible margin above that floor; tighten it only
+  # from a measured end-to-end error distribution, never below the floor.
+  shape_tolerance_m: 0.010
   hold_time_s: 2.0

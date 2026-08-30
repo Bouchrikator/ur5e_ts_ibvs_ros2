@@ -1,4 +1,4 @@
-"""Tests of the boundary (Craig-Bampton) block of the modal basis."""
+"""Tests of the boundary block (boundary-conditioned POD) of the modal basis."""
 
 import numpy as np
 import pytest

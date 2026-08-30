@@ -1,0 +1,32 @@
+# NARROW physical-parameter envelope for the cable CONTROL experiment.
+#
+# Same three consumers as cable_parameter_bounds.yaml (dataset generation,
+# LMI vertices, online estimator clamp). This file exists because the wide
+# box [0.005, 0.015] is PROVEN uncertifiable for the 400x5 nofeed model:
+#   * CLARABEL reports infeasible on the full relaxed synthesis LMI;
+#   * every SCS optimal_inaccurate point is rejected by the sound verifier
+#     (~1e-3 residual, 4 independent (decay, scaling) cells);
+#   * with K fixed, the P,Q certificate SDP is LINEAR and CLARABEL proves it
+#     infeasible instantly for every candidate K (V-step polish, 2026-08-30).
+# That matches the measured EI=0.005 pathology already documented in
+# cable_parameter_bounds.yaml: 30-80 mm held-out error in the large-
+# deformation cells — geometric nonlinearity a single local model per cell
+# cannot represent.
+#
+# Narrowing is legitimate because the box is enforced, not assumed: the
+# online estimator is hard-clamped to these bounds and converges to the
+# truth EI = 0.010 from either rail. The identification MILESTONE (estimator
+# started at 0.006) keeps the wide file; this file is for the control phase,
+# where identification has already pinned EI near the truth.
+parameter_bounds:
+  EI:
+    # +/-20% around the truth 0.010; both rails certifiable per the wide-box
+    # note (the failure was specific to the 0.005 corner).
+    min: 0.008
+    max: 0.012
+    units: N.m^2
+  rayleigh_stiffness:
+    # Unchanged from the wide file; certifiable band.
+    min: 0.018
+    max: 0.022
+    units: N.m.s

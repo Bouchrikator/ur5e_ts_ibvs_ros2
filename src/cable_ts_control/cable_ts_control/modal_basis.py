@@ -15,8 +15,16 @@ partly an algebraic function of the gripper position: measured correlation 0.76
 against 0.00 with the split. The reduced state is then not minimal, part of the
 modal acceleration is really the gripper acceleration, and the identification
 has to absorb that into the input matrix, differently in every fuzzy rule.
-This is the standard Craig-Bampton split into constraint modes and
-fixed-interface normal modes.
+
+Naming, precisely: this is a BOUNDARY-CONDITIONED POD, not Craig-Bampton.
+The structure (boundary block + interior modes) mirrors the Craig-Bampton
+partition, but ``Psi`` is a least-squares regression on data — not the static
+constraint modes ``-K_ii^-1 K_ib`` — and ``Phi`` is a PCA of the residual, not
+the fixed-interface eigenmodes of a mass/stiffness pair. Two consequences:
+the zero correlation above is guaranteed on the FITTING data by least squares
+(residuals are orthogonal to regressors), so it is evidence of a better basis,
+not proof of dynamic or physical decoupling; and no mass-orthogonality or
+boundary-coupling property of a true Craig-Bampton reduction may be assumed.
 
 ``Psi = None`` recovers the plain PCA of the original pipeline.
 

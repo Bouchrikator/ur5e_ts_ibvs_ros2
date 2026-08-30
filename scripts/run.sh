@@ -16,6 +16,10 @@
 #                ./run.sh cable_sim      (Gazebo UR5e + SOFA Cosserat cable)
 #                ./run.sh cable_identify_sim  (2 SOFA models + EI identification)
 #                ./run.sh cable_closed_loop  (truth + estimator + outer loop)
+#                ./run.sh cable_qs_test [pose]  (ONE COMMAND: full certified
+#                    quasi-static TS-PDC live demo: sim+pose+attach+servo+
+#                    approach+latch+relay+Lyapunov monitor)
+#                ./run.sh cable_qs_disturb  (tangential pulse on the live loop)
 #   Cable ident: ./run.sh cable_dataset -> cable_basis -> cable_identify -> cable_lmi
 #                ./run.sh cable_unit_tests
 #
@@ -47,8 +51,9 @@ ensure_cosserat() {
 in_live() {
   docker compose up -d >/dev/null 2>&1
   ensure_cosserat
+  # exec bypasses the image entrypoint, so the ROS underlay must be sourced too
   docker compose exec ur5e_ts_ibvs bash -c \
-    "source /ros2_ws/install/setup.bash && $*"
+    "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && $*"
 }
 
 CMD="${1:-build}"
@@ -80,7 +85,8 @@ case "$CMD" in
     in_container "ros2 launch ur5e_ts_ibvs_description ur5e_ibvs_sim.launch.py $*"
     ;;
   pose)
-    in_live "ros2 run ibvs_control move_to_view_pose.py ${1:-default} --sim"
+    # Run from src (mounted rw) so pose edits take effect without a rebuild
+    in_live "python3 /ros2_ws/src/ibvs_control/scripts/move_to_view_pose.py ${1:-default} --sim"
     ;;
   ts_lmi_d|ts_lmi_c|classic|qmm)
     in_container "ros2 launch ibvs_control ibvs.launch.py controller:=$CMD mode:=sim $*"
@@ -120,6 +126,15 @@ case "$CMD" in
   cable_closed_loop)
     in_live "ros2 launch cable_bringup cable_closed_loop_sim.launch.py $*"
     ;;
+  cable_qs_test)
+    # One-shot certified quasi-static TS-PDC live demo (Gazebo + SOFA GUI):
+    # teardown -> sim -> pose -> attach -> servo -> approach/latch -> relay
+    in_live "bash /ros2_ws/scripts/cable/qs_live_test.sh $*"
+    ;;
+  cable_qs_disturb)
+    # Tangential disturbance pulse + error/V sampling on a running qs_test
+    in_live "python3 /ros2_ws/scripts/cable/disturb_experiment.py $*"
+    ;;
   cable_identify_sim)
     # Plan milestone: truth + estimator SOFA models, noisy synthetic markers,
     # online EI identification, and deliberately NO controller yet.
@@ -131,30 +146,30 @@ case "$CMD" in
     # Headless SOFA excitation rollouts -> identification dataset
     in_live "ros2 run cable_ts_control generate_sofa_dataset \
       --config \$(ros2 pkg prefix cable_identification)/share/cable_identification/config/cable_truth.yaml \
-      --output /ros2_ws/cable_dataset.npz $*"
+      --output /ros2_ws/artifacts/cable_dataset.npz $*"
     ;;
   cable_basis)
     in_live "ros2 run cable_ts_control build_modal_basis \
-      --dataset /ros2_ws/cable_dataset.npz \
-      --output /ros2_ws/cable_modal_basis.yaml $*"
+      --dataset /ros2_ws/artifacts/cable_dataset.npz \
+      --output /ros2_ws/artifacts/cable_modal_basis.yaml $*"
     ;;
   cable_identify)
     in_live "ros2 run cable_ts_control identify_ts_vertices \
-      --dataset /ros2_ws/cable_dataset.npz \
-      --basis /ros2_ws/cable_modal_basis.yaml \
-      --output /ros2_ws/cable_ts_model.yaml $*"
+      --dataset /ros2_ws/artifacts/cable_dataset.npz \
+      --basis /ros2_ws/artifacts/cable_modal_basis.yaml \
+      --output /ros2_ws/artifacts/cable_ts_model.yaml $*"
     ;;
   cable_lmi)
     in_live "ros2 run cable_ts_control solve_cable_ts_lmi \
-      --model /ros2_ws/cable_ts_model.yaml \
-      --output /ros2_ws/cable_ts_gains.yaml $*"
+      --model /ros2_ws/artifacts/cable_ts_model.yaml \
+      --output /ros2_ws/artifacts/cable_ts_gains.yaml $*"
     ;;
   cable_unit_tests)
     in_live "colcon test --packages-select cable_perception cable_ts_control \
       --event-handlers console_direct+ && colcon test-result --verbose"
     ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_sim|cable_identify_sim|cable_closed_loop|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_sim|cable_identify_sim|cable_closed_loop|cable_qs_test|cable_qs_disturb|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
     exit 1
     ;;
 esac

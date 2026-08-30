@@ -17,10 +17,43 @@ vertex ``p``:
     [ (A_i^p X - B_i^p M_j)      X                     ] > 0
 
 Relaxation (Tanaka & Wang): the diagonal terms ``i = j`` plus the averaged
-cross terms ``(G_ij + G_ji)/2`` for ``i < j``.
+cross terms ``(G_ij + G_ji)/2`` for ``i < j``. The relaxed conditions add a
+slack ``Y >= 0``; in ``P`` space it appears as ``Q = P Y P`` and the solved
+inequalities become
+
+    G_ii' P G_ii - beta P + (s - 1) Q < 0
+    H_ij' P H_ij - beta P - Q        <= 0
+
+so a relaxed certificate is NOT verifiable with the basic inequalities: an
+averaged cross term may have spectral radius above one and still be covered,
+because Q compensates it through the (s-1)Q surplus on the diagonal terms.
+The verification must therefore receive the complete certificate
+(K_i, P, Q, beta, s, type) and check exactly what was solved.
 """
 
+from dataclasses import dataclass
+from typing import List, Optional
+
 import numpy as np
+
+
+@dataclass
+class PdcCertificate:
+    """Complete, independently checkable output of the PDC synthesis.
+
+    Carries everything ``verify_certificate`` needs; nothing about the
+    certificate is implicit in the solver call any more.
+    """
+
+    feasible: bool
+    certificate_type: str                      # "basic" | "relaxed"
+    gains: Optional[List[np.ndarray]] = None   # K_j
+    lyapunov: Optional[np.ndarray] = None      # P = X^-1
+    slack: Optional[np.ndarray] = None         # Q = P Y P (relaxed only)
+    beta: float = 1.0                          # decay rate of the conditions
+    max_active_rules: Optional[int] = None     # s (relaxed only)
+    solver_name: Optional[str] = None
+    solver_status: Optional[str] = None
 
 
 def _cross_averaged(a_i, a_j, b_i, b_j, x, m_i, m_j):
@@ -81,7 +114,9 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-9, gain_penalty=1e-3, verbose=False,
         complementary triangular memberships over ``n`` premises every product
         rule is active in the interior, so the default is the rule count.
 
-    Returns ``(gains, lyapunov, feasible)``.
+    Returns a :class:`PdcCertificate`. For a relaxed solve the slack is
+    returned as ``Q = P Y P`` so the certificate can be re-verified without
+    the solver.
     """
     import cvxpy as cp
 
@@ -110,6 +145,7 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-9, gain_penalty=1e-3, verbose=False,
     identity = np.eye(2 * n)
 
     slack = None
+    s = None
     if relaxed:
         s = n_rules if max_active_rules is None else int(max_active_rules)
         if s < 1:
@@ -140,27 +176,46 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-9, gain_penalty=1e-3, verbose=False,
         cp.trace(x) + gain_penalty * sum(cp.norm(g, "fro") for g in gains))
     problem = cp.Problem(objective, constraints)
 
+    used_solver = None
     for solver, options in _solver_preferences(cp):
         try:
             problem.solve(solver=solver, verbose=verbose, **options)
         except Exception:
             continue
         if problem.status in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+            used_solver = str(solver)
             break
 
+    certificate_type = "relaxed" if relaxed else "basic"
     if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
-        return None, None, False
+        return PdcCertificate(
+            feasible=False, certificate_type=certificate_type, beta=decay,
+            max_active_rules=s, solver_name=used_solver,
+            solver_status=str(problem.status))
 
     x_value = 0.5 * (x.value + x.value.T)
     x_inv = np.linalg.inv(x_value)
-    return [g.value @ x_inv for g in gains], 0.5 * (x_inv + x_inv.T), True
+    p = 0.5 * (x_inv + x_inv.T)
+    q = None
+    if relaxed:
+        # The slack lives in X space; the P-space certificate is Q = P Y P.
+        y = 0.5 * (slack.value + slack.value.T)
+        q = p @ y @ p
+        q = 0.5 * (q + q.T)
+    return PdcCertificate(
+        feasible=True, certificate_type=certificate_type,
+        gains=[g.value @ x_inv for g in gains], lyapunov=p, slack=q,
+        beta=decay, max_active_rules=s, solver_name=used_solver,
+        solver_status=str(problem.status))
 
 
 def verify_lyapunov_decrease(vertex_sets, gains, lyapunov):
     """Largest eigenvalue of ``G' P G - P`` over all rules and parameters.
 
-    Strictly negative means the quadratic Lyapunov certificate really holds
-    for the returned gains — the acceptance test of the synthesis.
+    This is the BASIC-theorem residual (Y = 0). It is a valid acceptance test
+    only for basic certificates: a relaxed certificate may fail this check
+    on the averaged cross terms and still be valid, because the slack Q
+    compensates them. Use :func:`verify_certificate` for the general case.
     """
     lyapunov = np.asarray(lyapunov, dtype=float)
     worst = -np.inf
@@ -181,24 +236,123 @@ def verify_lyapunov_decrease(vertex_sets, gains, lyapunov):
     return worst
 
 
-def worst_spectral_radius(vertex_sets, gains):
+def verify_certificate(vertex_sets, certificate, cross_tolerance=1e-9):
+    """Check the certificate against the inequalities it actually claims.
+
+    Two levels are reported, both in ``P`` space and with ``Q = P Y P``
+    (``Q = 0``, ``s = 1`` for basic certificates):
+
+    * stability gate (``beta' = 1``) — what acceptance is decided on:
+
+          G_ii' P G_ii - P + (s - 1) Q  < 0     (strict)
+          H_ij' P H_ij - P - Q          <= 0
+
+      With ``P > 0`` and ``Q >= 0`` these prove asymptotic stability of every
+      blended closed loop; the solved decay ``beta < 1`` provides the
+      numerical headroom that makes the gate robust to solver round-off.
+
+    * decay residuals (``beta = certificate.beta``) — the exact inequalities
+      the solver imposed, reported as ``*_at_beta`` for the archive. An
+      interior-point solution satisfies them only up to its own tolerance, so
+      they are informational, not the gate.
+
+    Applying the BASIC inequalities to a relaxed certificate wrongly rejects
+    valid solutions (scalar counterexample: P=1, Q=0.5, s=2, beta=0.999,
+    G_ii=0, H_ij=1.1 satisfies the relaxed conditions while H'PH - P > 0).
+    That mistake is pinned by a regression test.
+
+    ``cross_tolerance`` absorbs round-off on the NON-strict cross inequality,
+    relative to ``||P||_2``. Returns a dict with the residuals, the extremal
+    eigenvalues of P and Q, and the boolean ``satisfied``.
+    """
+    if not certificate.feasible:
+        raise ValueError("cannot verify an infeasible certificate")
+    p = np.asarray(certificate.lyapunov, dtype=float)
+    p = 0.5 * (p + p.T)
+    beta = float(certificate.beta)
+    relaxed = certificate.certificate_type == "relaxed"
+    if relaxed:
+        if certificate.slack is None or certificate.max_active_rules is None:
+            raise ValueError("a relaxed certificate requires Q and s")
+        q = np.asarray(certificate.slack, dtype=float)
+        q = 0.5 * (q + q.T)
+        s = int(certificate.max_active_rules)
+    else:
+        q = np.zeros_like(p)
+        s = 1
+
+    p_norm = float(np.linalg.norm(p, 2))
+    worst = {"diag": -np.inf, "cross": -np.inf,
+             "diag_beta": -np.inf, "cross_beta": -np.inf}
+    for a_vertices, b_vertices in vertex_sets:
+        n_rules = len(a_vertices)
+        for i in range(n_rules):
+            g_ii = a_vertices[i] - b_vertices[i] @ certificate.gains[i]
+            base = g_ii.T @ p @ g_ii + (s - 1) * q
+            for key, b_check in (("diag", 1.0), ("diag_beta", beta)):
+                residual = base - b_check * p
+                worst[key] = max(worst[key], float(np.max(np.linalg.eigvalsh(
+                    0.5 * (residual + residual.T)))))
+        for i in range(n_rules):
+            for j in range(i + 1, n_rules):
+                h_ij = 0.5 * (
+                    (a_vertices[i] - b_vertices[i] @ certificate.gains[j])
+                    + (a_vertices[j] - b_vertices[j] @ certificate.gains[i]))
+                base = h_ij.T @ p @ h_ij - q
+                for key, b_check in (("cross", 1.0), ("cross_beta", beta)):
+                    residual = base - b_check * p
+                    worst[key] = max(worst[key], float(np.max(
+                        np.linalg.eigvalsh(0.5 * (residual + residual.T)))))
+
+    p_min = float(np.min(np.linalg.eigvalsh(p)))
+    q_min = float(np.min(np.linalg.eigvalsh(q))) if relaxed else None
+    q_norm = float(np.linalg.norm(q, 2)) if relaxed else 0.0
+    satisfied = (
+        p_min > 0.0
+        # Q >= 0 up to round-off: it enters the stability argument through
+        # (s-1)*sum h_i^2 >= 2*sum h_i h_j, so a tiny negative eigenvalue is
+        # absorbed by the strict diagonal margin.
+        and (q_min is None or q_min >= -1e-7 * (1.0 + q_norm))
+        and worst["diag"] < 0.0
+        and worst["cross"] <= cross_tolerance * p_norm)
+    return {
+        "satisfied": bool(satisfied),
+        "worst_diagonal_residual": worst["diag"],
+        "worst_cross_residual": worst["cross"],
+        "worst_diagonal_residual_at_beta": worst["diag_beta"],
+        "worst_cross_residual_at_beta": worst["cross_beta"],
+        "worst_normalized_residual":
+            max(worst["diag"], worst["cross"]) / p_norm,
+        "p_min_eigenvalue": p_min,
+        "q_min_eigenvalue": q_min,
+    }
+
+
+def worst_spectral_radius(vertex_sets, gains, diagonal_only=False):
     """Worst spectral radius over the matrices the certificate actually covers.
 
     Only the diagonal terms ``A_i - B_i K_i`` and the AVERAGED cross terms
     ``(G_ij + G_ji)/2`` are certified: ``h_i h_j == h_j h_i``, so the two
     unaveraged cross terms only ever appear summed. Testing each of them alone
     rejects perfectly valid PDC certificates.
+
+    Under the RELAXED theorem even the averaged cross terms are not
+    individually contractive — only the diagonal terms are (their condition
+    implies ``G_ii' P G_ii < beta P``). Pass ``diagonal_only=True`` when
+    gating a relaxed certificate; the cross terms are then covered solely by
+    :func:`verify_certificate`.
     """
     worst = 0.0
     for a_vertices, b_vertices in vertex_sets:
         n_rules = len(a_vertices)
         closed_loop = [a_vertices[i] - b_vertices[i] @ gains[i]
                        for i in range(n_rules)]
-        for i in range(n_rules):
-            for j in range(i + 1, n_rules):
-                closed_loop.append(0.5 * (
-                    (a_vertices[i] - b_vertices[i] @ gains[j])
-                    + (a_vertices[j] - b_vertices[j] @ gains[i])))
+        if not diagonal_only:
+            for i in range(n_rules):
+                for j in range(i + 1, n_rules):
+                    closed_loop.append(0.5 * (
+                        (a_vertices[i] - b_vertices[i] @ gains[j])
+                        + (a_vertices[j] - b_vertices[j] @ gains[i])))
         for g in closed_loop:
             worst = max(worst, float(np.max(np.abs(np.linalg.eigvals(g)))))
     return worst

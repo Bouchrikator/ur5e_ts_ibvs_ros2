@@ -11,6 +11,7 @@ rejected rather than waited for.
 """
 
 import numpy as np
+import yaml
 
 import rclpy
 from rclpy.node import Node
@@ -34,7 +35,10 @@ class CableTsControllerNode(Node):
         self.declare_parameter("state_topic", "/cable/reduced_state")
         self.declare_parameter("target_topic", "/cable/target_shape")
         self.declare_parameter("parameter_topic", "/cable/parameter_estimate")
-        self.declare_parameter("control_rate_hz", 30.0)
+        # 0 = run at exactly 1/Ts of the identified model. The gains are
+        # certified for that discrete period only; a different rate applies
+        # them to a plant they were never synthesised for.
+        self.declare_parameter("control_rate_hz", 0.0)
         self.declare_parameter("max_linear_vel", 0.05)
         self.declare_parameter("state_timeout_s", 0.5)
         self.declare_parameter("estimate_timeout_s", 5.0)
@@ -45,6 +49,14 @@ class CableTsControllerNode(Node):
         # How far ahead the commanded velocity is projected to build the pose
         # reference handed to the inner visual loop.
         self.declare_parameter("lookahead_s", 0.3)
+        # Manifold anchor (audit 9.1): perception bias in the weak modes makes
+        # the no-g-feedback law walk the gripper out of the premise box. The
+        # anchor low-passes the residual between the measured z-error and the
+        # certified quasi-static prediction U'J g and shifts the EFFECTIVE
+        # target by it, so at rest u -> 0 exactly and the gripper stays put.
+        self.declare_parameter("bias_anchor_alpha", 0.05)
+        self.declare_parameter("bias_anchor_max_m", 0.05)
+        self.declare_parameter("enable_bias_anchor", True)
 
         model_file = self.get_parameter("ts_model_file").value
         if not model_file:
@@ -62,6 +74,7 @@ class CableTsControllerNode(Node):
         self.reference_frame = self.get_parameter("reference_frame").value
         self.gripper_frame = self.get_parameter("gripper_frame").value
         self.lookahead = float(self.get_parameter("lookahead_s").value)
+        self._init_bias_anchor(self.get_parameter("ts_gains_file").value or None)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -69,7 +82,9 @@ class CableTsControllerNode(Node):
         self._state = None
         self._state_stamp = None
         self._target = np.zeros(self.model.state_dim)
-        self._parameters = {}
+        # NOTE: must not be named _parameters -- that clobbers rclpy's
+        # internal Node._parameters dict and undeclares every ROS parameter.
+        self._estimates = {}
         self._parameter_stamp = None
 
         self.twist_pub = self.create_publisher(
@@ -93,6 +108,14 @@ class CableTsControllerNode(Node):
             self._on_parameter, 10)
 
         rate = float(self.get_parameter("control_rate_hz").value)
+        model_rate = 1.0 / float(self.model.sample_time)
+        if rate <= 0.0:
+            rate = model_rate
+        elif abs(rate - model_rate) > 0.01 * model_rate:
+            self.get_logger().warn(
+                f"control_rate_hz={rate:.2f} but the gains were certified at "
+                f"Ts={self.model.sample_time:.4f} s ({model_rate:.2f} Hz); "
+                f"the discrete certificate does not transfer across rates")
         self.timer = self.create_timer(1.0 / rate, self._control_cycle)
 
         self._previous_lyapunov = None
@@ -102,6 +125,47 @@ class CableTsControllerNode(Node):
             f"rho bounds={self.model.premise_bounds}")
 
     # ------------------------------------------------------------------
+    def _init_bias_anchor(self, gains_file):
+        """Load U and the mean certified Jacobian from the quasi-static gains."""
+        self._anchor_u = None
+        self._bias = None
+        self._anchor_alpha = float(self.get_parameter("bias_anchor_alpha").value)
+        self._anchor_max = float(self.get_parameter("bias_anchor_max_m").value)
+        if not self.get_parameter("enable_bias_anchor").value or not gains_file:
+            return
+        try:
+            with open(gains_file, "r") as f:
+                qs = yaml.safe_load(f)["cable_ts_model"].get("quasi_static")
+        except Exception:
+            qs = None
+        if not qs:
+            return
+        n_modes = self.model.n_modes
+        self._anchor_u = np.asarray(
+            qs["output_map_u"], dtype=float).reshape(n_modes, 2)
+        jac = np.asarray(qs["jacobians"], dtype=float)
+        jac = jac.reshape(-1, n_modes, 2).mean(axis=0)
+        self._anchor_m = self._anchor_u.T @ jac
+        self._bias = np.zeros(2)
+        self.get_logger().info(
+            "manifold bias anchor active: alpha="
+            f"{self._anchor_alpha}, |b|max={self._anchor_max}")
+
+    def _effective_target(self):
+        """Target shifted onto the perceived equilibrium manifold."""
+        if self._anchor_u is None or self._state is None:
+            return self._target
+        n = self.model.n_modes
+        z_err = self._anchor_u.T @ (self._state[:n] - self._target[:n])
+        residual = z_err - self._anchor_m @ self._state[-2:]
+        self._bias += self._anchor_alpha * (residual - self._bias)
+        norm = float(np.linalg.norm(self._bias))
+        if norm > self._anchor_max:
+            self._bias *= self._anchor_max / norm
+        target = self._target.copy()
+        target[:n] += self._anchor_u @ self._bias
+        return target
+
     def _now_s(self):
         return self.get_clock().now().nanoseconds * 1e-9
 
@@ -145,7 +209,7 @@ class CableTsControllerNode(Node):
                 f"rejected {msg.parameter_name}: innovation {msg.innovation:.4g} "
                 f"diverging", throttle_duration_sec=10.0)
             return
-        self._parameters[msg.parameter_name] = msg.value
+        self._estimates[msg.parameter_name] = msg.value
         self._parameter_stamp = self._now_s()
 
     def _estimate_is_fresh(self):
@@ -195,7 +259,8 @@ class CableTsControllerNode(Node):
                                    throttle_duration_sec=2.0)
             return
 
-        command, weights = self.model.control(self._state, self._target)
+        target = self._effective_target()
+        command, weights = self.model.control(self._state, target)
         norm = float(np.linalg.norm(command))
         if norm > self.max_linear:
             command = command * (self.max_linear / norm)
@@ -218,7 +283,8 @@ class CableTsControllerNode(Node):
             data=[*weights.tolist(), *command.tolist(), norm,
                   1.0 if self._estimate_is_fresh() else 0.0]))
 
-        lyapunov = self.model.lyapunov_value(self._state, self._target)
+        # V is evaluated on the error the law actually regulates.
+        lyapunov = self.model.lyapunov_value(self._state, target)
         decrease = (0.0 if self._previous_lyapunov is None
                     else lyapunov - self._previous_lyapunov)
         self._previous_lyapunov = lyapunov
