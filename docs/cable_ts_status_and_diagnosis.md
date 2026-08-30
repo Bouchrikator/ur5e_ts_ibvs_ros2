@@ -330,7 +330,7 @@ confirms the mechanism, and does produce a certified controller:
 |---|---|---|---|
 | 0 | 1.92 | infeasible | 289 mm |
 | 1 | 0.12 | infeasible | 833 mm |
-| 10 | **0.02** | **feasible**, `max eig(G'PG−P) = 3.7e-09`, `ρ = 0.9954` | 938 mm |
+| 10 | **0.02** | **certified**, `max eig(G'PG−P) = −6.5e-06`, `ρ = 0.9952` | 938 mm |
 
 **This is not the fix.** At coherence 10 the rules are nearly identical, so the
 TS model has collapsed to a single LTI system — the fuzzy structure that
@@ -338,6 +338,34 @@ justifies PDC has been regularised away — and the free-running error more than
 triples. The one-step error is flat (4.36–4.48 mm) across the whole sweep, so
 the penalty buys certifiability without buying accuracy. It is off by default
 for that reason: a diagnostic, not a solution.
+
+### 4.8 A margin bug that made the solver lie
+
+Reaching the result above exposed a real bug in the synthesis. The margin was
+an absolute floor on the Schur block, `[[X, G'], [G, X]] ⪰ eps·I`, applied in
+`X = P⁻¹` space. Verification happens in `P` space, where that margin returns
+as `P (margin) P` — and since `X ⪰ I` forces `P ⪯ I`, it shrinks away as `X`
+grows. The solver therefore reported *feasible* on gains whose certificate then
+failed:
+
+```
+basic   : feasible
+max eig(G' P G - P) = 4.342e-09 >= 0 FAILED
+```
+
+Replaced with the book's decay-rate conditions (Tanaka & Wang 3.36–3.37, and
+3.43–3.44 relaxed), which put `βX` in the top-left block and so impose the
+*relative* margin `ΔV ≤ (β − 1)V`. Being relative, it survives the change of
+variables:
+
+```
+basic   : feasible
+max eig(G' P G - P) = -6.549e-06 < 0 OK
+worst |eig(A_i - B_i K_j)| = 0.995169 < 1 OK
+```
+
+Two regression tests now assert that a "feasible" report always implies a
+strictly negative certificate, and that `decay` really bounds the decrease.
 
 The real remaining work, in order:
 

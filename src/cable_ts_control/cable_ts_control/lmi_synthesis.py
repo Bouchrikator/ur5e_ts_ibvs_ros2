@@ -47,8 +47,8 @@ def _solver_preferences(cp):
             if solver in installed]
 
 
-def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False,
-                       relaxed=False, max_active_rules=None):
+def solve_cable_ts_pdc(vertex_sets, eps=1e-9, gain_penalty=1e-3, verbose=False,
+                       relaxed=False, max_active_rules=None, decay=0.999):
     """Synthesise PDC gains valid for every parameter vertex.
 
     Parameters
@@ -58,9 +58,17 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False,
         parameter combination (EI min/max, damping min/max, ...). Every entry
         must use the same rule ordering.
     eps
-        Strict-inequality margin on the Schur blocks. Because ``X`` is
-        normalised to ``X >= I`` this is a real decrease margin, not a scale
-        dependent fudge, and it must stay above the solver accuracy.
+        Small absolute floor keeping the blocks strictly definite for the
+        solver. It is NOT the stability margin — see ``decay``.
+    decay
+        ``beta = alpha^2`` of the discrete decay-rate conditions (Tanaka & Wang
+        3.36-3.37, relaxed 3.43-3.44), giving ``dV <= (beta - 1) V``. This is
+        the real margin and it is RELATIVE, so it survives the change of
+        variables. An absolute floor on the block in ``X`` space does not: the
+        verification happens in ``P = X^-1`` space, where the margin comes back
+        as ``P (margin) P`` and vanishes once ``X`` grows, which is how the
+        solver can report success on gains that then fail verification.
+        Must satisfy ``0 <= decay < 1``.
     gain_penalty
         Weight of the gain-norm regularisation; larger means softer gains.
     relaxed
@@ -88,6 +96,9 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False,
         if len(a_vertices) != n_rules or len(b_vertices) != n_rules:
             raise ValueError("every parameter vertex set needs the same rule count")
 
+    if not 0.0 <= decay < 1.0:
+        raise ValueError(f"decay must satisfy 0 <= decay < 1, got {decay}")
+
     x = cp.Variable((n, n), symmetric=True)
     gains = [cp.Variable((m, n)) for _ in range(n_rules)]
 
@@ -105,11 +116,11 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False,
             raise ValueError("max_active_rules must be >= 1")
         slack = cp.Variable((n, n), symmetric=True)
         constraints.append(slack >> 0)
-        diagonal_left = x - (s - 1) * slack
-        cross_left = x + slack
+        diagonal_left = decay * x - (s - 1) * slack
+        cross_left = decay * x + slack
     else:
-        diagonal_left = x
-        cross_left = x
+        diagonal_left = decay * x
+        cross_left = decay * x
 
     for a_vertices, b_vertices in vertex_sets:
         for i in range(n_rules):

@@ -181,3 +181,41 @@ def test_relaxed_is_no_more_restrictive_than_basic():
 def test_relaxed_rejects_a_nonsensical_active_rule_count():
     with pytest.raises(ValueError):
         solve_cable_ts_pdc([make_vertices()], relaxed=True, max_active_rules=0)
+
+
+# -- the margin must survive the change of variables ---------------------
+
+
+@pytest.mark.parametrize("relaxed", [False, True])
+def test_feasible_always_means_strictly_certified(relaxed):
+    """Whatever the solver reports, the Lyapunov decrease must be negative.
+
+    The synthesis works in ``X = P^-1`` but is verified in ``P``. An absolute
+    margin on the block in X space comes back as ``P (margin) P``, which
+    vanishes as X grows: the solver then reports success on gains whose
+    certificate fails. The decay-rate form is relative and does survive.
+    """
+    vertex_sets = [make_vertices(), make_vertices(stiffness_scale=1.3)]
+    gains, lyapunov, feasible = solve_cable_ts_pdc(vertex_sets, relaxed=relaxed)
+
+    if not feasible:
+        pytest.skip("infeasible for this vertex set")
+    assert verify_lyapunov_decrease(vertex_sets, gains, lyapunov) < 0.0
+
+
+def test_decay_bounds_the_lyapunov_decrease():
+    """``decay`` is the real margin: dV <= (decay - 1) V."""
+    vertex_sets = [make_vertices()]
+    gains, lyapunov, feasible = solve_cable_ts_pdc(vertex_sets, decay=0.9)
+    assert feasible
+
+    worst = verify_lyapunov_decrease(vertex_sets, gains, lyapunov)
+    # A tenth of the smallest Lyapunov eigenvalue is a conservative bound on
+    # the guaranteed decrease; the certificate must be at least that negative.
+    assert worst <= -0.1 * float(np.min(np.linalg.eigvalsh(lyapunov))) * 0.5
+
+
+def test_rejects_an_out_of_range_decay():
+    for bad in (-0.1, 1.0, 1.5):
+        with pytest.raises(ValueError):
+            solve_cable_ts_pdc([make_vertices()], decay=bad)
