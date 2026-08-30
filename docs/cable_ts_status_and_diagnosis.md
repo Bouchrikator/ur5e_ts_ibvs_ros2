@@ -9,9 +9,15 @@ reproduce each number are given.
 ## 1. Summary
 
 The plant, the observation pipeline and the online parameter identification
-work and are verified. The **reduced TS model cannot currently be certified**:
-the LMI synthesis is infeasible because the identified local models are not
-dissipative. Section 4 is the full diagnosis.
+work and are verified. The **reduced TS model cannot yet be certified**: the
+LMI synthesis is infeasible because the four local rule models drift too far
+apart to share one quadratic Lyapunov function. Section 4 is the full
+diagnosis, including two retracted claims from the first version of this
+document.
+
+Current model: state `[q₁ q₂ q̇₁ q̇₂ p_gx p_gy]` (6), input `[v_x v_y]` (2),
+4 rules, `Ts = 0.04 s` (25 Hz). Envelope `EI ∈ [0.005, 0.015]`,
+`rayleigh_stiffness ∈ [0.018, 0.022]`.
 
 | Plan step | Status |
 |---|---|
@@ -24,16 +30,19 @@ dissipative. Section 4 is the full diagnosis.
 | 4.1 — Synthetic observations | **Done** |
 | 4.2 — Camera tracker | **Code done, never run against a live camera** |
 | 5 — Optimus | **Substituted.** In-process UKF; Optimus itself is *not* installed |
-| 6 — Reduced TS model | **Done.** 2 modes, 97.9 % energy |
-| 7 — TS vertices from SOFA | **Done.** 16/16 cells identified |
+| 6 — Reduced TS model | **Done.** 2 modes, 95.1 % energy, 13.4 mm reconstruction |
+| 7 — TS vertices from SOFA | **Done.** 16/16 cells, held-out one-step 3.9–4.5 mm |
 | 8 — PDC synthesis | **BLOCKED.** LMIs infeasible — section 4 |
 | 9 — Outer cable TS node | **Done, but Python not C++** (plan asked for `.cpp`) |
 | 10 — TS-IBVS integration | **Code done, never run** |
 | 11 — Closed-loop launch | **Done.** Parses; never launched end-to-end |
 | 12 — Validation order | **Runs 1–2 done, 3–14 not executed** |
 
-Unit tests: **123 passing** (28 identification + 26 perception + 69 control).
-`flake8 --select=E,W,F` reports 0 issues.
+Unit tests: **148 passing** (28 identification + 26 perception + 94 control).
+`flake8 --select=E,W,F` reports 0 issues. Head is `da6d7da`.
+
+**Nothing in the control loop can run today**: no gains exist (section 3.1) and
+the runtime state does not match the identified model (section 3.7).
 
 ---
 
@@ -87,14 +96,27 @@ Publishes the four topics the plan asks for: `/cable/parameter_estimate`,
 ### 2.4 TS identification (plan steps 6–7)
 
 ```bash
-./scripts/run.sh cable_dataset    # 24000 samples, 4 parameter vertices
-./scripts/run.sh cable_basis      # 2 modes, 97.91 % energy
+./scripts/run.sh cable_dataset    # 8000 samples: 4 vertices x 5 trajectories
+./scripts/run.sh cable_basis      # 2 modes, 95.12 % energy, 13.4 mm rmse
 ./scripts/run.sh cable_identify   # 16/16 cells
 ```
 
-All 16 cells hold 283–444 training samples; held-out one-step error is
-0.33–1.89 mm against a 5 mm threshold. **This looks healthy and is misleading
-— see section 4.**
+The dataset is sampled at the exact controller period (40 ms = 4 SOFA
+substeps, zero-order hold) and split into train/validation by whole
+trajectory, so the rollout below is a real contiguous prediction rather than a
+walk over scattered samples.
+
+| parameter vertex | held-out one-step | blended rollout (2 s) | max ρ(A) |
+|---|---|---|---|
+| EI 0.005, damping 0.018 | 4.14 mm | 289 mm | 1.0000 |
+| EI 0.005, damping 0.022 | 3.93 mm | 123 mm | 1.0000 |
+| EI 0.015, damping 0.018 | 4.22 mm | 194 mm | 1.0000 |
+| EI 0.015, damping 0.022 | 4.48 mm | 208 mm | 1.0000 |
+
+`ρ(A) = 1.0000` is exactly right: the gripper integrator sits on the unit
+circle and the cable modes are strictly inside. The free-running error is still
+far above the 50 mm gate, so `cable_identify` only writes a model when that
+gate is relaxed explicitly.
 
 ---
 
@@ -104,13 +126,16 @@ All 16 cells hold 283–444 training samples; held-out one-step error is
 
 ```
 $ ./scripts/run.sh cable_lmi
-synthesising 4 PDC gains for 4 parameter vertices (state 4, input 2)
+synthesising 4 PDC gains for 4 parameter vertices (state 6, input 2)
+  basic   : infeasible
+  relaxed : infeasible
 ERROR: the LMIs are infeasible.
 ```
 
 Full diagnosis in section 4. This blocks everything downstream:
-`cable_ts_model.yaml`, `cable_ts_gains.yaml` and `cable_modal_basis.yaml` are
-therefore **not shipped** in `config/`. They are products of the pipeline and
+`cable_modal_basis.yaml`, `cable_ts_model.yaml` and `cable_ts_gains.yaml` are
+therefore **not shipped** in `config/` — only `cable_parameter_bounds.yaml` and
+`cable_target.yaml` are. The others are products of the pipeline and
 fabricating them would void the stability certificate. Consequently
 `cable_closed_loop_sim.launch.py` with `enable_control:=true` cannot start.
 
@@ -140,12 +165,16 @@ layers with the tagged one.
 
 ### 3.4 Modal reconstruction error exceeds the shape tolerance
 
-The 2-mode basis reconstructs shapes to **14.35 mm RMS**, while
+The 2-mode basis reconstructs shapes to **13.4 mm RMS**, while
 `cable_target.yaml` declares a 5 mm `shape_tolerance_m`. The controller
 regulates modal coordinates, so the supervisor's tolerance is applied in modal
 space and the two are not directly comparable — but any *marker-space* claim
-below ~14 mm is not supported by this basis. Either keep more modes or state
-the tolerance in modal terms.
+below ~13 mm is not supported by this basis.
+
+This is very likely the real accuracy floor: the held-out one-step error sits
+at 3.9–4.5 mm and did **not** move for any change to the fit (joint fuzzy
+regression, gripper in the state, structured second-order form, passivity
+projection, coherence). A fit cannot beat its own representation.
 
 ### 3.5 Never executed
 
@@ -164,6 +193,29 @@ the tolerance in modal terms.
 - **Step 2.1 not verified**: `cable_grasp_frame` at `xyz="0.14 0 0"` was read
   from the URDF but never confirmed to sit where the fingers actually clamp. If
   it is wrong, every identified stiffness is biased.
+
+### 3.7 The runtime state does not match the identified model
+
+Adding the gripper position to the state (section 4.5) changed the model but
+not the node that feeds it:
+
+| producer | contents | size |
+|---|---|---|
+| `cable_state_reducer_node` | `[q, q̇]` | 4 |
+| identified `cable_ts_model.yaml` | `[q, q̇, p_g]` | 6 |
+
+`cable_ts_controller_node` now checks this and refuses to run rather than
+feeding a 4-vector into a 6-state model:
+
+```
+reduced state has 4 entries but the model expects 6; refusing to control
+```
+
+The same change also exposed `n_modes = state_dim // 2`, which returns 3 for a
+2-mode model once the gripper is in the state and silently mis-sizes every
+shape target. `n_modes` is now stored explicitly in the model and covered by
+tests. **The mismatch itself is not fixed**: the reducer must publish the
+gripper position from TF before any gains could run.
 
 ---
 
@@ -289,18 +341,24 @@ matrices are not. The fit therefore takes the minimum-norm solution.
 ### 4.6 Where it stands now
 
 With the structured fit, every `A_i` has `ρ(A) = 1.0000` exactly — the gripper
-integrator, with the cable modes strictly inside. That is physically correct.
+integrator, with the cable modes strictly inside. That is physically correct
+and was not true before.
 
-| subset | feasible |
-|---|---|
-| each single `(vertex, rule)` | yes, all 16 |
-| vertex 0 alone (4 rules) | **yes**, basic and relaxed |
-| vertex 2 alone (4 rules) | **yes**, basic and relaxed |
-| vertices 0 + 2 (full EI range) | **yes**, relaxed |
-| all four vertices | no |
+On the current envelope (`EI ∈ [0.005, 0.015]`, damping `∈ [0.018, 0.022]`):
 
-Before these corrections *no* subset beyond a single rule was feasible. The
-full EI uncertainty range is now certifiable at fixed damping.
+| subset | diagonal blocks only | with rule-transition terms |
+|---|---|---|
+| each single `(vertex, rule)` | yes, all 16 | — |
+| vertex 0 (4 rules) | yes | **yes** |
+| vertex 1 (4 rules) | yes | **yes** |
+| vertex 2 (4 rules) | yes | **yes** |
+| vertex 3 (4 rules) | yes | no |
+| all four vertices | no | no |
+
+Every rule *pair* inside a vertex is also feasible. Before these corrections no
+subset beyond a single rule was feasible at all, so three of four parameter
+vertices are now individually certifiable — but the shared certificate across
+the whole box still is not.
 
 ### 4.7 What is still open
 
@@ -367,23 +425,7 @@ worst |eig(A_i - B_i K_j)| = 0.995169 < 1 OK
 Two regression tests now assert that a "feasible" report always implies a
 strictly negative certificate, and that `decay` really bounds the decrease.
 
-The real remaining work, in order:
-
-1. **Equilibrium-centred state.** The regulator LMIs assume the origin is an
-   equilibrium. `q* = [0, 0]` is the PCA mean of a dynamic dataset, not a
-   static cable equilibrium, so a forcing term `(Σ hᵢ Aᵢ x* − x*)` is missing
-   from the analysis. Settle SOFA at a held gripper pose for a real
-   `(q*, p_g*)`.
-2. **Marker-space error budget.** 2 modes reconstruct to ~13 mm, which cannot
-   support a 5 mm marker-space claim. That the one-step error sits at ~4.4 mm
-   regardless of every fitting change points here: the basis, not the fit, is
-   the accuracy floor. Choose the mode count on held-out marker error, not
-   explained energy.
-3. **Basis from training trajectories only** — currently built from all of
-   them, leaking validation information into the representation.
-4. **Runtime state.** The reducer still publishes `[q, q̇]`; the model now
-   expects `[q, q̇, p_g]`, so the controller must be updated before any gains
-   could run.
+The remaining work is listed in section 7.
 
 ---
 
@@ -412,7 +454,9 @@ The gripper was driven radially inwards, compressing an inextensible 0.7 m rod
 until it buckled and snapped through — tip travelled `x: 0.700 → -0.088`. A
 bifurcation cannot be fitted by a smooth local model. Fixed with a radial
 annulus guard (`--radial-min`, default 0.92 of rod length). Modal
-reconstruction error improved 15.25 → 6.21 mm.
+reconstruction error improved 15.25 → 6.21 mm on the dataset of the day; the
+current 13.4 mm is a different, wider excitation (section 5.7), not a
+regression.
 
 ### 5.3 Each parameter vertex got a different excitation
 
@@ -451,48 +495,145 @@ samples in all 16 cells.
 zero and poisoning every later prediction. Fixed with a `|q| ≤ 50` rail plus
 the innovation gate the plan requires.
 
+### 5.9 The LMI margin was scale-dependent
+
+The solver reported *feasible* on gains whose certificate then failed, because
+the margin was an absolute floor imposed in `X` space and verified in `P`
+space. Full account in section 4.8. Two regression tests now assert that
+"feasible" always implies a strictly negative certificate.
+
+### 5.10 `n_modes` was inferred as `state_dim // 2`
+
+True only for the plain `[q, q̇]` state. Once the gripper position joined the
+state it returned 3 for a 2-mode model, mis-sizing every shape target. The
+mode count is now stored explicitly in `cable_ts_model.yaml` and the controller
+validates the reduced state it receives (section 3.7).
+
 ---
 
-## 6. Reproducing
+## 6. Running it
+
+Prerequisite: the container must be up and Cosserat present (section 3.3).
 
 ```bash
-# plant
-./scripts/run.sh cable_plugin_test
-./scripts/run.sh cable_forward_test
+docker compose ps                     # expect ur5e_ts_ibvs running
+docker compose exec ur5e_ts_ibvs bash -c \
+  'test -f /opt/sofa/plugins/Cosserat/lib/libCosserat.so && echo OK'
+```
 
-# identification pipeline
-./scripts/run.sh cable_dataset
-./scripts/run.sh cable_basis
-./scripts/run.sh cable_identify     # currently fails the rho(A) gate
-./scripts/run.sh cable_lmi          # infeasible
+### 6.1 Plant tests — validation items 1–2, no Gazebo
 
-# unit tests
-./scripts/run.sh cable_unit_tests
+```bash
+./scripts/run.sh cable_plugin_test     # CABLE_PLUGIN_TEST_PASSED
+./scripts/run.sh cable_forward_test    # CABLE_FORWARD_TEST_PASSED
+```
 
-# identification milestone (needs Gazebo)
+### 6.2 Gazebo + SOFA cable — validation items 3–4
+
+```bash
+./scripts/run.sh cable_sim
+```
+
+In a second terminal:
+
+```bash
+docker compose exec ur5e_ts_ibvs bash
+source /ros2_ws/install/setup.bash
+
+ros2 topic hz /cable/truth/frames
+ros2 topic echo --once /cable/truth/markers
+ros2 run tf2_ros tf2_echo base_link cable_grasp_frame
+ros2 run tf2_ros tf2_echo base_link cable_fixture_frame
+ros2 run rqt_image_view rqt_image_view          # /overview/image
+```
+
+Confirm: UR5e visible, cable visible, seven distinctly coloured marker spheres,
+fixture static, cable follows the gripper after attachment. This is also where
+step 2.1 (the grasp frame) finally gets checked.
+
+Drive the arm and attach:
+
+```bash
+./scripts/run.sh pose cable
+docker compose exec ur5e_ts_ibvs bash -c \
+  'source /ros2_ws/install/setup.bash && \
+   ros2 service call /cable/attach std_srvs/srv/Trigger'
+```
+
+### 6.3 Identification milestone — validation items 5–6
+
+Two SOFA models, noisy synthetic markers, online EI identification, no
+controller. This is the milestone the plan calls the important one.
+
+```bash
 ./scripts/run.sh cable_identify_sim
 ```
 
-Build on a memory-constrained host — the default 16-way parallelism OOMs at
-8 GB:
+```bash
+ros2 topic echo /cable/parameter_estimate    # EI should climb 0.006 -> 0.010
+ros2 topic echo /cable/innovation
+ros2 topic echo /cable/estimator_status
+```
+
+Metrics are written to `~/ibvs_logs/cable_metrics.csv`.
+
+### 6.4 Offline pipeline — headless
+
+```bash
+./scripts/run.sh cable_dataset      # ~10 min of SOFA
+./scripts/run.sh cable_basis
+./scripts/run.sh cable_identify     # passes one-step, fails the rollout gate
+./scripts/run.sh cable_lmi          # infeasible; writes nothing
+```
+
+### 6.5 Unit tests
+
+```bash
+./scripts/run.sh cable_unit_tests   # 148 tests
+```
+
+### 6.6 What cannot be run
+
+```bash
+./scripts/run.sh cable_closed_loop enable_control:=true   # no gains exist
+```
+
+Blocked twice over: `cable_ts_gains.yaml` is never produced (section 3.1), and
+even with gains the controller would refuse on the state mismatch
+(section 3.7). Validation items 7–14 are therefore unreachable today.
+
+### 6.7 Build notes
+
+The default 16-way parallelism OOMs on an 8 GB host:
 
 ```bash
 MAKEFLAGS=-j2 colcon build --executor sequential --parallel-workers 1
 ```
 
 `ament_python` installs by copy, not symlink: rebuild the package before
-running pytest or the stale installed copy is tested.
+running pytest, or the stale installed copy is tested.
 
 ---
 
 ## 7. Next steps, in order
 
-1. Implement stability-constrained `fit_local_model` (section 4.6). Nothing
-   downstream can be certified until this lands.
-2. Re-run identify → LMI; confirm `worst |eig(A−BK)| < 1`.
-3. Verify the grasp frame in Gazebo (step 2.1) — it biases every stiffness.
-4. Run validation items 3–5 with Gazebo up.
-5. Run item 6, EI recovery in the closed loop, against the live estimator.
-6. Rebuild the image so Cosserat survives container recreation; optionally
-   with `WITH_OPTIMUS=true` and run the compatibility gate.
-7. Only then wire the cascade (`reference_source:=cable`).
+1. **Choose the mode count on held-out marker error.** The one-step error is
+   pinned at ~4.4 mm through every change to the fit, while the basis
+   reconstructs to 13.4 mm. The representation, not the identification, is the
+   binding constraint — and no amount of LMI work fixes that.
+2. **Build the basis from training trajectories only**, so the held-out numbers
+   mean what they say.
+3. **Centre the model on a real equilibrium.** Settle SOFA at a held gripper
+   pose to get `(q*, p_g*)`; the regulator LMIs assume the origin is an
+   equilibrium and `q* = 0` is only the PCA mean of a dynamic dataset.
+4. Re-run identify → LMI and check `max eig(G'PG − P) < 0` *and*
+   `worst |eig(A − BK)| < 1`. Never trust the solver's own status alone
+   (section 4.8).
+5. **Publish the gripper position from the state reducer** so the runtime state
+   matches the model (section 3.7).
+6. Verify the grasp frame in Gazebo (step 2.1) — it biases every identified
+   stiffness.
+7. Run validation items 3–6 with Gazebo up (section 6.2–6.3).
+8. Rebuild the image so Cosserat survives container recreation; optionally with
+   `WITH_OPTIMUS=true`, then run the compatibility gate.
+9. Only then wire the cascade (`reference_source:=cable`).
