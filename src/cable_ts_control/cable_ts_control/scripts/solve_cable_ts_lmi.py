@@ -44,6 +44,15 @@ def main(argv=None):
     parser.add_argument("--output", required=True, help="gains YAML to write")
     parser.add_argument("--eps", type=float, default=1e-6)
     parser.add_argument("--gain-penalty", type=float, default=1e-3)
+    parser.add_argument("--mode", choices=("auto", "basic", "relaxed"),
+                        default="auto",
+                        help="'basic' is the common quadratic certificate; "
+                             "'relaxed' adds the Tanaka-Wang slack Y; 'auto' "
+                             "tries basic first and falls back to relaxed")
+    parser.add_argument("--max-active-rules", type=int, default=None,
+                        help="s in the relaxed conditions; defaults to the "
+                             "rule count, since complementary triangular "
+                             "memberships leave every rule active inside the box")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -55,11 +64,23 @@ def main(argv=None):
     print(f"synthesising {model.n_rules} PDC gains for {len(vertex_sets)} "
           f"parameter vertices (state {model.state_dim}, input {model.input_dim})")
 
-    gains, lyapunov, feasible = solve_cable_ts_pdc(
-        vertex_sets, eps=args.eps, gain_penalty=args.gain_penalty,
-        verbose=args.verbose)
+    attempts = {"auto": ["basic", "relaxed"],
+                "basic": ["basic"],
+                "relaxed": ["relaxed"]}[args.mode]
 
-    if not feasible:
+    gains = lyapunov = None
+    used = None
+    for attempt in attempts:
+        gains, lyapunov, feasible = solve_cable_ts_pdc(
+            vertex_sets, eps=args.eps, gain_penalty=args.gain_penalty,
+            verbose=args.verbose, relaxed=(attempt == "relaxed"),
+            max_active_rules=args.max_active_rules)
+        print(f"  {attempt:8s}: {'feasible' if feasible else 'infeasible'}")
+        if feasible:
+            used = attempt
+            break
+
+    if used is None:
         print("ERROR: the LMIs are infeasible. Widen the sampling period, "
               "narrow the parameter bounds, or re-identify the vertices.")
         return 1
@@ -84,6 +105,7 @@ def main(argv=None):
     payload = {"cable_ts_model": {
         "K": [g.flatten(order="C").tolist() for g in gains],
         "P": lyapunov.flatten(order="C").tolist(),
+        "certificate": used,
         "max_lyapunov_eigenvalue": float(worst_decrease),
         "worst_spectral_radius": float(radius),
         "sample_time": model.sample_time,

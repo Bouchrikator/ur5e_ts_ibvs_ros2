@@ -19,6 +19,7 @@ import tf2_ros
 from cable_msgs.msg import CableMarkerArray, CableState
 
 from cable_ts_control.modal_basis import ModalBasis
+from cable_ts_control.state_filter import ModalVelocityFilter
 
 
 def quaternion_to_matrix(x, y, z, w):
@@ -62,9 +63,8 @@ class CableStateReducerNode(Node):
             CableMarkerArray, self.get_parameter("observed_topic").value,
             self._on_markers, 10)
 
-        self._previous_q = None
         self._previous_stamp = None
-        self._velocity = np.zeros(self.basis.n_modes)
+        self._filter = ModalVelocityFilter(self.basis.n_modes, self.alpha)
 
         self.get_logger().info(
             f"cable state reducer: {self.basis.n_modes} modes over "
@@ -129,13 +129,9 @@ class CableStateReducerNode(Node):
         rmse = float(np.sqrt(np.mean(residual ** 2))) if residual.size else 0.0
 
         stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
-        if self._previous_q is not None:
-            dt = stamp - self._previous_stamp
-            if dt > 1e-6:
-                raw = (q - self._previous_q) / dt
-                self._velocity = (self.alpha * raw
-                                  + (1.0 - self.alpha) * self._velocity)
-        self._previous_q, self._previous_stamp = q, stamp
+        dt = stamp - self._previous_stamp if self._previous_stamp else 0.0
+        velocity = self._filter.update(q, dt)
+        self._previous_stamp = stamp
 
         if rmse > self.max_rmse:
             # The shape left the span of the identified basis: the reduced
@@ -150,8 +146,8 @@ class CableStateReducerNode(Node):
         state.header = msg.header
         state.header.frame_id = self.reference_frame
         state.modal_coordinates = q.tolist()
-        state.modal_velocities = self._velocity.tolist()
-        state.state = np.concatenate([q, self._velocity]).tolist()
+        state.modal_velocities = velocity.tolist()
+        state.state = np.concatenate([q, velocity]).tolist()
         state.reconstruction_rmse = rmse
         state.markers_used = markers_used
         state.valid = True

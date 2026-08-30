@@ -47,7 +47,8 @@ def _solver_preferences(cp):
             if solver in installed]
 
 
-def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False):
+def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False,
+                       relaxed=False, max_active_rules=None):
     """Synthesise PDC gains valid for every parameter vertex.
 
     Parameters
@@ -62,6 +63,15 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False):
         dependent fudge, and it must stay above the solver accuracy.
     gain_penalty
         Weight of the gain-norm regularisation; larger means softer gains.
+    relaxed
+        Use the Tanaka & Wang relaxed discrete conditions (DFS 3.27-3.28),
+        which introduce a slack ``Y >= 0`` and only require the diagonal terms
+        to dominate by ``(s - 1) Y``. The basic conditions are the special case
+        ``Y = 0``, so this can only enlarge the feasible set.
+    max_active_rules
+        ``s``, the largest number of rules that can fire at once. With
+        complementary triangular memberships over ``n`` premises every product
+        rule is active in the interior, so the default is the rule count.
 
     Returns ``(gains, lyapunov, feasible)``.
     """
@@ -88,11 +98,24 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False):
     constraints = [x >> np.eye(n)]
     identity = np.eye(2 * n)
 
+    slack = None
+    if relaxed:
+        s = n_rules if max_active_rules is None else int(max_active_rules)
+        if s < 1:
+            raise ValueError("max_active_rules must be >= 1")
+        slack = cp.Variable((n, n), symmetric=True)
+        constraints.append(slack >> 0)
+        diagonal_left = x - (s - 1) * slack
+        cross_left = x + slack
+    else:
+        diagonal_left = x
+        cross_left = x
+
     for a_vertices, b_vertices in vertex_sets:
         for i in range(n_rules):
             g_ii = a_vertices[i] @ x - b_vertices[i] @ gains[i]
             constraints.append(
-                cp.bmat([[x, g_ii.T], [g_ii, x]]) >> eps * identity)
+                cp.bmat([[diagonal_left, g_ii.T], [g_ii, x]]) >> eps * identity)
 
         for i in range(n_rules):
             for j in range(i + 1, n_rules):
@@ -100,7 +123,7 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-4, gain_penalty=1e-3, verbose=False):
                     a_vertices[i], a_vertices[j], b_vertices[i], b_vertices[j],
                     x, gains[i], gains[j])
                 constraints.append(
-                    cp.bmat([[x, g_cross.T], [g_cross, x]]) >> eps * identity)
+                    cp.bmat([[cross_left, g_cross.T], [g_cross, x]]) >> 0)
 
     objective = cp.Minimize(
         cp.trace(x) + gain_penalty * sum(cp.norm(g, "fro") for g in gains))
@@ -148,11 +171,23 @@ def verify_lyapunov_decrease(vertex_sets, gains, lyapunov):
 
 
 def worst_spectral_radius(vertex_sets, gains):
-    """Worst ``max |eig(A_i - B_i K_j)|`` over all rules and parameter vertices."""
+    """Worst spectral radius over the matrices the certificate actually covers.
+
+    Only the diagonal terms ``A_i - B_i K_i`` and the AVERAGED cross terms
+    ``(G_ij + G_ji)/2`` are certified: ``h_i h_j == h_j h_i``, so the two
+    unaveraged cross terms only ever appear summed. Testing each of them alone
+    rejects perfectly valid PDC certificates.
+    """
     worst = 0.0
     for a_vertices, b_vertices in vertex_sets:
-        for a, b in zip(a_vertices, b_vertices):
-            for k in gains:
-                worst = max(worst, float(
-                    np.max(np.abs(np.linalg.eigvals(a - b @ k)))))
+        n_rules = len(a_vertices)
+        closed_loop = [a_vertices[i] - b_vertices[i] @ gains[i]
+                       for i in range(n_rules)]
+        for i in range(n_rules):
+            for j in range(i + 1, n_rules):
+                closed_loop.append(0.5 * (
+                    (a_vertices[i] - b_vertices[i] @ gains[j])
+                    + (a_vertices[j] - b_vertices[j] @ gains[i])))
+        for g in closed_loop:
+            worst = max(worst, float(np.max(np.abs(np.linalg.eigvals(g)))))
     return worst

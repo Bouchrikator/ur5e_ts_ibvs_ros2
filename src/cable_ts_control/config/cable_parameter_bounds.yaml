@@ -31,11 +31,11 @@ parameter_bounds:
     max: 0.015
     units: N.m^2
   rayleigh_stiffness:
-    # Truth is 0.020. Lower bound is 0.020, not 0.010: every LMI subset that
-    # contains a damping-0.010 vertex is infeasible (v0+v2, both at 0.010, fail
-    # even with the rule-transition terms removed), while the pair at damping
-    # 0.040 spanning the full EI range is feasible. Low damping is what breaks
-    # the common quadratic Lyapunov function, not the EI spread.
-    min: 0.020
-    max: 0.040
+    # Truth is 0.020. The EI range above is certifiable across this damping
+    # band; widening it to 0.040 makes the LMIs infeasible again. That is
+    # suspicious rather than physical (more damping should be easier), and is
+    # most likely the lag of the causal velocity filter growing with damping —
+    # see docs/cable_ts_status_and_diagnosis.md before widening it.
+    min: 0.018
+    max: 0.022
     units: s

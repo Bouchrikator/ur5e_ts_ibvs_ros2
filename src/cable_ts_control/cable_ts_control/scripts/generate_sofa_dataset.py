@@ -5,6 +5,15 @@ Step 7 of the plan. For every physical-parameter vertex, the cable is excited
 with safe planar gripper motions and the resulting shapes are recorded as
 ``(x_k, u_k, x_k+1)`` triplets.
 
+Samples are recorded at the CONTROLLER rate with the command held across the
+SOFA substeps of each period, and the period must be an exact multiple of the
+SOFA timestep. Otherwise the fitted transition spans one interval while the
+model claims another.
+
+Several independent trajectories are produced per parameter vertex so the
+downstream split can be made by trajectory: a rollout over scattered samples
+is not a trajectory and its error is meaningless.
+
 Runs SOFA headless, with no ROS and no Gazebo: identification data must not
 depend on the rest of the stack being up.
 
@@ -20,31 +29,9 @@ import sys
 import numpy as np
 
 
-def excitation_trajectory(rng, n_steps, amplitude, max_speed, dt):
-    """Band-limited random walk of the planar gripper velocity.
-
-    A pure white command barely excites the low-frequency bending modes, so the
-    command is smoothed; the displacement is clamped to keep the tip inside the
-    workspace the model is meant to cover.
-    """
-    velocity = np.zeros((n_steps, 2))
-    position = np.zeros(2)
-    current = np.zeros(2)
-    for step in range(n_steps):
-        current = 0.9 * current + 0.1 * rng.normal(0.0, max_speed, size=2)
-        current = np.clip(current, -max_speed, max_speed)
-        # Steer back when the excitation drifts out of the safe box.
-        for axis in range(2):
-            if abs(position[axis]) > amplitude:
-                current[axis] = -np.sign(position[axis]) * abs(current[axis])
-        position = position + current * dt
-        velocity[step] = current
-    return velocity
-
-
 def excitation_path(rng, n_steps, dt, length, radial_min, radial_max,
                     angle_limit, max_speed, sweeps=6.0):
-    """Gripper path on the annulus around the clamped base.
+    """Gripper path on the annulus around the clamped base, at the control rate.
 
     Polar, not Cartesian: the gripper is confined to an annulus anyway (driving
     it inwards buckles the rod), and a Cartesian random walk covers the
@@ -54,7 +41,9 @@ def excitation_path(rng, n_steps, dt, length, radial_min, radial_max,
     excited rather than quasi-static.
     """
     step = np.arange(n_steps)
-    base_angle = angle_limit * np.sin(2.0 * np.pi * sweeps * step / n_steps)
+    phase = rng.uniform(0.0, 2.0 * np.pi)
+    base_angle = angle_limit * np.sin(
+        2.0 * np.pi * sweeps * step / n_steps + phase)
 
     dither = np.zeros(n_steps)
     current = 0.0
@@ -84,18 +73,21 @@ def excitation_path(rng, n_steps, dt, length, radial_min, radial_max,
     return limited
 
 
-def run_rollout(cfg, parameters, path, dt, settle_steps=50):
+def run_rollout(cfg, parameters, path, control_dt, substeps, settle_steps=50):
     """Excite one SOFA cable along a prescribed gripper path.
 
-    Returns ``(shapes, commands)`` where ``shapes`` is ``(T, 2M)`` planar
-    marker coordinates relative to the cable base, and ``commands`` is the
-    velocity the cable actually received, ``(T, 2)``.
+    One entry of ``path`` per control period; the grasp target is held while
+    SOFA takes ``substeps`` internal steps, so the recorded transition really
+    spans ``control_dt``.
+
+    Returns ``(shapes, commands, gripper)`` sampled at the control rate.
     """
     import Sofa.Core
     import Sofa.Simulation
     from cable_identification import cosserat_model as cm
     from cable_identification.coupling import GraspCoupling
 
+    sofa_dt = float(cfg["timestep_s"])
     root = Sofa.Core.Node("root")
     cm.prepare_root(root, cfg)
     cable = cm.build_cable(root, cfg)
@@ -110,7 +102,7 @@ def run_rollout(cfg, parameters, path, dt, settle_steps=50):
 
     # Let the rod settle, then latch the tip so the gripper really drives it.
     for _ in range(settle_steps):
-        Sofa.Simulation.animate(root, dt)
+        Sofa.Simulation.animate(root, sofa_dt)
     tip = cable.tip_pose()
     coupling.update_grasp(tip, 0.0)
     coupling.ramp_s = 0.0
@@ -118,15 +110,20 @@ def run_rollout(cfg, parameters, path, dt, settle_steps=50):
     previous = np.array(tip[:2], dtype=float)
     shapes = np.zeros((len(path), 2 * len(cable.marker_indices)))
     applied = np.zeros((len(path), 2))
+    gripper = np.zeros((len(path), 2))
     for step, point in enumerate(path):
-        applied[step] = (point - previous) / dt
-        previous = np.asarray(point, dtype=float)
-        coupling.update_grasp(list(point) + [tip[2]] + tip[3:7], step * dt + 1.0)
-        Sofa.Simulation.animate(root, dt)
+        point = np.asarray(point, dtype=float)
+        applied[step] = (point - previous) / control_dt
+        previous = point
+        coupling.update_grasp(list(point) + [tip[2]] + tip[3:7],
+                              step * control_dt + 1.0)
+        for _ in range(substeps):
+            Sofa.Simulation.animate(root, sofa_dt)
         markers = np.asarray(cable.marker_positions(), dtype=float)
         shapes[step] = (markers[:, :2] - np.asarray(base[:2])).reshape(-1)
+        gripper[step] = point
 
-    return shapes, applied
+    return shapes, applied, gripper
 
 
 def parameter_vertices(bounds):
@@ -146,13 +143,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="cable YAML config")
     parser.add_argument("--output", required=True, help="dataset .npz to write")
-    parser.add_argument("--steps", type=int, default=1500,
-                        help="excitation steps per parameter vertex")
+    parser.add_argument("--control-rate-hz", type=float, default=25.0,
+                        help="controller rate; must be an exact multiple of "
+                             "the SOFA timestep so the fitted transition and "
+                             "the model's sample time are the same number")
+    parser.add_argument("--steps", type=int, default=600,
+                        help="control periods per trajectory")
+    parser.add_argument("--n-trajectories", type=int, default=6,
+                        help="independent trajectories per parameter vertex, so "
+                             "train/validation/test split by trajectory")
     parser.add_argument("--angle-limit", type=float, default=0.55,
                         help="half-range of the gripper sweep about the base [rad]")
     parser.add_argument("--sweeps", type=float, default=6.0,
                         help="number of angular sweeps over the rollout")
-    parser.add_argument("--max-speed", type=float, default=0.05,
+    parser.add_argument("--max-speed", type=float, default=0.15,
                         help="gripper speed limit during excitation [m/s]")
     parser.add_argument("--parameter-bounds", default=None,
                         help="cable_parameter_bounds.yaml (uncertainty envelope)")
@@ -167,7 +171,16 @@ def main(argv=None):
     from cable_identification.parameter_bounds import load_parameter_bounds
 
     cfg = cm.load_config(args.config)
-    dt = float(cfg["timestep_s"])
+    sofa_dt = float(cfg["timestep_s"])
+    control_dt = 1.0 / args.control_rate_hz
+    substeps = int(round(control_dt / sofa_dt))
+    if substeps < 1 or abs(substeps * sofa_dt - control_dt) > 1e-12:
+        raise SystemExit(
+            f"control period {control_dt:.6f} s is not an exact multiple of the "
+            f"SOFA timestep {sofa_dt:.6f} s (nearest is {substeps} substeps = "
+            f"{substeps * sofa_dt:.6f} s). Choose a control rate that divides "
+            f"it, or change timestep_s in the cable config.")
+
     rng = np.random.default_rng(args.seed)
 
     # The same envelope the LMIs certify and the estimator clamps to.
@@ -175,35 +188,46 @@ def main(argv=None):
     bounds = load_parameter_bounds(bounds_file)
     vertices = parameter_vertices(bounds)
     print(f"parameter envelope from {bounds_file}: {bounds}")
+    print(f"control period {control_dt * 1e3:.3f} ms = {substeps} SOFA substeps")
 
-    shapes, commands, vertex_ids = [], [], []
-    # One trajectory for every vertex: if each got its own random excitation,
-    # the fitted differences between vertices would mix the parameter effect
-    # with the trajectory difference, and the vertex models would not be
-    # comparable.
-    path = excitation_path(rng, args.steps, dt, float(cfg["length_m"]),
-                           args.radial_min, args.radial_max,
-                           args.angle_limit, args.max_speed, args.sweeps)
+    # The same trajectories for every vertex: if each got its own random
+    # excitation, the fitted differences between vertices would mix the
+    # parameter effect with the trajectory difference.
+    paths = [excitation_path(rng, args.steps, control_dt, float(cfg["length_m"]),
+                             args.radial_min, args.radial_max,
+                             args.angle_limit, args.max_speed, args.sweeps)
+             for _ in range(args.n_trajectories)]
+
+    shapes, commands, grippers = [], [], []
+    vertex_ids, trajectory_ids = [], []
     for index, parameters in enumerate(vertices):
-        print(f"[{index + 1}/{len(vertices)}] rollout with {parameters}")
-        shape, command = run_rollout(cfg, parameters, path, dt)
-        shapes.append(shape)
-        commands.append(command)
-        vertex_ids.append(np.full(len(shape), index))
+        for traj, path in enumerate(paths):
+            print(f"[vertex {index + 1}/{len(vertices)}] "
+                  f"trajectory {traj + 1}/{len(paths)} with {parameters}")
+            shape, command, gripper = run_rollout(
+                cfg, parameters, path, control_dt, substeps)
+            shapes.append(shape)
+            commands.append(command)
+            grippers.append(gripper)
+            vertex_ids.append(np.full(len(shape), index))
+            trajectory_ids.append(np.full(len(shape), traj))
 
     np.savez(
         args.output,
         shapes=np.concatenate(shapes),
         commands=np.concatenate(commands),
+        gripper=np.concatenate(grippers),
         vertex_ids=np.concatenate(vertex_ids),
+        trajectory_ids=np.concatenate(trajectory_ids),
         parameter_names=np.array(sorted(bounds)),
         parameter_values=np.array([[v[name] for name in sorted(bounds)]
                                    for v in vertices]),
         marker_s_over_l=np.array(cfg["marker_s_over_l"]),
-        timestep_s=np.array([dt]),
+        timestep_s=np.array([control_dt]),
+        sofa_timestep_s=np.array([sofa_dt]),
     )
     print(f"wrote {args.output}: {sum(len(s) for s in shapes)} samples, "
-          f"{len(vertices)} parameter vertices")
+          f"{len(vertices)} parameter vertices x {len(paths)} trajectories")
     return 0
 
 

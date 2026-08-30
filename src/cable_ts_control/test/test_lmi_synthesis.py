@@ -114,3 +114,70 @@ def test_inconsistent_rule_counts_are_rejected():
     with pytest.raises(ValueError):
         solve_cable_ts_pdc([(a_vertices, b_vertices),
                             (a_vertices[:2], b_vertices[:2])])
+
+
+# -- what PDC actually certifies -----------------------------------------
+
+
+def test_open_loop_unstable_but_stabilisable_vertices_are_accepted():
+    """PDC certifies A_i - B_i K_j, not A_i.
+
+    Rejecting a model because some open-loop rho(A_i) > 1 throws away
+    perfectly stabilisable plants. The scalar case A=1.2, B=1, K=0.5 gives a
+    closed loop of 0.7.
+    """
+    a_vertices = [np.array([[1.2]]) for _ in range(2)]
+    b_vertices = [np.array([[1.0]]) for _ in range(2)]
+
+    assert all(abs(np.linalg.eigvals(a)[0]) > 1.0 for a in a_vertices)
+
+    gains, lyapunov, feasible = solve_cable_ts_pdc([(a_vertices, b_vertices)])
+    assert feasible
+    assert verify_lyapunov_decrease([(a_vertices, b_vertices)], gains,
+                                    lyapunov) < 0.0
+    assert worst_spectral_radius([(a_vertices, b_vertices)], gains) < 1.0
+
+
+def test_spectral_check_covers_only_the_certified_matrices():
+    """h_i h_j == h_j h_i, so only the AVERAGED cross terms are certified.
+
+    Testing each unaveraged A_i - B_i K_j alone rejects valid certificates.
+    """
+    vertex_sets = [make_vertices()]
+    gains, lyapunov, feasible = solve_cable_ts_pdc(vertex_sets)
+    assert feasible
+
+    a_vertices, b_vertices = vertex_sets[0]
+    unaveraged = max(
+        float(np.max(np.abs(np.linalg.eigvals(a - b @ k))))
+        for a, b in zip(a_vertices, b_vertices) for k in gains)
+
+    assert worst_spectral_radius(vertex_sets, gains) <= unaveraged + 1e-9
+    assert verify_lyapunov_decrease(vertex_sets, gains, lyapunov) < 0.0
+
+
+# -- relaxed Tanaka-Wang conditions --------------------------------------
+
+
+def test_relaxed_conditions_certify_when_they_report_feasible():
+    vertex_sets = [make_vertices(), make_vertices(stiffness_scale=1.4)]
+    gains, lyapunov, feasible = solve_cable_ts_pdc(vertex_sets, relaxed=True)
+
+    if not feasible:
+        pytest.skip("relaxed problem infeasible for this vertex set")
+    assert verify_lyapunov_decrease(vertex_sets, gains, lyapunov) < 0.0
+    assert worst_spectral_radius(vertex_sets, gains) < 1.0
+
+
+def test_relaxed_is_no_more_restrictive_than_basic():
+    """Y = 0 is admissible in the relaxed problem, so it cannot lose."""
+    vertex_sets = [make_vertices()]
+    _, _, basic = solve_cable_ts_pdc(vertex_sets)
+    _, _, relaxed = solve_cable_ts_pdc(vertex_sets, relaxed=True)
+
+    assert relaxed or not basic
+
+
+def test_relaxed_rejects_a_nonsensical_active_rule_count():
+    with pytest.raises(ValueError):
+        solve_cable_ts_pdc([make_vertices()], relaxed=True, max_active_rules=0)

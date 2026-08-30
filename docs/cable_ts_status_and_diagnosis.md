@@ -169,10 +169,28 @@ the tolerance in modal terms.
 
 ## 4. Diagnosis: why the LMIs are infeasible
 
-### 4.1 The measurement
+> **Retraction (2026-08-30).** Two claims in the first version of this section
+> were wrong, and an external review of commit `a5ecaa3` caught both.
+>
+> 1. **The rollout figures near 10¹⁷ mm were invalid.** The validation mask was
+>    drawn per sample, so `test` held scattered indices which were then fed to
+>    the rollout as if they were consecutive. The second command did not follow
+>    the first in time. Those numbers measured nothing.
+> 2. **Requiring `ρ(A_i) < 1` was wrong.** PDC certifies the CLOSED loop
+>    `G_ij = A_i − B_i K_j`, never the open-loop `A_i`. `A = 1.2, B = 1,
+>    K = 0.5` gives a closed loop of `0.7`. This repository's own subset result
+>    already disproved the gate: all 16 individual `(vertex, rule)` problems
+>    were feasible, so those plants were stabilisable despite `ρ(A_i) > 1`.
+>    The gate has been removed; `ρ(A)` is now reported as a diagnostic only.
+>
+> Everything below the retraction is the corrected analysis.
 
-Per cell — held-out one-step error, free-running rollout error over 30 steps
-(1 s), and the open-loop spectral radius, as reported by `identify_ts_vertices`:
+### 4.1 The original measurement (superseded)
+
+The table below is the *old* unstructured fit, kept because the `ρ(A)` and
+one-step columns are still informative. **The rollout column is invalid** — it
+was computed over scattered validation indices treated as a time sequence. See
+the retraction above.
 
 | vtx | EI | damping | rule | ρ(A) | 1-step | rollout |
 |---|---|---|---|---|---|---|
@@ -230,51 +248,82 @@ the shared `P` across the parameter box fails even without them.
 
 ### 4.4 Root cause
 
-**The acceptance gate measured only one-step error.**
+The acceptance gate measured only one-step error, which is nearly blind to
+eigenvalue error because it predicts `x(k+1)` from the *true* `x(k)`. But the
+deeper causes were in the model handed to the solver, not in the solver:
 
-Vertex 3, rule 1 is the clearest case: **0.393 mm one-step** — well inside the
-5 mm threshold — while diverging to 10¹⁸ mm in free running.
+* the state was **not Markov** — the input is gripper *velocity*, so a
+  displaced but stationary gripper keeps the cable deformed while contributing
+  nothing to `[q, q̇]`. The rollout had no way to know where the boundary was;
+* the model was fitted on **crisp cells** but executed **blended**, so the
+  vertices never had to agree in the overlap regions where the cross-rule LMIs
+  are evaluated;
+* the offline state used a non-causal `np.gradient` while the runtime uses a
+  causal low-pass — two different signals;
+* the sample period was **0.03 s in the data and 0.0333 s in the model**;
+* `A` and `B` were fitted freely, so nothing made the result a mechanical
+  system, and neighbouring rules came out with spectral radii from 1.0 to 1.6 —
+  far too different to share one Lyapunov function.
 
-One-step error is nearly blind to eigenvalue error because it predicts
-`x(k+1)` from the *true* `x(k)`; error only compounds over a horizon.
-Condition numbers are modest (12–50), so this is not raw collinearity. It is
-that `fit_local_model` is plain ridge least-squares with **nothing constraining
-the fit to be dissipative**, applied to near-unit-root data.
+### 4.5 Corrections applied
 
-The plan anticipated this: validation item 8 is "TS one-step **and rollout**
-prediction test". `rollout_rmse` existed but was never wired into the gate.
+| Fix | Effect |
+|---|---|
+| Trajectory-based split, full blended rollout | rollout is now a real measurement |
+| Removed the `ρ(A)` gate | stabilisable vertices no longer rejected |
+| Exact timing: 25 Hz = 4 SOFA substeps, zero-order hold | data and model agree |
+| Shared causal velocity filter offline and online | one state signal |
+| Joint fuzzy regression | fits the model that actually executes |
+| Gripper position in the state | worst rollout 4303 → 622 mm |
+| Structured second-order fit + exact discretisation | ρ(A) exactly 1.0; rollout → ~200 mm |
+| Relaxed Tanaka-Wang conditions (`Y`, `s`) | larger feasible set |
+| `worst_spectral_radius` on averaged cross terms only | stops rejecting valid certificates |
 
-### 4.5 What was changed in response
+A new finding along the way: **the joint fuzzy regressor is structurally rank
+deficient**. Complementary triangular memberships are exactly affine in the
+premises (`h₂ + h₃ = (x₁ − lo)/(hi − lo)` to 1e-16), so wherever a premise is
+also a state component the `hᵢx` blocks are linearly dependent — σ_min ≈ 1e-15
+with and without an affine term. The blended prediction is unique; the vertex
+matrices are not. The fit therefore takes the minimum-norm solution.
 
-`identify_ts_vertices` now gates on rollout error and spectral radius as well,
-so the pipeline fails loudly instead of handing the LMI an unusable model:
+### 4.6 Where it stands now
 
-```
-ERROR: worst rho(A) 4.3809 exceeds 1.0200: a damped cable cannot be
-non-dissipative, so the fit is unphysical and no common Lyapunov
-function can certify it.
-```
+With the structured fit, every `A_i` has `ρ(A) = 1.0000` exactly — the gripper
+integrator, with the cable modes strictly inside. That is physically correct.
 
-New flags: `--max-rollout-rmse` (default 0.05 m), `--rollout-horizon`
-(default 30), `--max-spectral-radius` (default 1.02).
+| subset | feasible |
+|---|---|
+| each single `(vertex, rule)` | yes, all 16 |
+| vertex 0 alone (4 rules) | **yes**, basic and relaxed |
+| vertex 2 alone (4 rules) | **yes**, basic and relaxed |
+| vertices 0 + 2 (full EI range) | **yes**, relaxed |
+| all four vertices | no |
 
-This makes the failure honest. **It does not fix it.**
+Before these corrections *no* subset beyond a single rule was feasible. The
+full EI uncertainty range is now certifiable at fixed damping.
 
-### 4.6 The actual fix (not yet implemented)
+### 4.7 What is still open
 
-Constrain the identification so the fitted `A` is dissipative by construction,
-rather than rejecting bad fits afterwards. Options, cheapest first:
+The damping extremes still break the shared certificate. That is suspicious
+rather than physical — more damping should make stabilisation *easier* — and
+the most likely culprit is the lag of the causal velocity filter growing with
+damping, which the model cannot represent. Narrowing the damping band to
+`[0.018, 0.022]` did not by itself restore feasibility, so the remaining work
+is:
 
-1. **Stability-constrained least squares** — solve
-   `min ‖X θ − Y‖²  s.t.  ρ(A) ≤ 1` as an SDP, or project each fitted `A` onto
-   the Schur-stable set. Localised change to `fit_local_model`.
-2. **Physically structured `A`** — the state is `[q, q̇]`, so impose the
-   second-order form `A = [[I, dt·I], [−dt·K, I − dt·D]]` with `K, D ⪰ 0`.
-   Far fewer free parameters and dissipativity is automatic.
-3. **Longer prediction horizon in the loss** — fit on multi-step error instead
-   of one-step, which penalises eigenvalue error directly.
-
-Option 2 is the most principled: it encodes what the cable actually is.
+1. **Equilibrium-centred state.** The regulator LMIs assume the origin is an
+   equilibrium. `q* = [0, 0]` is the PCA mean of a dynamic dataset, not a
+   static cable equilibrium, so a forcing term
+   `(Σ hᵢ Aᵢ x* − x*)` is missing from the analysis. Find a real
+   `(q*, p_g*)` pair by settling SOFA at a held gripper pose.
+2. **Basis from training trajectories only.** It is currently built from all
+   trajectories, which leaks validation information into the representation.
+3. **Marker-space error budget.** 2 modes reconstruct to ~13 mm, which cannot
+   support a 5 mm marker-space claim; select the mode count on held-out marker
+   error, not explained energy.
+4. **Runtime state.** The reducer still publishes `[q, q̇]`; the identified
+   model now expects `[q, q̇, p_g]`, so the controller must be updated before
+   these gains could run.
 
 ---
 
