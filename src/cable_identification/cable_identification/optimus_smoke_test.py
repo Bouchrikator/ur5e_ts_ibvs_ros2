@@ -15,13 +15,15 @@ stay on its fallback and the identification story is simply not ready yet.
 
 import sys
 
-# Components the stochastic identification pipeline needs, per the plan.
+# The seven components of the ported Optimus core (docs/optimus_port.md), i.e.
+# everything the ROUKF parameter estimator needs. UKFilterClassic is not ported.
 REQUIRED_COMPONENTS = [
     "OptimParams",
     "FilteringAnimationLoop",
     "StochasticStateWrapper",
     "MappedStateObservationManager",
-    "UKFilterClassic",
+    "SimulatedStateObservationSource",
+    "PreStochasticWrapper",
     "ROUKFilter",
 ]
 
@@ -48,7 +50,7 @@ def check_components():
             missing.append(name)
             print(f"  MISSING  {name}: {type(error).__name__}")
             continue
-        fields = sorted(d.name for d in obj.getDataFields())
+        fields = sorted(d.getName() for d in obj.getDataFields())
         available[name] = fields
         print(f"  OK       {name}")
         print(f"           data fields: {', '.join(fields)}")

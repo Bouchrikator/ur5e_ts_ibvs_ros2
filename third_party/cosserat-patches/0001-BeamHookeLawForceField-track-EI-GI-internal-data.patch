@@ -1,0 +1,35 @@
+diff --git a/src/Cosserat/forcefield/BeamHookeLawForceField.h b/src/Cosserat/forcefield/BeamHookeLawForceField.h
+index 636aca2..9f02aac 100644
+--- a/src/Cosserat/forcefield/BeamHookeLawForceField.h
++++ b/src/Cosserat/forcefield/BeamHookeLawForceField.h
+@@ -93,6 +93,9 @@ public :
+     ////////////////////////// Inherited from BaseObject /////////////////////////
+     void init() override;
+     void reinit() override;
++    /// Rebuild the cached section stiffness when a tracked Data (EI, GI) changes,
++    /// e.g. when an estimator writes a new candidate value through a Data link.
++    void doUpdateInternal() override;
+     ///////////////////////////////////////////////////////////////////////////
+ 
+     ////////////////////////// Inherited from ForceField /////////////////////////
+diff --git a/src/Cosserat/forcefield/BeamHookeLawForceField.inl b/src/Cosserat/forcefield/BeamHookeLawForceField.inl
+index 98fa0c9..6a25b92 100644
+--- a/src/Cosserat/forcefield/BeamHookeLawForceField.inl
++++ b/src/Cosserat/forcefield/BeamHookeLawForceField.inl
+@@ -88,6 +88,16 @@ template<typename DataTypes>
+ void BeamHookeLawForceField<DataTypes>::init()
+ {
+     Inherit1::init();
++    // m_K_section is a cache of these Data: let UpdateInternalDataVisitor invalidate it
++    this->trackInternalData(d_useInertiaParams);
++    this->trackInternalData(d_EI);
++    this->trackInternalData(d_GI);
++    reinit();
++}
++
++template<typename DataTypes>
++void BeamHookeLawForceField<DataTypes>::doUpdateInternal()
++{
+     reinit();
+ }
+ 

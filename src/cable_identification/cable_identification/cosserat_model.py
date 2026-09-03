@@ -104,12 +104,13 @@ def add_required_plugins(root):
     root.addObject("DefaultAnimationLoop")
 
 
-def prepare_root(root, cfg):
-    """Plugins + gravity/dt + animation loop."""
+def prepare_root(root, cfg, animation_loop="DefaultAnimationLoop"):
+    """Plugins + gravity/dt + animation loop (None: the caller adds its own loop)."""
     root.gravity = [float(g) for g in cfg["gravity"]]
     root.dt = float(cfg["timestep_s"])
     root.addObject("RequiredPlugin", name="cable_plugins", pluginName=REQUIRED_PLUGINS)
-    root.addObject("DefaultAnimationLoop")
+    if animation_loop:
+        root.addObject(animation_loop)
 
 
 def build_geometry(cfg):
@@ -141,7 +142,7 @@ class CableHandles:
     """Live handles into the built scene used by the adapter/identification code."""
 
     def __init__(self, solver_node, base_mo, strain_mo, force_field, frames_mo, cfg,
-                 grasp_target_mo=None, ode_solver=None, grasp_spring=None):
+                 grasp_target_mo=None, ode_solver=None, grasp_spring=None, mapping=None):
         self.solver_node = solver_node
         self.base_mo = base_mo
         self.strain_mo = strain_mo
@@ -151,14 +152,27 @@ class CableHandles:
         self.grasp_target_mo = grasp_target_mo
         self.ode_solver = ode_solver
         self.grasp_spring = grasp_spring
+        self.mapping = mapping
         self.marker_indices = marker_frame_indices(cfg)
 
     def set_base_pose(self, pose7):
-        """Kinematically drive/relocate the cable base: [x y z qx qy qz qw]."""
+        """Kinematically drive/relocate the cable base: [x y z qx qy qz qw].
+
+        The mapped frames are only recomputed by the next solve's propagation,
+        so the forces of that solve still see the previous base pose (one-step
+        boundary lag). Call `refresh_mapping()` afterwards when the solve must
+        use the new pose immediately (e.g. to match the Optimus estimator, whose
+        sigma-point propagations always start from the current boundary).
+        """
         with self.base_mo.position.writeable() as p:
             p[0] = pose7
         with self.base_mo.rest_position.writeable() as rp:
             rp[0] = pose7
+
+    def refresh_mapping(self):
+        """Re-apply the Cosserat mapping now (frames <- current strains + base)."""
+        if self.mapping is not None:
+            self.mapping.init()
 
     def set_grasp_pose(self, pose7):
         """Move the kinematic target the cable tip is constrained to."""
@@ -285,7 +299,7 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
         position=frames, showObject=show_flag, showObjectScale=show_scale)
     frames_node.addObject("UniformMass", totalMass=float(cfg["mass_kg"]),
                           showAxisSizeFactor=0.0)
-    frames_node.addObject(
+    mapping = frames_node.addObject(
         "DiscreteCosseratMapping", name="cosseratMapping",
         curv_abs_input=curv_in, curv_abs_output=curv_out,
         input1=strain_mo.getLinkPath(), input2=base_mo.getLinkPath(),
@@ -324,4 +338,4 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             fixedDirections=[1, 1, 0])
 
     return CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
-                        grasp_target_mo, ode_solver, grasp_spring)
+                        grasp_target_mo, ode_solver, grasp_spring, mapping)

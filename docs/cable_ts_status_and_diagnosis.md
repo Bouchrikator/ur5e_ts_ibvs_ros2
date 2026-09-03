@@ -53,7 +53,7 @@ watch.
 | 3 — Truth / estimator split | **Done.** Verified non-circular |
 | 4.1 — Synthetic observations | **Done** |
 | 4.2 — Camera observations | **Done, never run against a live camera.** Now marker-free (5.15) |
-| 5 — Optimus | **Substituted.** In-process UKF; Optimus itself is *not* installed |
+| 5 — Optimus | **Done.** Ported to SOFA 25.12, drives `cable_estimator_node` (3.2, [optimus_port.md](optimus_port.md)) |
 | 6 — Reduced model | **Done.** Boundary-conditioned POD split, 3 modes, 3.50 mm (naming: 5.13) |
 | 7 — TS vertices from SOFA | **Done.** 16/16 cells, held-out one-step 3.76 mm |
 | 8 — PDC synthesis | **BLOCKED.** Basic and relaxed solver-infeasible on the current model (sound gate, 2026-08-30 rerun) — sections 4, 4.9 |
@@ -106,12 +106,14 @@ deliberately wrong, so the identification is not circular.
 
 ### 2.3 Parameter identification (plan step 5)
 
-`LogParameterUKF` filters `q = log(θ)`, which is the plan's
-`q_EI = log(EI)` / `EI = exp(q_EI)` adapter. Same estimator family as Optimus'
-`UKFilterClassic`, so results transfer if the Optimus port lands.
-
-Against an analytic cantilever with 2 mm marker noise, EI recovers
-**0.006 → 0.010 within 5 %**. 21 dedicated tests.
+`cable_estimator_node` runs Optimus' ROUKF inside its SOFA scene
+(`optimus_scene.build_optimus_cable`), parameters in log space
+(`transformParams=exponential`, the plan's `q_EI = log(EI)` / `EI = exp(q_EI)`
+adapter). Against the Cosserat truth plant with 2 mm marker noise, EI recovers
+**0.006 → 0.010 within 0.3 %** and GJ **0.012 → 0.008 within 1.5 %**, with a
+held-out trajectory check (`./scripts/run.sh cable_optimus_test`). The earlier
+in-process `LogParameterUKF` (same log-space adapter, analytic cantilever
+recovery within 5 %) stays as a library with its 21 tests.
 
 Publishes the four topics the plan asks for: `/cable/parameter_estimate`,
 `/cable/innovation`, `/cable/marker_rmse`, `/cable/estimator_status`.
@@ -173,14 +175,20 @@ therefore **not shipped** in `config/` — only `cable_parameter_bounds.yaml` an
 fabricating them would void the stability certificate. Consequently
 `cable_closed_loop_sim.launch.py` with `enable_control:=true` cannot start.
 
-### 3.2 Optimus is not installed
+### 3.2 Optimus is installed (ported to SOFA 25.12)
 
-The plan's step 5 is not literally satisfied. The Dockerfile has an opt-in
-build stage (`--build-arg WITH_OPTIMUS=true`) and a compatibility gate
-(`ros2 run cable_identification optimus_smoke_test`), but the gate has **never
-passed** because the plugin has never been built. The official binary release
-targets SOFA 21.12 while this image is 25.12 — the plan flags this as a real
-risk. The in-process UKF covers identification meanwhile.
+Plan step 5 is now literally satisfied. The official Optimus binary targets
+SOFA 21.12, so the minimal core (ROUKF, state wrapper, observation manager,
+OptimParams, filtering loop) was ported and vendored in `third_party/Optimus`,
+with Cosserat rebuilt from source at the release commit plus the
+`BeamHookeLawForceField` internal-data patch (without it the stiffness cache
+ignores parameter changes and the filter gain is zero).
+`cable_estimator_node` runs on it; the in-process `LogParameterUKF` is a
+library only. Gates and numbers are in [optimus_port.md](optimus_port.md):
+`./scripts/run.sh optimus_smoke_test` (factory), `cable_optimus_test` (EI
+0.17 %, GJ 1.49 % recovery), `cable_optimus_pipeline` (headless end-to-end,
+EI 0.29 % in 60 s). The SOFA 21.12 parity oracle (gate C) is deferred for
+disk space; the recipe is in that document.
 
 ### 3.3 Cosserat restore
 
@@ -1011,10 +1019,10 @@ at the observation stamp, and `cable_target.yaml` matches the 3-mode state).
    arc-length resamples, not persistent material features, so they cannot
    observe `EA` (the chain is forced to the known length), torsion, or
    material slip along the cable.
-9. Optionally rebuild with `WITH_OPTIMUS=true` and run the compatibility gate.
-   Note the estimator currently only gates on estimate freshness — the
-   estimates do not yet update the vertices or gains, so "Optimus in the
-   loop" is observation-only until scheduled adaptation is designed.
+9. Optimus is in (3.2). Note the estimator currently only gates on estimate
+   freshness — the estimates do not yet update the vertices or gains, so
+   "Optimus in the loop" is observation-only until scheduled adaptation is
+   designed.
 10. Only then wire the cascade (`reference_source:=cable`).
 
 If the corrected relaxed LMI still refuses the dynamic 8-state model, the

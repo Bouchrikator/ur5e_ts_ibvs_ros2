@@ -12,7 +12,12 @@
 #   Tools:       ./run.sh plotjuggler
 #   SOFA:        ./run.sh sofa [scene]   (host ~/SOFA/scenes → /scenes)
 #                ./run.sh cosserat       (restore the Cosserat plugin)
+#                ./run.sh optimus        (build/repair patched Cosserat + Optimus)
 #   Cable:       ./run.sh cable_plugin_test | cable_forward_test
+#                ./run.sh optimus_smoke_test    (factory gate, ~2 s)
+#                ./run.sh cable_optimus_test    (EI/GJ recovery gates, ~15 s)
+#                ./run.sh cable_optimus_pipeline [--duration 60]
+#                    (headless truth+markers+estimator, EI must land <5 %)
 #                ./run.sh cable_sim      (Gazebo UR5e + SOFA Cosserat cable)
 #                ./run.sh cable_identify_sim  (2 SOFA models + EI identification)
 #                ./run.sh cable_closed_loop  (truth + estimator + outer loop)
@@ -48,9 +53,18 @@ ensure_cosserat() {
   docker compose exec -T ur5e_ts_ibvs bash /ros2_ws/scripts/install_cosserat.sh
 }
 
+# Same idea for the SOFA 25.12 Optimus port plus the source-built Cosserat with
+# the EI/GI internal-data patch (third_party/, see docs/optimus_port.md). It is a
+# no-op when both markers are present; a container recreated from an image
+# without the stage rebuilds them once (~10 min at -j2).
+ensure_optimus() {
+  docker compose exec -T ur5e_ts_ibvs bash /ros2_ws/scripts/install_optimus.sh
+}
+
 in_live() {
   docker compose up -d >/dev/null 2>&1
   ensure_cosserat
+  ensure_optimus
   # exec bypasses the image entrypoint, so the ROS underlay must be sourced too
   docker compose exec ur5e_ts_ibvs bash -c \
     "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && $*"
@@ -111,6 +125,11 @@ case "$CMD" in
     docker compose up -d >/dev/null 2>&1
     ensure_cosserat
     ;;
+  optimus)
+    docker compose up -d >/dev/null 2>&1
+    ensure_cosserat
+    ensure_optimus
+    ;;
   cable_plugin_test)
     in_live "ros2 run cable_identification cable_plugin_test"
     ;;
@@ -119,6 +138,16 @@ case "$CMD" in
     ;;
   optimus_smoke_test)
     in_live "ros2 run cable_identification optimus_smoke_test"
+    ;;
+  cable_optimus_test)
+    # Gates D/E/H/F/G of the port protocol: sigma points differ, state restore,
+    # log-space bounds, EI and GJ recovery from 0.6x with held-out validation.
+    in_live "ros2 run cable_identification optimus_recovery_test $*"
+    ;;
+  cable_optimus_pipeline)
+    # Gate I headless: truth cable + synthetic markers + cable_estimator_node,
+    # no GUI, prints OPTIMUS_PIPELINE_TEST_PASSED when EI converges.
+    in_live "ros2 run cable_identification optimus_pipeline_test $*"
     ;;
   cable_sim)
     in_live "ros2 launch cable_bringup cable_sim.launch.py $*"
@@ -169,7 +198,7 @@ case "$CMD" in
       --event-handlers console_direct+ && colcon test-result --verbose"
     ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_sim|cable_identify_sim|cable_closed_loop|cable_qs_test|cable_qs_disturb|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|optimus|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_optimus_test|cable_optimus_pipeline|cable_sim|cable_identify_sim|cable_closed_loop|cable_qs_test|cable_qs_disturb|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
     exit 1
     ;;
 esac

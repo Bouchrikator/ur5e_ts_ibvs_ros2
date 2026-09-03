@@ -27,6 +27,8 @@ setup(
             "cable_plugin_test = cable_identification.plugin_test:main",
             "cable_forward_test = cable_identification.forward_test:main",
             "optimus_smoke_test = cable_identification.optimus_smoke_test:main",
+            "optimus_recovery_test = cable_identification.optimus_recovery_test:main",
+            "optimus_pipeline_test = cable_identification.optimus_pipeline_test:main",
         ],
     },
 )

@@ -236,36 +236,28 @@ RUN curl -L -o /tmp/cosserat.zip "$COSSERAT_URL" && \
         b=$(basename "$f"); ln -sf "$f" "${b%25.12.00}25.12.99"; \
     done
 
-# --- Optimus plugin (stochastic parameter identification), OPT-IN ----------
-# There is no binary release for SOFA v25.12 (the latest is for 21.12), so the
-# plugin is compiled from source against /opt/sofa. It is off by default
-# because the build is slow and the API compatibility is not guaranteed:
-#
-#     docker compose build --build-arg WITH_OPTIMUS=true
-#
-# The compatibility gate is `ros2 run cable_identification optimus_smoke_test`,
-# which instantiates every component the estimator needs and prints the data
-# fields it actually exposes. Do NOT wire Optimus to Cosserat before that test
-# passes.
-ARG WITH_OPTIMUS=false
-ARG OPTIMUS_REF=master
+# --- Optimus (stochastic parameter identification) ported to SOFA v25.12 -----
+# Upstream Optimus (sofa-framework/Optimus @ cd41bf17) only builds against SOFA
+# 21.12. third_party/Optimus is the minimal-core port to 25.12 (modular CMake
+# targets, registerObjects entry point, moved headers, ROUKF/observation fixes;
+# see docs/optimus_port.md). The same stage rebuilds Cosserat FROM SOURCE at
+# the exact commit of the binary release above (f64e029) with
+# third_party/cosserat-patches: BeamHookeLawForceField must track EI/GI as
+# internal data, otherwise the stiffness cache is never rebuilt when the
+# estimator writes a candidate value and the parameter gain is identically 0.
+# Gates: `ros2 run cable_identification optimus_smoke_test` (factory) and
+# `ros2 run cable_identification optimus_recovery_test` (EI/GJ recovery).
+# scripts/install_optimus.sh is the single code path (also used to repair a
+# recreated container), so the image and the live install cannot drift.
+ARG WITH_OPTIMUS=true
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libeigen3-dev libblas-dev liblapack-dev libboost-dev patch && \
+    rm -rf /var/lib/apt/lists/*
+COPY third_party/ /ros2_ws/third_party/
+COPY scripts/install_optimus.sh /ros2_ws/scripts/install_optimus.sh
 RUN if [ "$WITH_OPTIMUS" = "true" ]; then \
-        apt-get update && \
-        apt-get install -y --no-install-recommends \
-            libeigen3-dev libblas-dev liblapack-dev libpython3-dev && \
-        rm -rf /var/lib/apt/lists/* && \
-        git clone --depth 1 -b "$OPTIMUS_REF" \
-            https://github.com/sofa-framework/Optimus.git /tmp/Optimus && \
-        cmake -S /tmp/Optimus -B /tmp/Optimus/build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH=/opt/sofa \
-            -DCMAKE_INSTALL_PREFIX=/opt/sofa/plugins/Optimus \
-            -DPLUGIN_OPTIMUS=ON \
-            -DSOFA_BUILD_TESTS=OFF \
-            -DSTOCHASTIC_FILTERING=ON && \
-        cmake --build /tmp/Optimus/build --target install -j"$(nproc)" && \
-        rm -rf /tmp/Optimus && \
-        echo "Optimus installed to /opt/sofa/plugins/Optimus"; \
+        JOBS=2 bash /ros2_ws/scripts/install_optimus.sh && \
+        rm -rf /opt/build/cosserat /opt/build/cosserat-src /opt/build/optimus; \
     else \
         echo "Optimus skipped (build with --build-arg WITH_OPTIMUS=true)"; \
     fi

@@ -70,6 +70,8 @@ services:
       - ./src:/ros2_ws/src:rw
       # Host-side helper scripts (Cosserat restore after a container recreate)
       - ./scripts:/ros2_ws/scripts:ro
+      # Vendored Optimus port + Cosserat patch, built by scripts/install_optimus.sh
+      - ./third_party:/ros2_ws/third_party:ro
       # Identification artifacts (dataset, basis, model, gains certificate):
       # on the host so a scientific run survives the container and can be
       # archived/committed for independent re-verification
