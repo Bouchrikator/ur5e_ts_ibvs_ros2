@@ -34,8 +34,12 @@ gates that exercise them in `docs/optimus_port.md` §2):
   `PartialFixedProjectiveConstraint` ignored (nodes stay in the state).
 - `MappedStateObservationManager`: mapping optional, wrapper-based mapped
   positions, prediction-only when no observation is valid.
+- `ObservationManager` base: `observationVariances` (per-coordinate R, zero
+  weight for unobserved coordinates), `getObservedSize()`.
 - `SimulatedStateObservationSource`: `trackedObservationsValid` data.
-- `ROUKFilter`: `matUinv.setIdentity()` after both prediction resamplings.
+- `ROUKFilter`: `matUinv.setIdentity()` after both prediction resamplings;
+  NIS innovation gate after prediction (`innovationGateSigma`, outputs `nis`,
+  `correctionApplied`) in both correction variants.
 - Build: `CMakeLists.txt` and `OptimusConfig.cmake.in` rewritten for modular
   SOFA targets; `SOFA_TARGET Optimus` defined so `RequiredPlugin` sees the
   components.

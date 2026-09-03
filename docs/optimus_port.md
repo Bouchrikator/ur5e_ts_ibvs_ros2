@@ -63,6 +63,11 @@ Behavioural changes (not pure API renames — each is exercised by a gate):
   `DiscreteCosseratMapping` needs); when the observation source reports no valid
   observation the innovation is skipped and the filter predicts only
   (protocol §8.4).
+- `ObservationManager` (base): `observationVariances`, a per-coordinate variance
+  vector rebuilt into `R`/`R^-1` at every observation; a non-positive or
+  non-finite entry means "not observed this step" and gets `R^-1 = 0`, which is
+  exactly the dropped row in the information form (`(HL)' R^-1` zeroes its
+  column). Empty vector = the scalar `observationStdev` as upstream.
 - `SimulatedStateObservationSource`: `trackedObservationsValid` flag, driven
   from Python per step.
 - `ROUKFilter`: after the prediction resampling the Cholesky factor of the
@@ -71,6 +76,13 @@ Behavioural changes (not pure API renames — each is exercised by a gate):
   normally overwrites it, but on a prediction-only step (no observation) nothing
   does, and the next resampling would factor `L` instead of `I` and shrink the
   reduced covariance.
+- `ROUKFilter`: innovation gate **after the prediction**, inside the correction.
+  `NIS = nu' S^-1 nu` with `S = HL U^-1 (HL)' + R`, computed by Woodbury from
+  quantities the correction already has (`nu' R^-1 nu - w' U+^-1 w`,
+  `w = (HL)' R^-1 nu`, unobserved rows drop out), compared with the chi-square
+  quantile for the *observed* coordinates (Wilson-Hilferty, `innovationGateSigma`
+  sigmas; 0 = off). A rejected observation leaves `U` and the state as predicted.
+  Outputs `nis` and `correctionApplied`.
 - `OptimParams`: stays as upstream for `transformParams=exponential`
   (`P_q0 = log(stdev)^2`), so the Python side converts the physical
   coefficient of variation: `stdev = exp(sqrt(log(1+c^2)))`, 1.341194157207 for
@@ -94,24 +106,38 @@ No new node, topic or model. Files:
 
 - [optimus_scene.py](../src/cable_identification/cable_identification/optimus_scene.py):
   `build_optimus_cable(root, cfg, parameters, init_values, relative_std,
-  observation_std)` inserts the Optimus components around the plant built by
-  `cosserat_model.build_cable` and returns an `OptimusCable` handle
-  (`set_boundary_pose`, `set_observation(points, valid)`, `estimates()`,
-  `log_variances()`, `innovation_rms()`). `ROUKFilter` Simplex sigma points,
-  `estimatePosition=True` (REDORD needs positions in the state),
+  observation_std, innovation_gate_sigma)` inserts the Optimus components around
+  the plant built by `cosserat_model.build_cable` and returns an `OptimusCable`
+  handle (`set_boundary_pose`, `set_observation(points, variances, valid)` with
+  NaN rows for unobserved markers, `estimates()`, `log_variances()`,
+  `innovation_rms()`, `nis()`, `correction_applied()`). `ROUKFilter` Simplex
+  sigma points, `estimatePosition=True` (REDORD needs positions in the state),
   `estimateVelocity=False`, one boundary controller applying the *same* pose to
   every sigma point (protocol §8.2, gate H counts p+1 applications per step).
+  Refuses `GJ` when the configuration is planar (§7).
 - [cable_estimator_node.py](../src/sofa_ros2_adapter/sofa_ros2_adapter/cable_estimator_node.py):
   same contract as before (`/cable/observed_markers` in; `/cable/model/*`,
   `/cable/parameter_estimate`, `/cable/innovation`, `/cable/marker_rmse`,
-  `/cable/estimator_status` out). Each SOFA step is a filter step. The node
-  steps the estimator to the **observation stamp**, looking the boundary pose up
-  on TF at each step time, then predicts up to now without correcting. Stepping
-  at wall-clock cycle time instead gave a 9 % EI bias in the pipeline test
-  (the boundary the estimator saw was ~one cycle newer than the markers).
-  New parameters: `initial_relative_std` (coefficient of variation per
-  parameter, default 0.6), `max_steps_per_cycle` (default 20; a "behind real
-  time" warning is logged when the budget is hit).
+  `/cable/estimator_status` out). Each SOFA step is a filter step and **model
+  time advances only by steps**: observations are queued and processed in stamp
+  order, each at the step ending nearest its stamp (|error| <= dt/2), with the
+  boundary pose read from TF *at every step time* (no fallback to "latest": if
+  TF is not there yet the node waits) and the observation frame transform taken
+  at the observation stamp. An observation the model has already passed is
+  dropped as stale, never assigned to a later step; a backlog is worked off at
+  `max_steps_per_cycle` per cycle with a "behind" warning, never skipped. The
+  only clock jump left is loud: when the boundary history is older than the TF
+  cache (10 s stall) the model is re-anchored at the observation with an error
+  log. Per marker: `valid` and the covariance diagonal (rotated into the model
+  frame) go to `observationVariances`; a message with some markers missing is a
+  correction on the observed ones, `dof = 3 x observed`. The old Python RMS gate
+  before the step is gone; the gate is the filter's NIS test (parameter
+  `innovation_gate_sigma`, default 3). Stepping at wall-clock cycle time with a
+  latest-TF boundary gave a 9 % EI bias in the pipeline test before all this.
+  Parameters: `initial_relative_std` (coefficient of variation per parameter,
+  default 0.6), `innovation_gate_sigma` (3.0), `max_steps_per_cycle` (20).
+  Startup warning in the table configuration: EI is identified relative to the
+  attachment springs (§7).
 - [cosserat_model.py](../src/cable_identification/cable_identification/cosserat_model.py):
   `prepare_root(..., animation_loop=...)` so the estimator can install
   `FilteringAnimationLoop`; `CableHandles.refresh_mapping()` (see §6).
@@ -124,19 +150,23 @@ No new node, topic or model. Files:
 |---|---|---|
 | A compile/install | `optimus` (installer) | `libOptimus.so` + headers installed under `/opt/sofa/plugins/Optimus`, RPATH `$ORIGIN;$ORIGIN/../../../lib` |
 | B factory | `optimus_smoke_test` | 7/7 components instantiated from `RequiredPlugin Optimus` |
-| C 21.12 parity oracle | — | **DEFERRED** (§7) |
-| D log-space prior | `cable_optimus_test` | `stdev(c=0.30)=1.341194157207`, `q0=log 0.006=-5.115995809754`, reduced variance `log(1+c²)=0.086177696`, zero/negative/non-finite init rejected |
-| E parameter link | `cable_optimus_test` | force ratio 2.000000000 for 2×EI and 2×GJ, prediction shift 2.8e-4 / 2.3e-4, restore diff 0.0; EI 0.006 vs 0.010 separates markers by 51.6 mm rmse (> 3σ_obs = 6 mm) |
+| C 21.12 parity oracle | — | **DEFERRED** (§8) |
+| D log-space prior | `cable_optimus_test` | `stdev(c=0.30)=1.341194157207`, `q0=log 0.006=-5.115995809754`, reduced variance `log(1+c²)=0.086177696`, zero/negative/non-finite init rejected, GJ refused in the planar configuration |
+| E parameter link | `cable_optimus_test` | force ratio 2.000000000 for 2×EI and 2×GJ, prediction shift 2.8e-4 / 2.3e-4, restore diff 0.0; EI 0.006 vs 0.010 separates markers by 51.6 mm rmse (> 3σ_obs = 6 mm), GJ 0.012 vs 0.008 by 19.7 mm |
 | H identical boundary | `cable_optimus_test` | 300 steps × (p+1 = 2) boundary applications |
-| F EI recovery (0.006 → 0.010, σ_obs 2 mm) | `cable_optimus_test` | EI 0.010017 (0.17 %), moving within 50 steps, converged at step 31, log-variance 8.6e-2 → 1.8e-5, innovation 3.46 → 3.43 mm (floor 3.46 mm), held-out validation trajectory 0.22 mm (start 55.6 mm, +5 % EI 6.25 mm) |
-| F/3 sparse observations (1 in 3 valid, prediction-only otherwise) | `cable_optimus_test` | EI 0.009986 (0.14 %), converged at step 34, held-out 0.17 mm |
-| G GJ recovery (0.012 → 0.008, torsion ±20° @ 0.4 Hz) | `cable_optimus_test` | GJ 0.007881 (1.49 %), converged at step 132, held-out 0.36 mm (+5 % GJ 1.19 mm) |
-| I pipeline, headless | `cable_optimus_pipeline --duration 60` | truth cable + synthetic markers + `cable_estimator_node`: EI 0.006 → 0.010029 (0.29 %) in 60 s, 479/480 steps corrected, median innovation 3.49 mm, `OPTIMUS_PIPELINE_TEST_PASSED` |
+| F EI recovery (0.006 → 0.010, σ_obs 2 mm, 3σ NIS gate on) | `cable_optimus_test` | EI 0.010029 (0.29 %), moving within 50 steps, converged at step 30, log-variance 8.6e-2 → 1.8e-5, innovation 3.39 → 3.56 mm (floor 3.46 mm), NIS/dof per quarter 1.01/1.03/1.02/1.08, 0/300 rejected, held-out validation trajectory 0.36 mm (start 55.6 mm, +5 % EI 6.25 mm) |
+| F/3 sparse instants (1 step in 3 observed, prediction-only otherwise) | `cable_optimus_test` | EI 0.009966 (0.34 %), converged at step 40, NIS/dof 1.08, 2/100 rejected, held-out 0.43 mm |
+| F/occl per-marker occlusion (each marker missing with p = 0.3, per-marker weights) | `cable_optimus_test` | EI 0.010000 (0.00 %), converged at step 33, NIS/dof 1.02, 1/300 rejected, held-out 0.00 mm |
+| G GJ recovery (0.012 → 0.008, torsion ±20° @ 0.4 Hz, hanging rod) | `cable_optimus_test` | GJ 0.008156 (1.95 %), converged at step 132, NIS/dof 1.14, 0/300 rejected, held-out 0.47 mm (+5 % GJ 1.19 mm). Model-consistency evidence only, see §7 |
+| I pipeline, headless, 20 % per-marker dropout | `cable_optimus_pipeline --duration 60` | truth cable + synthetic markers + `cable_estimator_node` at 30 Hz observations: EI 0.006 → 0.010011 (0.11 %) in 60 s, 1794/1800 observations corrected, 6 rejected by the gate, median innovation 3.43 mm, corrections on 2..7 of 7 markers (`dof = 3 x observed` in `/cable/estimator_status`), `OPTIMUS_PIPELINE_TEST_PASSED` |
 
-`cable_optimus_test` finishes in ~15 s, `cable_optimus_pipeline` in ~75 s. Both
+`cable_optimus_test` finishes in ~20 s, `cable_optimus_pipeline` in ~75 s. Both
 print a single `..._PASSED`/`..._FAILED` line and exit non-zero on failure;
 the pipeline test refuses to start (exit 2) when a cable stack is already
 running, because two estimators on the same topics corrupt each other's traces.
+The NIS/dof ≈ 1 rows are the chi-square consistency check of the filter
+covariance: `S` is what the innovations actually scatter with, so the 3σ gate
+rejects at the nominal 0.1–0.3 % rate.
 
 ## 6. Findings worth knowing before touching this
 
@@ -164,8 +194,59 @@ running, because two estimators on the same topics corrupt each other's traces.
 - `ros2 run` children survive SIGTERM to the wrapper; the pipeline harness uses
   process groups and `kill -9` fallback. Check with
   `pgrep -fa "[c]able_estimator_node|[c]able_sofa_node|[s]ynthetic_marker_node"`.
+- **CPU starvation makes the truth inconsistent, and the gate says so.** The
+  truth plant (`cable_sofa_node`) keeps real time by dropping physics steps
+  (`solver_stats` second field); its cable then lags its own boundary and the
+  estimator, which integrates every step, sees innovations the modelled `S`
+  cannot explain. One pipeline run with two `ros2 topic echo` processes on the
+  7 GB host rejected 347/597 observations and stalled EI at 0.0072; the same
+  run unloaded rejects 4–19 of ~1200. A high `rejected` count in
+  `/cable/estimator_status` together with dropped truth steps is a load problem,
+  not a filter problem.
 
-## 7. Deferred: gate C (21.12 parity oracle)
+## 7. Identifiability limits (read before designing an experiment)
+
+- **GJ is structurally unidentifiable in the table configuration.**
+  `cable_common.yaml` sets `planar: true`, which the plant implements as a
+  `PartialFixedProjectiveConstraint` with `fixedDirections=[1,1,0]` on the strain
+  state: torsion `kappa_x` (and `kappa_y`) are held at 0. With
+  `V = 1/2 ∫ [GJ kappa_x² + EI (kappa_y² + kappa_z²)] ds`, `dV/dGJ = 1/2 ∫ kappa_x² ds = 0`,
+  so the marker Jacobian w.r.t. `log GJ` is zero and the Fisher information is
+  zero: no estimator can recover it. `build_optimus_cable` raises `ValueError`
+  for `GJ` with a planar configuration (gate D checks it) instead of running a
+  filter whose GJ variance can only stay at the prior.
+- **What gate G does and does not show.** G runs the hanging, non-planar rod
+  (`planar=False`, gravity on, free tip) with a ±20° roll of the base: gravity
+  keeps the sag plane vertical and torsion drags it, so the *centerline* moves
+  with GJ (19.7 mm rms between 0.012 and 0.008). That is torsion–bending
+  coupling of a sagging rod, and the truth and the estimator are two instances of
+  the same rod model. On a real cable with a circular isotropic section, a
+  straight or planar segment twists without moving its centerline, and the
+  markers are geometric samples with no material identity, so GJ needs at least:
+  `planar: false`, a torsional excitation, and an orientation observation of a
+  cross-section (or the wrist torque), then validation on a different
+  trajectory. None of that exists in the pipeline yet; G is a model-consistency
+  gate, not an observability proof.
+- **EI in the table configuration is identified relative to the attachment
+  springs.** Both ends are `RestShapeSpringsForceField`s on mapped frames
+  (root `k = 1e8` ≈ kinematic; tip `k_g = 2000 N/m`, `k_θ = 0.05 Nm/rad`,
+  chosen for numerical stability, docs §5.16). Without gravity and with
+  prescribed end displacements the quasi-static shape minimises `EI·E(q)`, i.e.
+  is independent of `EI`; what makes the shape depend on EI is the compliance of
+  the tip attachment through `λ_t = k_g L³/EI = 6.9e4` (effectively rigid) and
+  `λ_r = k_θ L/EI = 3.5` (comparable to the rod), plus inertia and damping in
+  fast motions. In simulation both plants share `k_θ`, so gate I recovers EI
+  exactly; on hardware a clamp whose rotational compliance differs from
+  0.05 Nm/rad biases EI by the same factor. The node logs this at startup with
+  the two ratios. Options, in order of preference: identify EI in the hanging
+  configuration (gate F's setup: free tip, gravity is the absolute force scale,
+  `grasp_tip: false`), calibrate the clamp compliance independently and put it
+  in `grasp_angular_stiffness`, or add the wrist wrench as an observation. The
+  springs themselves are not changed: the certified `*_narrow` artifacts were
+  generated with them, and a bilateral attachment through the Cosserat mapping
+  failed before (docs §5).
+
+## 8. Deferred: gate C (21.12 parity oracle)
 
 The protocol asks for the same scene run on stock SOFA 21.12 + Optimus binary
 as an oracle. Not done: a second SOFA install (~3 GB) plus its build does not
@@ -180,14 +261,15 @@ Recipe when the resources exist:
    from a run at the true modulus + 2 mm noise (seeded).
 3. Same scene on 25.12 with `third_party/Optimus`; compare the parameter trace
    and reduced covariance step by step (tolerance 1e-6 relative; the only
-   allowed difference is the `matUinv` reset, which only triggers on
-   prediction-only steps, so use an all-valid observation stream).
+   allowed differences are the `matUinv` reset, which only triggers on
+   prediction-only steps, so use an all-valid observation stream, and the
+   NIS gate, so run with `innovationGateSigma=0`).
 
 Until then the correctness evidence is gates D–I above (exact log-space
-numbers, exact force scaling, recovery to < 0.3 % on EI and 1.5 % on GJ with
-held-out validation, and the end-to-end pipeline).
+numbers, exact force scaling, recovery to < 0.4 % on EI and 2 % on GJ with
+held-out validation, NIS/dof ≈ 1, and the end-to-end pipeline).
 
-## 8. Rebuilding after edits
+## 9. Rebuilding after edits
 
 - Optimus sources: `docker compose exec -T ur5e_ts_ibvs bash /ros2_ws/scripts/install_optimus.sh --force optimus`
 - Cosserat patch: same with `--force cosserat` (several minutes at -j2).

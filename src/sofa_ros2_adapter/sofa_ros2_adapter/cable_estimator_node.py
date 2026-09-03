@@ -23,14 +23,24 @@ ATTACHED, which is what keeps the identification from being circular.
 
 Every SOFA step is a filter step (FilteringAnimationLoop): p + 1 sigma-point
 propagations from the same state and the same boundary pose, then a correction
-if a complete observation is available for that step, otherwise prediction only
-(protocol §8.2, §8.4). Parameters are estimated in log space and stay positive.
+with the markers observed for that step (a missing marker has zero weight),
+otherwise prediction only (protocol §8.2, §8.4). Parameters are estimated in
+log space and stay positive.
+
+Time is the model's: it advances only by filter steps. Observations are
+processed in stamp order, each one at the step ending nearest its stamp, with
+the boundary pose read from TF at every step time; an observation the model
+has already passed is dropped, never assigned to a later step. The innovation
+gate runs inside the filter after the prediction (NIS vs chi-square for the
+observed coordinates), so it sees the innovation at the observation time.
 """
 
 import math
+from collections import deque
 
 import numpy as np
 import rclpy
+from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
 
@@ -41,6 +51,8 @@ from cable_msgs.msg import CableMarker, CableMarkerArray, CableParameterEstimate
 import tf2_ros
 
 from cable_identification.parameter_bounds import bounds_for
+
+TF_CACHE_S = 10.0   # boundary history the model can still step through
 
 
 def _rotate(quaternion, points):
@@ -68,7 +80,7 @@ class CableEstimatorNode(Node):
         self.declare_parameter("parameter_bounds_file", "")
         self.declare_parameter("initial_relative_std", [0.6])
         self.declare_parameter("measurement_std_m", 0.002)
-        self.declare_parameter("max_innovation_m", 0.05)
+        self.declare_parameter("innovation_gate_sigma", 3.0)
         self.declare_parameter("update_rate_hz", 8.0)
         self.declare_parameter("observation_topic", "/cable/observed_markers")
         self.declare_parameter("grasp_state_topic", "/cable/grasp_state")
@@ -82,7 +94,6 @@ class CableEstimatorNode(Node):
         self.fixture_frame = self.get_parameter("fixture_frame").value
         self.max_steps = int(self.get_parameter("max_steps_per_cycle").value)
         self.measurement_std = float(self.get_parameter("measurement_std_m").value)
-        self.max_innovation = float(self.get_parameter("max_innovation_m").value)
 
         # --- SOFA estimator scene (in-process, same interpreter as rclpy) ---
         import Sofa.Core
@@ -102,7 +113,8 @@ class CableEstimatorNode(Node):
         cm.prepare_root(self.root, self.cfg, animation_loop=None)
         self.est = osc.build_optimus_cable(
             self.root, self.cfg, parameters=self.names, relative_std=relative_std,
-            observation_std=self.measurement_std)
+            observation_std=self.measurement_std,
+            innovation_gate_sigma=float(self.get_parameter("innovation_gate_sigma").value))
         Sofa.Simulation.init(self.root)
         self.cable = self.est.cable
         self.dt = self.root.dt.value
@@ -117,9 +129,17 @@ class CableEstimatorNode(Node):
             f"Optimus ROUKF identifying {list(self.names)} from {initial}, "
             f"prior relative std {relative_std}, observation std {self.measurement_std} m "
             f"(bounds={'none' if self.bounds is None else self.bounds})")
+        if "EI" in self.names and self.table_mode and not any(self.cfg["gravity"]):
+            L, ei = float(self.cfg["length_m"]), float(self.cfg["EI_Nm2"])
+            self.get_logger().warn(
+                "table setup without gravity: the only absolute force scales are the attachment "
+                f"springs (k_g L^3/EI = {float(self.cfg['grasp_stiffness']) * L ** 3 / ei:.3g}, "
+                f"k_theta L/EI = {float(self.cfg['grasp_angular_stiffness']) * L / ei:.3g}) and "
+                "inertia, so EI is identified relative to the modelled clamp compliance; on the "
+                "real cable calibrate the clamp or identify EI hanging under gravity")
 
         # --- ROS interfaces ---
-        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=TF_CACHE_S))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.frames_pub = self.create_publisher(PoseArray, "/cable/model/frames", 10)
         self.markers_pub = self.create_publisher(
@@ -130,12 +150,12 @@ class CableEstimatorNode(Node):
         self.rmse_pub = self.create_publisher(Float64, "/cable/marker_rmse", 10)
         self.status_pub = self.create_publisher(String, "/cable/estimator_status", 10)
 
-        self._observation = None
+        self._pending = deque(maxlen=64)   # observations in arrival order; oldest dropped if flooded
         self._truth_grasp_state = None
         self._sim_time = None
         self.create_subscription(
             CableMarkerArray, self.get_parameter("observation_topic").value,
-            self._on_observation, 10)
+            lambda msg: self._pending.append(msg), 10)   # rclpy inspects the signature: no builtin
         if self.table_mode:
             self.create_subscription(
                 GraspState, self.get_parameter("grasp_state_topic").value,
@@ -158,24 +178,20 @@ class CableEstimatorNode(Node):
             return None
         return dict(zip(names, bounds_for(path, names)))
 
-    def _on_observation(self, msg):
-        self._observation = msg
-
     def _on_grasp_state(self, msg):
         self._truth_grasp_state = msg.state
 
-    def _lookup(self, target, source=None, when=None):
-        """Pose of `target` in `source` (default base_frame) at time `when` [s]
-        (interpolated by the TF buffer; latest if None or unavailable)."""
-        for stamp in ((Time(seconds=when),) if when is not None else ()) + (Time(),):
-            try:
-                tfm = self.tf_buffer.lookup_transform(source or self.base_frame, target, stamp)
-            except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
-                    tf2_ros.ExtrapolationException):
-                continue
-            t, q = tfm.transform.translation, tfm.transform.rotation
-            return [t.x, t.y, t.z, q.x, q.y, q.z, q.w]
-        return None
+    def _lookup(self, target, when=None):
+        """Pose of `target` in base_frame at time `when` [s] (TF interpolation;
+        latest if None). None if TF has no answer for that time: the caller waits."""
+        try:
+            tfm = self.tf_buffer.lookup_transform(
+                self.base_frame, target, Time(seconds=when) if when is not None else Time())
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
+                tf2_ros.ExtrapolationException):
+            return None
+        t, q = tfm.transform.translation, tfm.transform.rotation
+        return [t.x, t.y, t.z, q.x, q.y, q.z, q.w]
 
     # ------------------------------------------------------------------
     def _ensure_fixture(self):
@@ -220,60 +236,62 @@ class CableEstimatorNode(Node):
         elif truth == GraspState.DETACHED and self.coupling.state != GraspState.DETACHED:
             self.coupling.request_detach()
 
-    def _observation_in_base(self, msg):
-        """Complete, ordered marker set in the model frame, or None."""
+    def _observation_in_base(self, msg, t_obs):
+        """Per-marker positions (NaN = not observed) and variances in the model
+        frame, or (None, None, reason). The frame transform is taken at the
+        observation stamp: a wrist camera moves between the stamp and now."""
         count = len(self.marker_s)
         points = np.full((count, 3), np.nan)
+        variances = np.full((count, 3), self.measurement_std ** 2)
         for marker in msg.markers:
             if marker.valid and 0 <= marker.id < count:
                 points[marker.id] = (marker.position.x, marker.position.y, marker.position.z)
-        if not np.all(np.isfinite(points)):
-            return None, f"incomplete observation ({int(np.isfinite(points[:, 0]).sum())}/{count} markers)"
+                diag = np.asarray(marker.covariance, dtype=float).reshape(3, 3).diagonal()
+                if np.all(np.isfinite(diag)) and np.all(diag > 0.0):
+                    variances[marker.id] = diag
+        n_valid = int(np.isfinite(points[:, 0]).sum())
+        if n_valid == 0:
+            return None, None, "no valid marker"
         frame = msg.header.frame_id
         if frame and frame != self.base_frame:
-            pose = self._lookup(frame)   # base_frame <- frame
+            pose = self._lookup(frame, when=t_obs)   # base_frame <- frame
             if pose is None:
-                return None, f"no TF {self.base_frame} <- {frame}"
+                return None, None, f"no TF {self.base_frame} <- {frame} at the observation stamp"
+            rotation = _rotate(pose[3:7], np.eye(3)).T      # p_base = rotation @ p + t
             points = _rotate(pose[3:7], points) + np.asarray(pose[:3])
-        return points, ""
+            variances = variances @ (rotation ** 2).T        # diagonal of R diag(v) R'
+        return points, variances, f"{n_valid}/{count} markers"
 
-    def _advance_to(self, t_target, msg, budget):
-        """Filter steps up to `t_target`; the step ending nearest to it consumes
-        `msg` (gated first). Returns (steps done, points used or None, reason)."""
-        points, reason, steps = None, "no observation", 0
-        while steps < budget and self._sim_time + self.dt <= t_target + 0.5 * self.dt:
-            t_step = self._sim_time + self.dt
-            if not self._drive_boundary(t_step):
-                break
-            last = self._sim_time + 2 * self.dt > t_target + 0.5 * self.dt
-            if last and msg is not None:
-                points, reason = self._gate_observation(msg)
-            self.est.set_observation(points if (last and points is not None) else None,
-                                     valid=last and points is not None)
-            self._sim.animate(self.root, self.dt)
-            self._sim_time = t_step
-            steps += 1
-        return steps, points, reason
+    def _step(self, observation=None):
+        """One filter step ending at _sim_time + dt with the boundary sampled
+        there; `observation` = (points, variances) or None for prediction only.
+        False (nothing done) when TF has no pose for that time yet."""
+        t = self._sim_time + self.dt
+        if not self._drive_boundary(t):
+            return False
+        if observation is None:
+            self.est.set_observation(None, valid=False)
+        else:
+            self.est.set_observation(*observation)
+        self._sim.animate(self.root, self.dt)
+        self._sim_time = t
+        return True
 
     # ------------------------------------------------------------------
-    def _gate_observation(self, msg):
-        """Complete observation in the model frame, unless it fails the innovation
-        gate against the current prediction (outlier / wrong frame)."""
-        points, reason = self._observation_in_base(msg)
-        if points is not None:
-            predicted = np.asarray(self.cable.marker_positions(), dtype=float)
-            gate = _rms_per_point(points, predicted)
-            if gate > self.max_innovation:
-                points, reason = None, f"innovation {gate:.3f} m > max_innovation_m {self.max_innovation}"
-        return points, reason
-
-    def _publish_estimate(self, stamp, corrected, reason, observation):
+    def _publish_estimate(self, stamp, observation, reason):
+        """`observation`: the per-marker points given to the step just done, None
+        when the step had none (or no step ran: stale message)."""
         estimates = self.est.estimates()
         std_devs = self.est.std_devs()
         log_var = self.est.log_variances()
-        innovation = self.est.innovation_rms() if corrected else float("nan")
-        rmse = (_rms_per_point(observation, self.cable.marker_positions())
-                if corrected else float("nan"))
+        corrected = observation is not None and self.est.correction_applied()
+        innovation, (nis, dof) = float("nan"), (float("nan"), 0)
+        if observation is not None:
+            innovation, (nis, dof) = self.est.innovation_rms(), self.est.nis()
+        rmse = float("nan")
+        if corrected:
+            mask = self.est.observed
+            rmse = _rms_per_point(observation[mask], np.asarray(self.cable.marker_positions())[mask])
 
         out_of_bounds = []
         for name, value in estimates.items():
@@ -298,9 +316,14 @@ class CableEstimatorNode(Node):
             f"[{v * math.exp(-2 * math.sqrt(max(log_var[n], 0.0))):.4g}, "
             f"{v * math.exp(2 * math.sqrt(max(log_var[n], 0.0))):.4g}])"
             for n, v in estimates.items())
-        status = ("corrected" if corrected else f"prediction only: {reason}") + f"; {fields}"
         if corrected:
-            status += f"; innovation {innovation:.4f} m; rmse {rmse:.4f} m"
+            status = f"corrected ({reason}); {fields}; innovation {innovation:.4f} m; rmse {rmse:.4f} m"
+        elif observation is not None and dof:
+            status = f"rejected by the innovation gate ({reason}); innovation {innovation:.4f} m; {fields}"
+        else:
+            status = f"prediction only: {reason}; {fields}"
+        if dof:
+            status += f"; NIS {nis:.1f} / {dof} dof"
         if out_of_bounds:
             status += "; OUT OF BOUNDS " + "; ".join(out_of_bounds)
             self.get_logger().warn("estimate outside the parameter envelope: " + "; ".join(out_of_bounds),
@@ -335,44 +358,51 @@ class CableEstimatorNode(Node):
         self.markers_pub.publish(markers)
 
     def _cycle(self):
-        now = self.get_clock().now()
-        if now.nanoseconds == 0:
-            return  # sim clock not up yet
-        now_s = now.nanoseconds * 1e-9
         if not self._ensure_fixture():
             return
-        if self._sim_time is None:
-            if self._lookup(self.grasp_frame) is None:
-                return
-            self._sim_time = now_s
-        stamp = now.to_msg()
-
-        # 1. step to the observation's own time and correct there (no latency bias),
-        # 2. then predict up to now. A stale observation (older than the model) is
-        #    applied at the next step; a future stamp is treated as now.
-        msg, self._observation = self._observation, None
         budget = self.max_steps
-        steps, points, reason = 0, None, "no observation"
-        if msg is not None:
-            t_obs = min(now_s, max(self._sim_time + self.dt,
-                                   Time.from_msg(msg.header.stamp).nanoseconds * 1e-9))
-            steps, points, reason = self._advance_to(t_obs, msg, budget)
-            budget -= steps
-            if steps == 0:
-                reason = "observation older than the model state"
-        more, _, _ = self._advance_to(now_s, None, budget)
-        steps += more
-        if self._sim_time < now_s - self.dt * self.max_steps:
-            self.get_logger().warn(
-                f"estimator {now_s - self._sim_time:.2f} s behind real time "
-                f"(max_steps_per_cycle={self.max_steps}); dropping the backlog",
-                throttle_duration_sec=5.0)
-            self._sim_time = now_s
-
-        self._publish_prediction(stamp)
-        if msg is not None:
-            self._publish_estimate(stamp, corrected=points is not None, reason=reason,
-                                   observation=points)
+        while self._pending and budget > 0:
+            msg = self._pending[0]
+            t_obs = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
+            if self._sim_time is None:
+                self._sim_time = t_obs - self.dt   # the first observation lands on step 1
+            n = round((t_obs - self._sim_time) / self.dt)   # step ending nearest the stamp
+            if n < 1:
+                self._pending.popleft()
+                self._publish_estimate(msg.header.stamp, None,
+                                       f"stale: stamped {self._sim_time - t_obs:.3f} s before the model time")
+                continue
+            points, reason, observation = None, "", None
+            if n <= budget:
+                points, variances, reason = self._observation_in_base(msg, t_obs)
+                observation = (points, variances) if points is not None else None
+            done = 0
+            while done < min(n, budget) and self._step(observation if done == n - 1 else None):
+                done += 1
+            budget -= done
+            if done < n:
+                t_next = self._sim_time + self.dt
+                if self.get_clock().now().nanoseconds * 1e-9 - t_next > TF_CACHE_S:
+                    # ponytail: the shape is not re-settled at the new boundary (one transient
+                    # pollutes the next corrections); upgrade = reset the scene and re-latch
+                    self.get_logger().error(
+                        f"boundary history at {t_next:.2f} s is older than the TF cache "
+                        f"({TF_CACHE_S:.0f} s): re-anchoring the model at the observation time")
+                    self._sim_time = t_obs - self.dt
+                    continue
+                break   # TF not there yet or budget spent: resume at the next cycle
+            self._pending.popleft()
+            self._publish_estimate(msg.header.stamp, points, reason)
+        if self._sim_time is None:
+            return
+        if self._pending:
+            behind = Time.from_msg(self._pending[-1].header.stamp).nanoseconds * 1e-9 - self._sim_time
+            if behind > self.dt * self.max_steps:
+                self.get_logger().warn(
+                    f"estimator {behind:.2f} s behind the observations "
+                    f"(max_steps_per_cycle={self.max_steps}, {len(self._pending)} queued)",
+                    throttle_duration_sec=5.0)
+        self._publish_prediction(Time(seconds=self._sim_time).to_msg())
 
 
 def main():

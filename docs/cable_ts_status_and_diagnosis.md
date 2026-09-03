@@ -110,8 +110,11 @@ deliberately wrong, so the identification is not circular.
 (`optimus_scene.build_optimus_cable`), parameters in log space
 (`transformParams=exponential`, the plan's `q_EI = log(EI)` / `EI = exp(q_EI)`
 adapter). Against the Cosserat truth plant with 2 mm marker noise, EI recovers
-**0.006 → 0.010 within 0.3 %** and GJ **0.012 → 0.008 within 1.5 %**, with a
-held-out trajectory check (`./scripts/run.sh cable_optimus_test`). The earlier
+**0.006 → 0.010 within 0.3 %** (also with every marker occluded 30 % of the
+time) and GJ **0.012 → 0.008 within 2 %** on the hanging, non-planar rod, with a
+held-out trajectory check (`./scripts/run.sh cable_optimus_test`). GJ is
+structurally unidentifiable in the planar table setup and refused there
+(optimus_port.md §7). The earlier
 in-process `LogParameterUKF` (same log-space adapter, analytic cantilever
 recovery within 5 %) stays as a library with its 21 tests.
 
@@ -186,9 +189,16 @@ ignores parameter changes and the filter gain is zero).
 `cable_estimator_node` runs on it; the in-process `LogParameterUKF` is a
 library only. Gates and numbers are in [optimus_port.md](optimus_port.md):
 `./scripts/run.sh optimus_smoke_test` (factory), `cable_optimus_test` (EI
-0.17 %, GJ 1.49 % recovery), `cable_optimus_pipeline` (headless end-to-end,
-EI 0.29 % in 60 s). The SOFA 21.12 parity oracle (gate C) is deferred for
-disk space; the recipe is in that document.
+0.29 %, GJ 1.95 % recovery, per-marker occlusion, NIS/dof ≈ 1),
+`cable_optimus_pipeline` (headless end-to-end with 20 % marker dropout, EI
+0.11 % in 60 s). The node keeps model time (steps to each observation's stamp,
+TF at the step time, stale observations dropped), weights markers by their
+`valid`/covariance, and gates on the filter's NIS after prediction. Limits
+(optimus_port.md §7): GJ is unidentifiable with `planar: true` and is refused;
+EI in the table setup is identified relative to the modelled clamp compliance
+(`k_θ L/EI = 3.5`), so on hardware calibrate the clamp or identify EI hanging
+under gravity. The SOFA 21.12 parity oracle (gate C) is deferred for disk
+space; the recipe is in that document.
 
 ### 3.3 Cosserat restore
 

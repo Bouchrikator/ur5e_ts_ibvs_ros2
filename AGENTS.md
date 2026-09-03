@@ -122,10 +122,14 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 - Optimus gates, in order and after any change to `third_party/`,
 	`optimus_scene.py`, `cosserat_model.py` or the estimator node:
 	`optimus_smoke_test` (factory, 2 s) -> `cable_optimus_test` (D/E/H/F/G
-	recovery gates, 15 s, `OPTIMUS_RECOVERY_TEST_PASSED`) ->
-	`cable_optimus_pipeline` (headless truth+markers+estimator, ~75 s,
-	`OPTIMUS_PIPELINE_TEST_PASSED`; refuses to run over a live cable stack).
-	Never loosen a gate threshold to make it pass; the numbers are the evidence.
+	recovery gates incl. per-marker occlusion and NIS consistency, ~20 s,
+	`OPTIMUS_RECOVERY_TEST_PASSED`) -> `cable_optimus_pipeline` (headless
+	truth+markers+estimator with 20 % marker dropout, ~75 s,
+	`OPTIMUS_PIPELINE_TEST_PASSED`; refuses to run over a live cable stack; run
+	it on an idle host, CPU starvation makes the truth plant drop steps and the
+	gate reject). Never loosen a gate threshold to make it pass; the numbers are
+	the evidence. Identifiability limits (GJ vs planar, EI vs the tip spring) are
+	in [docs/optimus_port.md](docs/optimus_port.md) §7.
 - Logs: controller CSVs in `~/ibvs_logs`; demo logs inside the container at
 	`/tmp/cable_sim.log`, `/tmp/servo.log`, `/tmp/relay.log`.
 

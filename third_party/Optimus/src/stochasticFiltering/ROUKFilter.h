@@ -103,6 +103,9 @@ public:
     Data< type::vector<FilterType> > d_variance;
     Data< type::vector<FilterType> > d_covariance;
     Data< bool > d_executeSimulationForCorrectedData;
+    Data< FilterType > d_innovationGateSigma;
+    Data< FilterType > d_nis;
+    Data< bool > d_correctionApplied;
 
 protected:
     StochasticStateWrapperBaseT<FilterType>* masterStateWrapper;
@@ -139,6 +142,7 @@ protected:
     void computeStarPrediction();
     void computeSimplexCorrection();
     void computeStarCorrection();
+    bool innovationAccepted(const EVectorX& vecZ, const EMatrixX& matWorkingPO, const EMatrixX& matUinvPost);
 
 public:
     ROUKFilter();

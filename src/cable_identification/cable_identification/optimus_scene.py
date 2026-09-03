@@ -20,9 +20,17 @@ Two contracts this module owns:
 * the boundary pose is written once per filter step by the caller and
   re-applied by the BoundaryController on every AnimateBeginEvent, i.e. once
   per sigma-point propagation, so every sigma point sees the same g[k] (§8.2).
+
+Observations are per marker: a marker that is not observed (NaN position or
+no finite positive variance) gets zero weight in R^-1, which is exactly the
+dropped row; no observed marker at all is a prediction-only step (§8.4). The
+innovation gate lives in the filter, after the sigma-point prediction:
+NIS = nu' S^-1 nu against the chi-square quantile for the observed coordinates.
 """
 
 import math
+
+import numpy as np
 
 # Physical parameter name -> BeamHookeLawForceField data field
 _PARAM_FIELD = {"EI": "EI", "GJ": "GI"}
@@ -78,7 +86,7 @@ class OptimusCable:
     """Handles of the estimator scene."""
 
     def __init__(self, cable, params, wrapper, roukf, obs_source, obs_manager,
-                 markers_mo, controller):
+                 markers_mo, controller, observation_std):
         self.cable = cable
         self.params = params            # {name: OptimParams} in state order
         self.wrapper = wrapper
@@ -87,6 +95,8 @@ class OptimusCable:
         self.obs_manager = obs_manager
         self.markers_mo = markers_mo
         self.controller = controller
+        self.observation_std = float(observation_std)
+        self.observed = np.zeros(len(cable.marker_indices), dtype=bool)   # markers of the pending observation
 
     @property
     def parameters(self):
@@ -101,13 +111,42 @@ class OptimusCable:
         with self.cable.base_mo.velocity.writeable() as v:
             v[:] = 0.0
 
-    def set_observation(self, points, valid=True):
-        """Observed marker positions (M x 3, same frame and order as the model
-        markers) consumed by the NEXT filter step. `valid=False` keeps the
-        previous points but makes the step prediction-only (protocol §8.4)."""
-        if valid:
-            self.obs_source.trackedObservations.value = [[float(c) for c in p] for p in points]
-        self.obs_source.trackedObservationsValid.value = bool(valid)
+    def set_observation(self, points, variances=None, valid=True):
+        """Observation consumed by the NEXT filter step: `points` (M x 3, model
+        frame and marker order; a NaN row = marker not observed), `variances`
+        (M x 3 [m^2], None = observation_std^2 everywhere; non-positive or
+        non-finite = coordinate not observed). Unobserved coordinates get zero
+        weight in R^-1. `valid=False` or nothing observed: prediction-only step."""
+        n = len(self.observed)
+        if not valid or points is None:
+            self.observed[:] = False
+            self.obs_source.trackedObservationsValid.value = False
+            return
+        pts = np.asarray(points, dtype=float).reshape(n, 3)
+        var = (np.full((n, 3), self.observation_std ** 2) if variances is None
+               else np.asarray(variances, dtype=float).reshape(n, 3))
+        coord_ok = np.isfinite(pts) & np.isfinite(var) & (var > 0.0)
+        self.observed[:] = coord_ok.all(axis=1)
+        if not self.observed.any():
+            self.obs_source.trackedObservationsValid.value = False
+            return
+        # a partially observed marker is dropped whole; the placeholder position is
+        # never weighted, it only keeps the innovation vector finite
+        var = np.where(self.observed[:, None], var, 0.0)
+        pts = np.where(self.observed[:, None], pts, 0.0)
+        self.obs_source.trackedObservations.value = pts.tolist()
+        self.obs_manager.observationVariances.value = var.ravel().tolist()
+        self.obs_source.trackedObservationsValid.value = True
+
+    def correction_applied(self):
+        """Whether the last filter step corrected the state (an observation was
+        given and passed the innovation gate)."""
+        return bool(self.roukf.correctionApplied.value)
+
+    def nis(self):
+        """(normalized innovation squared, observed coordinates) of the last step;
+        (nan, 0) when the step had no observation."""
+        return float(self.roukf.nis.value), int(3 * self.observed.sum())
 
     def estimates(self):
         """Physical values of the estimated parameters (after the last correction)."""
@@ -131,11 +170,12 @@ class OptimusCable:
                 zip(self.estimates().items(), self.log_variances().values())}
 
     def innovation_rms(self):
-        """RMS innovation per marker [m] of the last correction (nan if none yet)."""
-        innov = [float(x) for x in self.roukf.reducedInnovation.value]
-        if not innov:
+        """RMS innovation per observed marker [m] of the last observation (nan if
+        the last step had none)."""
+        innov = np.asarray(self.roukf.reducedInnovation.value, dtype=float)
+        if innov.size != 3 * len(self.observed) or not self.observed.any():
             return float("nan")
-        return math.sqrt(sum(x * x for x in innov) / (len(innov) // 3))
+        return float(np.sqrt(np.mean(np.sum(innov.reshape(-1, 3)[self.observed] ** 2, axis=1))))
 
 
 def lognormal_std(value, log_variance):
@@ -146,13 +186,15 @@ def lognormal_std(value, log_variance):
 
 
 def build_optimus_cable(root, cfg, parameters=("EI",), init_values=None, relative_std=0.30,
-                        observation_std=0.002, name="cable"):
+                        observation_std=0.002, innovation_gate_sigma=0.0, name="cable"):
     """Build cable + Optimus estimator under `root`, which must not carry an
     animation loop yet (FilteringAnimationLoop is added here).
 
     `parameters`: names among EI, GJ (one OptimParams each; the ROUKF reduced
     state concatenates them in this order). `init_values`: {name: value} or a
-    sequence aligned with `parameters`; defaults to the config values."""
+    sequence aligned with `parameters`; defaults to the config values.
+    `innovation_gate_sigma`: chi-square gate on the NIS after prediction, in
+    sigmas (0: off)."""
     from cable_identification import cosserat_model as cm
 
     if isinstance(parameters, str):
@@ -163,6 +205,11 @@ def build_optimus_cable(root, cfg, parameters=("EI",), init_values=None, relativ
     for p in parameters:
         if p not in _PARAM_FIELD:
             raise ValueError(f"unsupported parameter {p!r}; one of {sorted(_PARAM_FIELD)}")
+    if "GJ" in parameters and cfg.get("planar"):
+        raise ValueError(
+            "GJ is structurally unidentifiable with planar=true: the planar constraint fixes "
+            "the torsional strain (kappa_x = 0), so dV/dGJ = 0 and the markers carry no GJ "
+            "information; identify GJ with planar=false under a torsional excitation")
     defaults = {"EI": cfg["EI_Nm2"], "GJ": cfg["GJ_Nm2"]}
     if init_values is None:
         init_values = {p: defaults[p] for p in parameters}
@@ -188,7 +235,8 @@ def build_optimus_cable(root, cfg, parameters=("EI",), init_values=None, relativ
     root.addObject("FilteringAnimationLoop", name="filterLoop", verbose=False)
     roukf = root.addObject(
         "ROUKFilter", name="roukf", sigmaTopology="Simplex", useBlasToMultiply=False,
-        observationErrorVarianceType="inverse", verbose=False)
+        observationErrorVarianceType="inverse", innovationGateSigma=float(innovation_gate_sigma),
+        verbose=False)
 
     cable = cm.build_cable(root, cfg, name=name)
     solver = cable.solver_node
@@ -232,4 +280,4 @@ def build_optimus_cable(root, cfg, parameters=("EI",), init_values=None, relativ
         stateWrapper=wrapper.getLinkPath(), verbose=False)
 
     return OptimusCable(cable, params, wrapper, roukf, obs_source, obs_manager, markers_mo,
-                        controller)
+                        controller, observation_std)

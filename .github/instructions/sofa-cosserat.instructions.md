@@ -57,7 +57,17 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
 - ROUKF needs positions in the state (`estimatePosition=True`); the wrapper needs the
   explicit `mstate` path (several MOs live under the cable node).
 - No valid observation for a step = prediction only (`set_observation(..., valid=False)`),
-  never a zero-filled observation.
+  never a zero-filled observation. Missing markers = NaN rows: they get zero weight in
+  R^-1 (`observationVariances`), the correction uses the observed ones (dof = 3 x observed).
+- The innovation gate is the filter's NIS test after prediction (`innovationGateSigma`,
+  node `innovation_gate_sigma` = 3); do not add a Python RMS gate before the step, it
+  compares the observation with the state one dt earlier.
+- The estimator node owns model time: step to each observation's stamp, TF at the step
+  time with no fallback to "latest", drop stale observations, never jump `_sim_time`
+  without stepping. Time-consistency bugs here bias EI (9 % measured).
+- GJ with `planar: true` is refused (kappa_x = 0, zero information). EI in the table
+  setup is identified relative to the tip spring `k_theta L/EI = 3.5`; for hardware
+  identify EI hanging under gravity or calibrate the clamp (optimus_port.md §7).
 - The plain plant applies a base pose one solve late; when comparing truth and
   estimator in one process call `CableHandles.refresh_mapping()` after `set_base_pose`.
   Do not change the plant's default (certified artifacts depend on it).

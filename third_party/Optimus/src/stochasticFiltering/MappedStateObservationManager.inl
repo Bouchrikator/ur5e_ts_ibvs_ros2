@@ -242,6 +242,8 @@ bool MappedStateObservationManager<FilterType, DataTypes1, DataTypes2>::hasObser
             }
         }
     }
+    // per-step weights: which coordinates of this observation carry information
+    this->updateErrorVariance();
     return (true);
 }
 

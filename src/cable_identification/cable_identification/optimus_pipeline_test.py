@@ -4,11 +4,13 @@
 Everything but the robot: the fixture TF is the URDF's table clamp, the gripper
 TF starts at the straight cable tip (1 cm above the table, inside the attach
 window), the truth is asked to attach, and the gripper then drags the tip along
-a slow tangential/normal sweep inside the reachable disk. The estimator starts
-at cable_estimator_initial.yaml (EI 0.006) and must approach cable_truth.yaml
+a slow tangential/normal sweep inside the reachable disk. The synthetic markers
+carry 2 mm noise and every marker is occluded independently 20 % of the time
+(per-marker weights in the estimator). The estimator starts at
+cable_estimator_initial.yaml (EI 0.006) and must approach cable_truth.yaml
 (EI 0.010) using only the published topics.
 
-    ros2 run cable_identification optimus_pipeline_test [--duration 90] [--tolerance 0.05]
+    ros2 run cable_identification optimus_pipeline_test [--duration 90] [--tolerance 0.05] [--dropout 0.2]
 """
 
 import argparse
@@ -118,6 +120,8 @@ def main(argv=None):
     ap.add_argument("--duration", type=float, default=90.0, help="seconds after attach")
     ap.add_argument("--tolerance", type=float, default=0.05, help="relative EI tolerance")
     ap.add_argument("--noise", type=float, default=0.002)
+    ap.add_argument("--dropout", type=float, default=0.2,
+                    help="per-marker occlusion probability of the synthetic observations")
     args = ap.parse_args(argv)
 
     from ament_index_python.packages import get_package_share_directory
@@ -137,7 +141,8 @@ def main(argv=None):
         spawn(["ros2", "run", "sofa_ros2_adapter", "cable_sofa_node", "--ros-args",
                "-p", "role:=truth", "-p", f"cable_config:={truth_cfg}", "-r", "__node:=cable_truth"]),
         spawn(["ros2", "run", "cable_perception", "synthetic_marker_node", "--ros-args",
-               "-p", "truth_topic:=/cable/truth/markers", "-p", f"noise_std_m:={args.noise}"]),
+               "-p", "truth_topic:=/cable/truth/markers", "-p", f"noise_std_m:={args.noise}",
+               "-p", f"dropout_probability:={args.dropout}"]),
         spawn(["ros2", "run", "sofa_ros2_adapter", "cable_estimator_node", "--ros-args",
                "-p", f"cable_config:={est_cfg}", "-p", "identified_parameters:=[EI]",
                "-p", f"measurement_std_m:={args.noise}", "-p", "update_rate_hz:=8.0"]),
@@ -173,10 +178,12 @@ def main(argv=None):
                         f"({t:.0f}, {v:.5f})" for t, v in est[::max(1, len(est) // 12), :2]))
                     final = float(np.median(est[-10:, 1]))
                     err = abs(final - TRUE_EI) / TRUE_EI
-                    corrected = est[np.isfinite(est[:, 3])]
+                    corrected = est[np.isfinite(est[:, 4])]   # marker_rmse is set only when corrected
+                    rejected = int(np.sum(np.isfinite(est[:, 3]) & ~np.isfinite(est[:, 4])))
                     print(f"final EI (median of last 10) = {final:.6f}, truth {TRUE_EI}, error {100 * err:.2f} %; "
-                          f"{len(corrected)}/{len(est)} steps corrected; last std {est[-1, 2]:.3g}; "
-                          f"median innovation {1e3 * np.nanmedian(corrected[:, 3]) if len(corrected) else float('nan'):.2f} mm")
+                          f"{len(corrected)}/{len(est)} steps corrected, {rejected} rejected by the gate; "
+                          f"last std {est[-1, 2]:.3g}; median innovation "
+                          f"{1e3 * np.nanmedian(corrected[:, 3]) if len(corrected) else float('nan'):.2f} mm")
                     ok = err < args.tolerance and len(corrected) > 10
     finally:
         node.destroy_node()

@@ -82,6 +82,9 @@ ROUKFilter<FilterType>::ROUKFilter()
     , d_variance( initData(&d_variance, "variance", "actual variance of state estimated by the filter" ) )
     //, d_covariance( initData(&d_covariance, "covariance", "actual co-variance of state estimated by the filter" ) )
     , d_executeSimulationForCorrectedData( initData(&d_executeSimulationForCorrectedData, false, "executeSimulationForCorrectedData", "if true execute last simulation for corrected data" ) )
+    , d_innovationGateSigma( initData(&d_innovationGateSigma, FilterType(0.0), "innovationGateSigma", "skip the correction when the normalized innovation squared z'S^-1 z exceeds the chi-square quantile at this many sigmas for the number of observed coordinates (0: no gate)" ) )
+    , d_nis( initData(&d_nis, std::numeric_limits<FilterType>::quiet_NaN(), "nis", "normalized innovation squared of the last observation (NaN: no observation this step)" ) )
+    , d_correctionApplied( initData(&d_correctionApplied, false, "correctionApplied", "whether the last step corrected the state" ) )
 {    
     this->reducedOrder.setValue(true);
 }
@@ -90,6 +93,33 @@ ROUKFilter<FilterType>::ROUKFilter()
 
 template <class FilterType>
 ROUKFilter<FilterType>::~ROUKFilter() {}
+
+
+
+template <class FilterType>
+bool ROUKFilter<FilterType>::innovationAccepted(const EVectorX& vecZ, const EMatrixX& matWorkingPO, const EMatrixX& matUinvPost)
+{
+    // NIS = z' S^-1 z, S = HL U^-1 (HL)' + R with U^-1 = I after the resampling. Woodbury:
+    // z' R^-1 z - w' U+^-1 w, w = (HL)' R^-1 z (= matWorkingPO z), U+ = I + (HL)' R^-1 HL (the
+    // posterior, already inverted). Unobserved coordinates (R^-1 = 0) drop out of both terms.
+    const EMatrixX& matRinv = observationManager->getErrorVarianceInverse();
+    EVectorX w = matWorkingPO * vecZ;
+    const Type nis = vecZ.dot(matRinv * vecZ) - w.dot(matUinvPost * w);
+    d_nis.setValue(nis);
+
+    const Type z = d_innovationGateSigma.getValue();
+    const Type dof = Type(observationManager->getObservedSize());
+    if (z <= Type(0) || dof <= Type(0))
+        return true;
+    // Wilson-Hilferty chi-square quantile for dof degrees of freedom
+    const Type a = Type(2) / (Type(9) * dof);
+    const Type threshold = dof * std::pow(Type(1) - a + z * std::sqrt(a), 3);
+    if (nis > threshold) {
+        PRNW("correction rejected: NIS " << nis << " > " << threshold << " (" << dof << " observed coordinates, " << z << " sigma)");
+        return false;
+    }
+    return true;
+}
 
 
 
@@ -402,6 +432,8 @@ void ROUKFilter<FilterType>::computeSimplexCorrection()
         return;
     }
 
+    d_nis.setValue(std::numeric_limits<FilterType>::quiet_NaN());
+    d_correctionApplied.setValue(false);
     if (observationManager->hasObservation(this->actualTime)) {
         EVectorX vecXCol;
         EVectorX vecZCol(observationSize), vecZ(observationSize);
@@ -421,6 +453,12 @@ void ROUKFilter<FilterType>::computeSimplexCorrection()
         }
         sofa::helper::AdvancedTimer::stepEnd("Innovation");
         //asumEVec("correction accumInnov",vecZ);
+        {
+            helper::WriteAccessor<Data <type::vector<FilterType> > > innov = d_reducedInnovation;
+            innov.resize(observationSize);
+            for (size_t index = 0; index < observationSize; index++)
+                innov[index] = vecZ[index];
+        }
 
         EMatrixX matHLtrans(reducedStateSize, observationSize);
         matHLtrans = alphaVar*matItrans.transpose()*matZItrans;
@@ -445,7 +483,13 @@ void ROUKFilter<FilterType>::computeSimplexCorrection()
             matWorkingPO = matHLtrans * matR.inverse();
         }        
         matTemp = EMatrixX::Identity(matUinv.rows(), matUinv.cols()) + matWorkingPO * matHLtrans.transpose();
-        matUinv = matTemp.inverse();
+        EMatrixX matUinvPost = matTemp.inverse();
+        if (!innovationAccepted(vecZ, matWorkingPO, matUinvPost)) {
+            sofa::helper::AdvancedTimer::stepEnd("ROUKFSimplexCorrection");
+            return;   // prediction-only: U and the state stay as predicted
+        }
+        matUinv = matUinvPost;
+        d_correctionApplied.setValue(true);
 
         EVectorX reducedInnovation(reducedStateSize);
         reducedInnovation = Type(-1.0) * matUinv*matWorkingPO*vecZ;
@@ -505,7 +549,6 @@ void ROUKFilter<FilterType>::computeSimplexCorrection()
         helper::WriteAccessor<Data <type::vector<FilterType> > > redState = reducedState;
         helper::WriteAccessor<Data <type::vector<FilterType> > > redVar = reducedVariance;
         helper::WriteAccessor<Data <type::vector<FilterType> > > redCovar = reducedCovariance;
-        helper::WriteAccessor<Data <type::vector<FilterType> > > innov = d_reducedInnovation;
         helper::WriteAccessor<Data <type::vector<FilterType> > > mstate = d_state;
         helper::WriteAccessor<Data <type::vector<FilterType> > > var = d_variance;
         helper::WriteAccessor<Data <type::vector<FilterType> > > covar = d_covariance;
@@ -514,7 +557,6 @@ void ROUKFilter<FilterType>::computeSimplexCorrection()
         redVar.resize(reducedStateSize);
         size_t numCovariances = (reducedStateSize*(reducedStateSize-1))/2;
         redCovar.resize(numCovariances);
-        innov.resize(observationSize);
         mstate.resize(stateSize);
         var.resize(stateSize);
         numCovariances = (stateSize*(stateSize-1))/2;
@@ -535,9 +577,6 @@ void ROUKFilter<FilterType>::computeSimplexCorrection()
             for (size_t j = i+1; j < stateSize; j++) {
                 covar[gli++] = covarianceMatrix(i,j);
             }
-        }
-        for (size_t index = 0; index < observationSize; index++) {
-            innov[index] = vecZ[index];
         }
 
         /*char fileName[100];
@@ -583,6 +622,8 @@ void ROUKFilter<FilterType>::computeStarCorrection()
         return;
     }
 
+    d_nis.setValue(std::numeric_limits<FilterType>::quiet_NaN());
+    d_correctionApplied.setValue(false);
     if (observationManager->hasObservation(this->actualTime)) {
         EVectorX vecXCol;
         EVectorX vecZCol(observationSize), vecZ(observationSize);
@@ -600,6 +641,12 @@ void ROUKFilter<FilterType>::computeStarCorrection()
             matZItrans.row(i) = vecZCol;
         }
         sofa::helper::AdvancedTimer::stepEnd("Innovation");
+        {
+            helper::WriteAccessor<Data <type::vector<FilterType> > > innov = d_reducedInnovation;
+            innov.resize(observationSize);
+            for (size_t index = 0; index < observationSize; index++)
+                innov[index] = vecZ[index];
+        }
         //std::cout << "matZItrans-: " << matZItrans << std::endl;
         //std::cout << "vecZ: " << vecZ.transpose() << std::endl;
 
@@ -663,7 +710,7 @@ void ROUKFilter<FilterType>::computeStarCorrection()
 
         //std::cout << "workingMatrixRP: " << workingMatrixRP << std::endl;
         matTemp = EMatrixX::Identity(matUinv.rows(), matUinv.cols()) + alphaVar * matItrans.transpose() * workingMatrixRP;
-        matUinv = matTemp.inverse();
+        EMatrixX matUinvPost = matTemp.inverse();
 
         // Compute {HL}_{n+1}
         workingMatrixRR2 = EMatrixX::Identity(workingMatrixRR2.rows(), workingMatrixRR2.cols()) + matDv * workingMatrixRR;
@@ -688,6 +735,12 @@ void ROUKFilter<FilterType>::computeStarCorrection()
             working_matrix_PO = matHLtrans * matR.inverse();
             //std::cout << "matR: \n" << matR << std::endl;
         }
+        if (!innovationAccepted(vecZ, working_matrix_PO, matUinvPost)) {
+            sofa::helper::AdvancedTimer::stepEnd("ROUKFStarCorrection");
+            return;   // prediction-only: U and the state stay as predicted
+        }
+        matUinv = matUinvPost;
+        d_correctionApplied.setValue(true);
         EMatrixX errorVarProj = masterStateWrapper->getStateErrorVarianceProjector();
 
         //std::cout << "errorVarProj: \n" << errorVarProj.transpose() << std::endl;
@@ -726,13 +779,11 @@ void ROUKFilter<FilterType>::computeStarCorrection()
         helper::WriteAccessor<Data <type::vector<FilterType> > > redState = reducedState;
         helper::WriteAccessor<Data <type::vector<FilterType> > > redVar = reducedVariance;
         helper::WriteAccessor<Data <type::vector<FilterType> > > redCovar = reducedCovariance;
-        helper::WriteAccessor<Data <type::vector<FilterType> > > innov = d_reducedInnovation;
 
         redState.resize(reducedStateSize);
         redVar.resize(reducedStateSize);
         size_t numCovariances = (reducedStateSize*(reducedStateSize-1))/2;
         redCovar.resize(numCovariances);
-        innov.resize(observationSize);
 
         size_t gli = 0;
         for (size_t i = 0; i < reducedStateSize; i++) {
@@ -741,9 +792,6 @@ void ROUKFilter<FilterType>::computeStarCorrection()
             for (size_t j = i+1; j < reducedStateSize; j++) {
                 redCovar[gli++] = reducedCovarianceMatrix(i,j);
             }
-        }
-        for (size_t index = 0; index < observationSize; index++) {
-            innov[index] = vecZ[index];
         }
 
         //char fileName[100];

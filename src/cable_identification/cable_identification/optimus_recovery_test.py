@@ -12,9 +12,18 @@ stiffnesses through SOFA:
      gripper pose (one BoundaryController application per propagation, §8.2).
   F  synthetic EI recovery: truth 0.010 N.m^2, start 0.006, marker noise 2 mm;
      < 5 % final error, finite positive shrinking variance, innovation down on
-     the informative window, held-out trajectory. Run twice: an observation at
-     every step, and one every 3 steps (prediction-only steps in between).
+     the informative window, held-out trajectory, NIS consistent with the
+     modelled covariance. Run three times: an observation at every step, one
+     every 3 steps (prediction-only steps in between), and every marker
+     occluded independently with probability 0.3 (per-marker weights).
   G  GJ recovery under a torsional excitation (truth 0.008, start 0.012).
+     What G proves: two instances of the same rod model, torsion of the sagging
+     rod moves the centerline, and the filter recovers GJ from centerline
+     markers with a held-out trajectory. What it does NOT prove: that GJ is
+     observable on the real cable, where a circular isotropic cross-section can
+     twist without moving the centerline; that needs an orientation (or wrist
+     torque) measurement. In the planar table configuration GJ is structurally
+     unidentifiable (kappa_x = 0) and build_optimus_cable refuses it.
 
     ros2 run cable_identification optimus_recovery_test [--steps N] [--seed S]
 """
@@ -30,6 +39,7 @@ TRUTH = {"EI": 0.010, "GJ": 0.008}     # cable_truth.yaml
 START = {"EI": 0.006, "GJ": 0.012}     # cable_estimator_initial.yaml
 OBS_STD_M = 0.002                       # protocol Gate F
 RELATIVE_STD = 0.30                     # 30 % initial relative uncertainty (§6.3)
+GATE_SIGMA = 3.0                        # NIS gate after prediction (node default)
 IDENTITY_Q = [0.0, 0.0, 0.0, 1.0]
 
 
@@ -100,7 +110,8 @@ def build_estimator(cfg, parameters, start):
     cm.prepare_root(root, cfg, animation_loop=None)
     est = osc.build_optimus_cable(root, cfg, parameters=parameters,
                                   init_values={p: start[p] for p in parameters},
-                                  relative_std=RELATIVE_STD, observation_std=OBS_STD_M)
+                                  relative_std=RELATIVE_STD, observation_std=OBS_STD_M,
+                                  innovation_gate_sigma=GATE_SIGMA)
     Sofa.Simulation.init(root)
     return root, est
 
@@ -185,8 +196,9 @@ def gate_e_force_ratio(cfg, parameter):
     }
 
 
-def run_filter(cfg, parameters, pose_fn, steps, rng, obs_every=1):
-    """Truth plant + Optimus estimator in lock-step. Returns per-step traces."""
+def run_filter(cfg, parameters, pose_fn, steps, rng, obs_every=1, dropout=0.0):
+    """Truth plant + Optimus estimator in lock-step. Returns per-step traces.
+    `dropout`: each marker is occluded independently with this probability."""
     import Sofa.Simulation
 
     truth_root, truth = build_truth(cfg, TRUTH)
@@ -197,13 +209,14 @@ def run_filter(cfg, parameters, pose_fn, steps, rng, obs_every=1):
     init_state = np.array(est.roukf.state.value, dtype=float)
     init_var = est.log_variances()
     est_trace = {p: [] for p in parameters}
-    innovations, variances, tracking = [], [], []
+    innovations, variances, tracking, nis_ratio, rejected, observed = [], [], [], [], 0, 0
     for k in range(steps):
         pose = pose_fn(k * dt)
         drive(truth, truth_root, pose)
         Sofa.Simulation.animate(truth_root, dt)
         clean = np.array(truth.marker_positions())
         obs = clean + rng.normal(0.0, OBS_STD_M, (7, 3))
+        obs[rng.random(7) < dropout] = np.nan   # occluded markers
 
         # u[k] drives k -> k+1 for both plants; the observation is y[k+1] (§8.3)
         est.set_boundary_pose(pose)
@@ -220,11 +233,18 @@ def run_filter(cfg, parameters, pose_fn, steps, rng, obs_every=1):
         innovations.append(est.innovation_rms())
         variances.append(est.log_variance(parameters[0]))
         tracking.append(marker_rmse(est.cable.marker_positions(), clean))
+        nis, dof = est.nis()
+        nis_ratio.append(nis / dof if dof else float("nan"))
+        observed += bool(dof)
+        rejected += bool(dof) and not est.correction_applied()
     return {
         "est": {p: np.array(v) for p, v in est_trace.items()},
         "innovation": np.array(innovations),
         "variance": np.array(variances),
         "tracking": np.array(tracking),
+        "nis_ratio": np.array(nis_ratio),
+        "observed": observed,
+        "rejected": rejected,
         "init_state": init_state,
         "init_var": init_var,
         "final_state": np.array(est.roukf.state.value, dtype=float),
@@ -290,6 +310,15 @@ def main(argv=None):
               post <= max(pre, 1.2 * floor),
               f"before convergence {1e3 * pre:.2f} mm -> last quarter {1e3 * post:.2f} mm "
               f"(noise floor {1e3 * floor:.2f} mm)")
+        ratio = run["nis_ratio"]
+        print("      NIS/dof per quarter: " + ", ".join(
+            f"{np.nanmean(ratio[i * q:(i + 1) * q]):.2f}" for i in range(4)))
+        post_ratio = float(np.nanmean(ratio[-max(1, steps // 4):]))
+        check(f"{tag}: NIS consistent with the modelled covariance after convergence "
+              f"and the {GATE_SIGMA:g}-sigma gate rejects almost nothing",
+              post_ratio < 2.0 and run["rejected"] <= 0.02 * run["observed"],
+              f"last-quarter mean NIS/dof {post_ratio:.2f} (1 = consistent), "
+              f"{run['rejected']}/{run['observed']} observations rejected")
         val_true = rollout(cfg, TRUTH, validation_pose, steps)
         val_est = rollout(cfg, {**TRUTH, parameter: final}, validation_pose, steps)
         val_start = rollout(cfg, {**TRUTH, parameter: start}, validation_pose, steps)
@@ -323,6 +352,14 @@ def main(argv=None):
             rejected.append(bad)
     check("D: zero/negative/non-finite initial values rejected", len(rejected) == 4,
           f"rejected {rejected}")
+    try:
+        import Sofa.Core
+        osc.build_optimus_cable(Sofa.Core.Node("planar"), {**cfg, "planar": True}, parameters=("GJ",))
+        planar_gj = "accepted"
+    except ValueError as exc:
+        planar_gj = f"rejected: {exc}"
+    check("D: GJ refused in the planar configuration (kappa_x = 0, dV/dGJ = 0)",
+          planar_gj.startswith("rejected"), planar_gj[:80])
 
     # --- Gate E: Cosserat sensitivity through OptimParams -> Data link -> tracker
     for parameter, label in (("EI", "bending"), ("GJ", "torsion")):
@@ -359,6 +396,10 @@ def main(argv=None):
     # --- Gate F bis: observation every 3rd step (prediction-only steps, §8.4)
     run3 = run_filter(cfg, ("EI",), flexion_pose, steps, rng, obs_every=3)
     recovery_gates("F/3", "EI", run3)
+
+    # --- Gate F ter: every marker occluded independently 30 % of the time
+    runo = run_filter(cfg, ("EI",), flexion_pose, steps, rng, dropout=0.3)
+    recovery_gates("F/occl", "EI", runo)
 
     # --- Gate G: GJ under torsional excitation
     rung = run_filter(cfg, ("GJ",), torsion_pose, steps, rng)

@@ -24,6 +24,8 @@
 #include "initOptimusPlugin.h"
 #include <sofa/simulation/Node.h>
 #include <Eigen/Dense>
+#include <cmath>
+#include <limits>
 
 
 
@@ -89,6 +91,7 @@ public:
 
     Data<FilterType> observationStdev;
     Data<bool> initialiseObservationsAtFirstStep;
+    Data< type::vector<FilterType> > d_observationVariances;
 
 protected:
     size_t observationSize;               /// size of the observation vector
@@ -101,6 +104,7 @@ public:
         :Inherit()
         , observationStdev( initData(&observationStdev, FilterType(0.0), "observationStdev", "standard deviation in observations") )
         , initialiseObservationsAtFirstStep( initData(&initialiseObservationsAtFirstStep, false, "initialiseObservationsAtFirstStep", "if true initialise component during first iteration") )
+        , d_observationVariances( initData(&d_observationVariances, "observationVariances", "per-coordinate observation variances for the current step (observationSize entries); a non-positive or non-finite entry marks a coordinate that is not observed this step (zero weight in the correction). Empty: observationStdev^2 everywhere") )
     {}
     ~ObservationManager() {}
 
@@ -115,6 +119,15 @@ public:
         return observationSize;
     }
 
+    /// number of coordinates carrying information this step (R^-1 diagonal > 0)
+    size_t getObservedSize() const
+    {
+        size_t n = 0;
+        for (long i = 0; i < errorVarianceInverse.rows(); i++)
+            n += errorVarianceInverse(i, i) > FilterType(0);
+        return n;
+    }
+
     virtual EMatrixX& getErrorVariance()
     {
         return errorVariance;
@@ -123,6 +136,32 @@ public:
     virtual EMatrixX& getErrorVarianceInverse()
     {
         return errorVarianceInverse;
+    }
+
+    /// R and R^-1 from observationVariances, or observationStdev when it is empty.
+    /// An unobserved coordinate has zero weight in R^-1, i.e. it drops out of the
+    /// correction exactly; R keeps a huge finite entry so the matrix stays invertible.
+    void updateErrorVariance()
+    {
+        const type::vector<FilterType>& var = d_observationVariances.getValue();
+        if (var.empty()) {
+            FilterType obsStDev = observationStdev.getValue();
+            errorVarianceValue = obsStDev * obsStDev;
+            errorVariance = EMatrixX::Identity(observationSize, observationSize) * errorVarianceValue;
+            errorVarianceInverse = EMatrixX::Identity(observationSize, observationSize) / errorVarianceValue;
+            return;
+        }
+        if (var.size() != observationSize) {
+            PRNE("observationVariances has " << var.size() << " entries, observation size is " << observationSize);
+            return;
+        }
+        errorVariance.setZero(observationSize, observationSize);
+        errorVarianceInverse.setZero(observationSize, observationSize);
+        for (size_t i = 0; i < observationSize; i++) {
+            const bool observed = std::isfinite(var[i]) && var[i] > FilterType(0);
+            errorVariance(i, i) = observed ? var[i] : FilterType(1) / std::numeric_limits<FilterType>::epsilon();
+            errorVarianceInverse(i, i) = observed ? FilterType(1) / var[i] : FilterType(0);
+        }
     }
 
     void init() override
@@ -150,11 +189,7 @@ public:
         if (observationSize == 0) {
             PRNE("No observations available, cannot allocate the structures!");
         }
-
-        FilterType obsStDev = observationStdev.getValue();
-        errorVarianceValue = obsStDev * obsStDev;
-        errorVariance = EMatrixX::Identity(observationSize, observationSize) * errorVarianceValue;
-        errorVarianceInverse = EMatrixX::Identity(observationSize, observationSize) / errorVarianceValue;
+        updateErrorVariance();
     }
 };
 
