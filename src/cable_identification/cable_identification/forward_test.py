@@ -96,6 +96,27 @@ def main():
                     err < 0.001 and base_ok,
                     f"tip={['%.3f' % v for v in tip_t]} err={err*1000:.2f} mm base_ok={base_ok}"))
 
+    # 7: runSofa scene order — createScene builds the coupling BEFORE
+    # Simulation.init, so nothing it touches may reinit an uninitialized
+    # component (that segfaults the GUI, it does not raise).
+    import Sofa.Core
+    import Sofa.Simulation
+    from cable_identification import cosserat_model as cm
+    from cable_identification.coupling import GraspCoupling
+    cfg = cm.load_config()
+    cfg.update(grasp_tip=True, gravity=[0.0, 0.0, 0.0])
+    root = Sofa.Core.Node("root")
+    cm.prepare_root(root, cfg)
+    cable = cm.build_cable(root, cfg)
+    coupling = GraspCoupling(cable)          # pre-init, as in cable_scene.createScene
+    Sofa.Simulation.init(root)
+    _run(root, 0.1)
+    released = float(cable.grasp_spring.findData("stiffness").value[0]) == 0.0
+    results.append(("coupling built before Simulation.init (runSofa order)",
+                    released and coupling.state == 0,
+                    f"spring stiffness {cable.grasp_spring.findData('stiffness').value[0]}, "
+                    f"state {coupling.state}, stepped 0.1 s"))
+
     print()
     failed = 0
     for name, ok, detail in results:

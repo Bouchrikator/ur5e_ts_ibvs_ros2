@@ -1,0 +1,17 @@
+--- a/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.inl
++++ b/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.inl
+@@ -70,10 +70,12 @@
+ 
+     delete matLoader;
+ 
+-    Inherit::init();
+-
+     if (d_rotation.getValue()[0] != 0.0 || d_rotation.getValue()[1] != 0.0 || d_rotation.getValue()[2] != 0.0)
+         applyRotation(d_rotation.getValue()[0], d_rotation.getValue()[1], d_rotation.getValue()[2]);
++
++    // Assembled solvers need the same Jacobian as applyJ/applyJT.
++    m_J.compressedMatrix = m_modesEigen.sparseView(0.0, 0.0);
++    Inherit::init();
+ }
+ 
+ //Apply Rotation from Euler angles (in degree!)

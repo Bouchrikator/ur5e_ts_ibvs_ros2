@@ -1,0 +1,38 @@
+--- a/python/mor/reduction/__init__.py
++++ b/python/mor/reduction/__init__.py
+@@ -7,4 +7,9 @@
+ """
+ __all__=["reduceModel","script","container"]
+ 
+-from mor.reduction.reduceModel import ReduceModel
+\ No newline at end of file
++def __getattr__(name):
++    # The standalone POD reader does not need sofa-launcher or GUI helpers.
++    if name == "ReduceModel":
++        from mor.reduction.reduceModel import ReduceModel
++        return ReduceModel
++    raise AttributeError(name)
+--- a/python/mor/reduction/script/__init__.py
++++ b/python/mor/reduction/script/__init__.py
+@@ -14,8 +14,17 @@
+             "ReadStateFilesAndComputeModes",
+             "prepareStateFiletoDisplayModes"]
+ 
+-from mor.reduction.script.ConvertRIDinActiveNodes import convertRIDinActiveNodes
+-from mor.reduction.script.ReadGieFileAndComputeRIDandWeights import readGieFileAndComputeRIDandWeights
+ from mor.reduction.script.ReadStateFilesAndComputeModes import readStateFilesAndComputeModes
+-from mor.reduction.script.ReadMechanicalMatricesAndComputeVibrationModes import readMechanicalMatricesAndComputeVibrationModes
+-from mor.reduction.script.ReadLambdaFilesAndComputeNNMF import readLambdaFilesAndComputeNNMF
++
++
++def __getattr__(name):
++    from importlib import import_module
++    modules = {
++        "convertRIDinActiveNodes": "ConvertRIDinActiveNodes",
++        "readGieFileAndComputeRIDandWeights": "ReadGieFileAndComputeRIDandWeights",
++        "readMechanicalMatricesAndComputeVibrationModes": "ReadMechanicalMatricesAndComputeVibrationModes",
++        "readLambdaFilesAndComputeNNMF": "ReadLambdaFilesAndComputeNNMF",
++    }
++    if name in modules:
++        return getattr(import_module(__name__ + "." + modules[name]), name)
++    raise AttributeError(name)

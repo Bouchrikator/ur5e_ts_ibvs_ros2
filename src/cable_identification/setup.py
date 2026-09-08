@@ -13,7 +13,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
         ("share/" + package_name + "/sofa",
-         ["cable_identification/cable_scene.py"]),
+            ["cable_identification/cable_scene.py", "cable_identification/cable_mor_training_scene.py"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -26,6 +26,7 @@ setup(
         "console_scripts": [
             "cable_plugin_test = cable_identification.plugin_test:main",
             "cable_forward_test = cable_identification.forward_test:main",
+            "cable_sofa_mor_plugin_test = cable_identification.mor_plugin_test:main",
             "optimus_smoke_test = cable_identification.optimus_smoke_test:main",
             "optimus_recovery_test = cable_identification.optimus_recovery_test:main",
             "optimus_pipeline_test = cable_identification.optimus_pipeline_test:main",

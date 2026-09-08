@@ -263,6 +263,13 @@ RUN if [ "$WITH_OPTIMUS" = "true" ]; then \
     fi
 ENV OPTIMUS_ROOT=/opt/sofa/plugins/Optimus
 
+ARG WITH_MODEL_ORDER_REDUCTION=true
+COPY scripts/install_model_order_reduction.sh /ros2_ws/scripts/install_model_order_reduction.sh
+RUN if [ "$WITH_MODEL_ORDER_REDUCTION" = "true" ]; then \
+        JOBS=2 bash /ros2_ws/scripts/install_model_order_reduction.sh && \
+        rm -rf /opt/build/model-order-reduction /opt/build/model-order-reduction-src; \
+    fi
+
 # ============================================================================
 # STAGE 7: Workspace Setup
 # ============================================================================

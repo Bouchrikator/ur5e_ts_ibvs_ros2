@@ -1,0 +1,26 @@
+control_dt: 0.04
+velocity_alpha: 0.35
+seed: 20260908
+n_trajectories: 6
+control_steps: 600
+hold_control_steps: 125
+train_trajectories: [0, 1, 2, 3]
+validation_trajectories: [4]
+test_trajectories: [5]
+radial_min: 0.92
+radial_max: 0.985
+angle_limit: 0.55
+max_speed: 0.15
+sweeps: 6.0
+pod_tolerances: [0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.001]
+rank_relative_tolerance: 1.0e-10
+basis_orthogonality_tolerance: 0.0005
+validation:
+  marker_rmse_m: 0.005
+  marker_max_m: 0.01
+  tip_position_m: 0.001
+  tip_orientation_rad: 0.02
+  strain_relative_error: 0.05
+  chain_length_error_m: 0.001
+  hold_seconds: 600.0
+  rollout_seconds: 2.0

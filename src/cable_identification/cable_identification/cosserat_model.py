@@ -104,11 +104,12 @@ def add_required_plugins(root):
     root.addObject("DefaultAnimationLoop")
 
 
-def prepare_root(root, cfg, animation_loop="DefaultAnimationLoop"):
+def prepare_root(root, cfg, animation_loop="DefaultAnimationLoop", extra_plugins=()):
     """Plugins + gravity/dt + animation loop (None: the caller adds its own loop)."""
     root.gravity = [float(g) for g in cfg["gravity"]]
     root.dt = float(cfg["timestep_s"])
-    root.addObject("RequiredPlugin", name="cable_plugins", pluginName=REQUIRED_PLUGINS)
+    root.addObject("RequiredPlugin", name="cable_plugins",
+                   pluginName=REQUIRED_PLUGINS + list(extra_plugins))
     if animation_loop:
         root.addObject(animation_loop)
 
@@ -142,7 +143,8 @@ class CableHandles:
     """Live handles into the built scene used by the adapter/identification code."""
 
     def __init__(self, solver_node, base_mo, strain_mo, force_field, frames_mo, cfg,
-                 grasp_target_mo=None, ode_solver=None, grasp_spring=None, mapping=None):
+                 grasp_target_mo=None, ode_solver=None, grasp_spring=None, mapping=None,
+                 modal_mo=None, mor_mapping=None):
         self.solver_node = solver_node
         self.base_mo = base_mo
         self.strain_mo = strain_mo
@@ -153,6 +155,8 @@ class CableHandles:
         self.ode_solver = ode_solver
         self.grasp_spring = grasp_spring
         self.mapping = mapping
+        self.modal_mo = modal_mo
+        self.mor_mapping = mor_mapping
         self.marker_indices = marker_frame_indices(cfg)
 
     def set_base_pose(self, pose7):
@@ -171,6 +175,8 @@ class CableHandles:
 
     def refresh_mapping(self):
         """Re-apply the Cosserat mapping now (frames <- current strains + base)."""
+        if self.mor_mapping is not None:
+            self.mor_mapping.init()
         if self.mapping is not None:
             self.mapping.init()
 
@@ -195,7 +201,11 @@ class CableHandles:
         ka = float(self.cfg["grasp_angular_stiffness"]) if enabled else 0.0
         self.grasp_spring.findData("stiffness").value = [k]
         self.grasp_spring.findData("angularStiffness").value = [ka]
-        self.grasp_spring.reinit()
+        # reinit() dereferences the mstate link, which Simulation.init() resolves; before
+        # that (runSofa builds the whole scene first) it segfaults, and init() will pick
+        # the new values up anyway.
+        if self.grasp_spring.findLink("mstate").getLinkedBase() is not None:
+            self.grasp_spring.reinit()
 
     def save_state(self):
         """Snapshot the independent DOFs so a what-if rollout can be undone.
@@ -205,6 +215,12 @@ class CableHandles:
         evaluation replays the cable under trial parameters and must leave the
         estimator exactly where it found it.
         """
+        if self.modal_mo is not None:
+            return {
+                "modal": self.modal_mo.position.value.copy(),
+                "modal_velocity": self.modal_mo.velocity.value.copy(),
+                "base": self.base_mo.position.value.copy(),
+            }
         return {
             "strain": self.strain_mo.position.value.copy(),
             "strain_velocity": self.strain_mo.velocity.value.copy(),
@@ -212,6 +228,14 @@ class CableHandles:
         }
 
     def restore_state(self, state):
+        if self.modal_mo is not None:
+            with self.modal_mo.position.writeable() as position:
+                position[:] = state["modal"]
+            with self.modal_mo.velocity.writeable() as velocity:
+                velocity[:] = state["modal_velocity"]
+            self.set_base_pose(state["base"][0])
+            self.refresh_mapping()
+            return
         with self.strain_mo.position.writeable() as p:
             p[:] = state["strain"]
         with self.strain_mo.velocity.writeable() as v:
@@ -258,8 +282,11 @@ _FORCE_FIELD_DATA = {"EI": "EI", "GJ": "GI", "GI": "GI", "EA": "EA", "GA": "GA",
 
 
 def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-                show=False):
+                show=False, reduction=None):
     """Build the cable under `parent`; returns CableHandles."""
+    if reduction is not None:
+        from cable_identification.strain_basis import validate_reduction
+        modes_path, _, _ = validate_reduction(cfg, reduction)
     strains, section_lengths, curv_in, frames, curv_out = build_geometry(cfg)
     show_flag = 1 if show else 0
     show_scale = 0.03 if show else 0.0
@@ -280,10 +307,23 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
         "RestShapeSpringsForceField", name="baseSpring", template="Rigid3d",
         stiffness=1e8, angularStiffness=1e8, points=0, mstate="@RigidBaseMO")
 
-    coord = solver.addChild("cosseratCoordinate")
+    modal_mo = None
+    mor_mapping = None
+    coord_parent = solver
+    if reduction is not None:
+        coord_parent = solver.addChild("modalCoordinate")
+        modal_mo = coord_parent.addObject(
+            "MechanicalObject", template="Vec1d", name="modalCoordinateMO",
+            position=[0.] * reduction.n_modes)
+    coord = coord_parent.addChild("cosseratCoordinate")
     strain_mo = coord.addObject(
         "MechanicalObject", template="Vec3d", name="cosseratCoordinateMO",
-        position=strains)
+        position=strains, **({"rest_position": strains} if reduction is not None else {}))
+    if reduction is not None:
+        mor_mapping = coord.addObject(
+            "ModelOrderReductionMapping", name="strainModalMapping",
+            input=modal_mo.getLinkPath(), output=strain_mo.getLinkPath(),
+            modesPath=modes_path)
     force_field = coord.addObject(
         "BeamHookeLawForceField", name="hooke", crossSectionShape="circular",
         length=section_lengths, radius=float(cfg["radius_m"]),
@@ -325,7 +365,7 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             external_rest_shape=grasp_target_mo.getLinkPath(),
             external_points=[0])
 
-    if cfg.get("planar"):
+    if cfg.get("planar") and reduction is None:
         # Simplified table: the rod may only bend in the plane of its base.
         # The constraint must sit on the INDEPENDENT dofs. FramesMO is a mapped
         # state, and SOFA rejects projective constraints there ("only main
@@ -338,4 +378,5 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             fixedDirections=[1, 1, 0])
 
     return CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
-                        grasp_target_mo, ode_solver, grasp_spring, mapping)
+                        grasp_target_mo, ode_solver, grasp_spring, mapping,
+                        modal_mo, mor_mapping)

@@ -1,6 +1,6 @@
 ---
-description: "Use when editing the SOFA Cosserat cable scene, grasp coupling, cable YAML configs, the Optimus estimator scene or the SOFA<->ROS 2 adapter: cosserat_model.py, optimus_scene.py, coupling.py, cable_scene.py, cable_sofa_node.py, cable_estimator_node.py, cable_truth/estimator yaml. Covers SOFA v25.12 API pitfalls, mapped-state constraints/forces, planar clamp, grasp spring, Optimus ROUKF wiring, runSofa GUI quirks."
-applyTo: "src/cable_identification/**, src/sofa_ros2_adapter/**"
+description: "Use when editing SOFA Cosserat cable scenes, grasp coupling, cable YAML configs, the Optimus estimator, the SOFA<->ROS 2 adapter, or Cosserat/Optimus installers, source and patches. Covers SOFA v25.12 API pitfalls, mapped-state constraints/forces, planar clamp, grasp spring, Optimus ROUKF wiring, plugin rebuilds and runSofa GUI quirks."
+applyTo: "src/cable_identification/**, src/sofa_ros2_adapter/**, scripts/install_cosserat.sh, scripts/install_optimus.sh, third_party/cosserat-patches/**, third_party/Optimus/**"
 ---
 # SOFA v25.12 + Cosserat cable scene rules
 
@@ -19,6 +19,11 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
 - Tip grasp = `RestShapeSpringsForceField` (`grasp_stiffness` 2e3, angular 0.05) to
   an external target MO. `BilateralLagrangianConstraint` through
   `DiscreteCosseratMapping` dragged the base (400 mm error): do not go back to it.
+- Never call `reinit()` on a component before `Simulation.init` has resolved its
+  links: runSofa segfaults (exit code -11), it does not raise. Guard as
+  `set_grasp_spring_enabled` does (`findLink("mstate").getLinkedBase() is not None`).
+  The GUI scene builds the coupling pre-init, the headless nodes post-init, so a
+  change must be exercised on both paths (`cable_forward_test` check 7 is pre-init).
 - Keep the marker indices, `L`, substep/`control_dt` ratio and `marker_s_over_l`
   consistent with the basis/model YAML; the offline pipeline reads them from there.
 
@@ -35,7 +40,10 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
 - Exactly one physics owner: `cable_sofa_node` with `role:=truth`, or the runSofa
   scene [cable_scene.py](../../src/cable_identification/cable_identification/cable_scene.py)
   when `sofa_gui:=true` (the node is then disabled by the launch). Both publish the
-  same `/cable/truth/{frames,markers}` + `/cable/grasp_state` contract.
+  same `/cable/truth/{frames,markers}` + `/cable/grasp_state` contract; the node also
+  publishes `/cable/truth/solver_stats` = `[compute_ms, dropped_steps, stepped]`, and a
+  rising `dropped_steps` means CPU starvation (the estimator then rejects most
+  observations): fix the load, never the gate.
 - runSofa evaluates `createScene` twice: guard `rclpy` init with `rclpy.ok()` and
   use a unique node name.
 - Never add `/opt/sofa/lib` to a global `LD_LIBRARY_PATH` (Qt 5.12 vs 5.15); use the
@@ -71,9 +79,11 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
 - The plain plant applies a base pose one solve late; when comparing truth and
   estimator in one process call `CableHandles.refresh_mapping()` after `set_base_pose`.
   Do not change the plant's default (certified artifacts depend on it).
-- After editing the wrapper/patch/scene run `optimus_smoke_test`, `cable_optimus_test`,
-  `cable_optimus_pipeline`, in that order; rebuild `cable_identification` +
-  `sofa_ros2_adapter` first (ament_python copies).
+- After editing the wrapper/patch/scene run `./scripts/run.sh optimus_smoke_test`,
+  `cable_optimus_test` (= `ros2 run cable_identification optimus_recovery_test`) and
+  `cable_optimus_pipeline` (= `optimus_pipeline_test`), in that order; rebuild
+  `cable_identification` + `sofa_ros2_adapter` first (ament_python copies), and
+  `scripts/install_optimus.sh --force optimus|cosserat` after a `third_party/` edit.
 
 ## Validating a scene change
 Headless A/B scripts that step the real `cable_identification` code

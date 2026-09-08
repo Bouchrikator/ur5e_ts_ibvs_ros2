@@ -1,0 +1,78 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -4,6 +4,34 @@
+ 
+ include(CMakeDependentOption)
+ include(cmake/environment.cmake)
++
++# Coordinate reduction only: the Cosserat pipeline has no hyper-reduced force field.
++option(MOR_MAPPING_ONLY "Build the official coordinate mapping without ECSW/contact" OFF)
++if(MOR_MAPPING_ONLY)
++    find_package(Sofa.Core REQUIRED)
++    sofa_find_package(Sofa.Component.Mapping.Linear REQUIRED)
++    sofa_find_package(Sofa.Component.Topology.Container.Grid REQUIRED)
++    set(MOR_SRC "src/ModelOrderReduction")
++    add_library(${PROJECT_NAME} SHARED
++        ${MOR_SRC}/initModelOrderReduction.cpp
++        ${MOR_SRC}/component/loader/MatrixLoader.cpp
++        ${MOR_SRC}/component/mapping/ModelOrderReductionMapping.cpp
++        ${MOR_SRC}/config.h.in)
++    target_compile_definitions(${PROJECT_NAME} PRIVATE
++        SOFA_BUILD_MODELORDERREDUCTION MOR_MAPPING_ONLY)
++    target_link_libraries(${PROJECT_NAME} PUBLIC Sofa.Core
++        Sofa.Component.Mapping.Linear Sofa.Component.Topology.Container.Grid)
++    set_target_properties(${PROJECT_NAME} PROPERTIES
++        INSTALL_RPATH "$ORIGIN;$ORIGIN/../../../lib")
++    sofa_create_package_with_targets(
++        PACKAGE_NAME ModelOrderReduction PACKAGE_VERSION ${PROJECT_VERSION}
++        TARGETS ${PROJECT_NAME} AUTO_SET_TARGET_PROPERTIES
++        INCLUDE_SOURCE_DIR "src" INCLUDE_INSTALL_DIR "ModelOrderReduction"
++        RELOCATABLE "plugins")
++    install(DIRECTORY python/mor DESTINATION lib/python3/site-packages)
++    install(FILES LICENSE README.md DESTINATION .)
++    return()
++endif()
+ 
+ # Specify all required packages
+ find_package(Sofa.Core REQUIRED)
+--- a/src/ModelOrderReduction/initModelOrderReduction.cpp
++++ b/src/ModelOrderReduction/initModelOrderReduction.cpp
+@@ -92,6 +92,7 @@
+ 
+ void registerObjects(sofa::core::ObjectFactory* factory)
+ {
++#ifndef MOR_MAPPING_ONLY
+     sofa::component::solidmechanics::spring::registerHyperReducedRestShapeSpringsForceField(factory);
+     sofa::component::solidmechanics::fem::elastic::registerHyperReducedTetrahedralCorotationalFEMForceField( factory);
+     sofa::component::solidmechanics::fem::elastic::registerHyperReducedTriangleFEMForceField(factory);
+@@ -99,9 +100,10 @@
+     sofa::component::forcefield::registerHyperReducedTetrahedronHyperelasticityFEMForceField(factory);
+     sofa::component::forcefield::registerHyperReducedTetrahedronFEMForceField(factory);
+     sofa::component::mapping::registerMORContactMapping(factory);
+-    sofa::component::mapping::registerModelOrderReductionMapping(factory);
+     sofa::component::constraint::lagrangian::model::registerMORUnilateralInteractionConstraint(factory);
+     sofa::component::collision::geometry::registerMORPointCollisionModel(factory);
++#endif
++    sofa::component::mapping::registerModelOrderReductionMapping(factory);
+ }
+ 
+ }
+--- a/ModelOrderReductionConfig.cmake.in
++++ b/ModelOrderReductionConfig.cmake.in
+@@ -3,11 +3,16 @@
+ @PACKAGE_INIT@
+ 
+ find_package(Sofa.Core REQUIRED)
++if(@MOR_MAPPING_ONLY@)
++    find_package(Sofa.Component.Mapping.Linear REQUIRED)
++    find_package(Sofa.Component.Topology.Container.Grid REQUIRED)
++else()
+ find_package(Sofa.Component.Collision.Response.Contact REQUIRED)
+ find_package(Sofa.Component.SolidMechanics.FEM.HyperElastic REQUIRED)
+ find_package(Sofa.Component.SolidMechanics.FEM.Elastic REQUIRED)
+ find_package(Sofa.GL REQUIRED)
+ find_package(CollisionOBBCapsule QUIET)
++endif()
+ 
+ if(NOT TARGET @PROJECT_NAME@)
+     include("${CMAKE_CURRENT_LIST_DIR}/@PROJECT_NAME@Targets.cmake")

@@ -14,6 +14,7 @@
 #                ./run.sh cosserat       (restore the Cosserat plugin)
 #                ./run.sh optimus        (build/repair patched Cosserat + Optimus)
 #   Cable:       ./run.sh cable_plugin_test | cable_forward_test
+#                ./scripts/run.sh cable_sofa_mor_plugin_test (pinned MOR mapping gate)
 #                ./run.sh optimus_smoke_test    (factory gate, ~2 s)
 #                ./run.sh cable_optimus_test    (EI/GJ recovery gates, ~15 s)
 #                ./run.sh cable_optimus_pipeline [--duration 60]
@@ -65,6 +66,9 @@ in_live() {
   docker compose up -d >/dev/null 2>&1
   ensure_cosserat
   ensure_optimus
+  if [[ "$CMD" == cable_sofa_* ]]; then
+    docker compose exec -T ur5e_ts_ibvs bash /ros2_ws/scripts/install_model_order_reduction.sh
+  fi
   # exec bypasses the image entrypoint, so the ROS underlay must be sourced too
   docker compose exec ur5e_ts_ibvs bash -c \
     "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && $*"
@@ -135,6 +139,16 @@ case "$CMD" in
     ;;
   cable_forward_test)
     in_live "ros2 run cable_identification cable_forward_test"
+    ;;
+  cable_sofa_mor_plugin_test)
+    printf -v mor_command '%q ' ros2 run cable_identification cable_sofa_mor_plugin_test "$@"
+    in_live "$mor_command"
+    ;;
+  cable_sofa_mor_snapshots|cable_sofa_mor_compute_modes|cable_sofa_mor_validate)
+    printf -v mor_command '%q ' env "CABLE_REPO_COMMIT=$(git rev-parse HEAD)" \
+      OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+      ros2 run cable_ts_control cable_sofa_mor_pipeline --phase "${CMD#cable_sofa_}" "$@"
+    in_live "$mor_command"
     ;;
   optimus_smoke_test)
     in_live "ros2 run cable_identification optimus_smoke_test"

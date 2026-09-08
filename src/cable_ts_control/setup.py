@@ -34,6 +34,8 @@ setup(
             "cable_ts_control.cable_metrics_recorder_node:main",
             "generate_sofa_dataset = "
             "cable_ts_control.scripts.generate_sofa_dataset:main",
+            "cable_sofa_mor_pipeline = cable_ts_control.sofa_mor_pipeline:main",
+            "validate_cosserat_rom = cable_ts_control.scripts.validate_cosserat_rom:main",
             "build_modal_basis = "
             "cable_ts_control.scripts.build_modal_basis:main",
             "identify_ts_vertices = "

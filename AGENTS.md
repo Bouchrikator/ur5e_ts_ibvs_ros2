@@ -42,6 +42,16 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 	only publishers of `/servo_node/delta_twist_cmds` (through `TwistCommander`).
 	A new controller = copy [ts_ibvs_discrete_node.cpp](src/ibvs_control/src/ts_ibvs_discrete_node.cpp)
 	and compose the shared headers in `src/ibvs_control/include/ibvs_control/`.
+	Launch args (`controller`, `mode`, `eye_to_hand`, `use_servo`, `use_depth_for_z`,
+	`cube_size_*`, `mount_*`, `gains_file`, `vertex_file`) are declared in
+	[ibvs.launch.py](src/ibvs_control/launch/ibvs.launch.py). `eye_to_hand:=true`
+	(`./scripts/run.sh eth_<controller>`, pose `eth`) swaps the wrist D435 for the
+	fixed `/overview/*` camera, runs two `cube_detector` instances (red cube +
+	green gripper `marker_detector`) plus `eth_reference_node`, and the controller
+	consumes `/marker_detector/feature_target`. Cube gains come from
+	[solve_ts_pdc_lmi_discrete.py](src/ibvs_control/scripts/solve_ts_pdc_lmi_discrete.py),
+	checked by [verify_lmis.py](src/ibvs_control/scripts/verify_lmis.py);
+	QMM also needs `config/tp_vertices.yaml`.
 - `src/ur5e_ts_ibvs_description`: URDF/xacro, Gazebo world, sim bringup.
 	Frames that other code depends on: `cable_grasp_frame`, `cable_fixture_frame`,
 	`d435_color_optical_frame`, `tool0`.
@@ -49,9 +59,11 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 	pipeline. `cable_msgs`, `cable_bringup`, `gazebo_cable_visual` are
 	`ament_cmake`; the rest `ament_python`. Flow: SOFA `/cable/truth/*` ->
 	perception `/cable/observed_markers` -> reducer `/cable/reduced_state` ->
-	`cable_ts_controller_node` `/cable/desired_gripper_twist` -> relay/Servo.
+	`cable_ts_controller_node` (target from `/cable/target_shape`, owned by
+	`cable_supervisor_node`) `/cable/desired_gripper_twist` -> relay/Servo.
 	Read [docs/cable_ts_status_and_diagnosis.md](docs/cable_ts_status_and_diagnosis.md)
-	first: §5 is every bug already fixed (do not reintroduce), §7 the open items.
+	first: §5 is every bug already fixed (do not reintroduce), §3–§4 what does
+	not work and why, §7 the next steps in order.
 - `scripts/cable/`: in-container demo helpers, mounted read-only at
 	`/ros2_ws/scripts/cable`.
 - `third_party/`: the Optimus port to SOFA 25.12 (`Optimus/`, minimal core,
@@ -94,6 +106,10 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 	is unthrottled and `build` rebuilds the whole image (slow, disk-hungry);
 	persist a live build with `docker commit ur5e_ts_ibvs ur5e_ts_ibvs_ros2:jazzy`.
 - Never `source scripts/run.sh`: its default command is `build`. Invoke it.
+- `sim`, `cable_sim`, `cable_closed_loop`, `cable_qs_test` and every
+	`ros2 launch` never return. Start them in a background terminal or with
+	`docker exec -d` (qs_live_test.sh uses `setsid ... </dev/null >/tmp/x.log 2>&1 &`)
+	and read the log; a foreground call hangs the session waiting for input.
 - Never put `/opt/sofa/lib` on a global `LD_LIBRARY_PATH` (SOFA's Qt 5.12
 	breaks RViz/rqt/Gazebo); use the `runSofa` wrapper or per-process scoping.
 - Keep `network_mode: host`, `ipc: host`, `GZ_IP=127.0.0.1` and
@@ -112,15 +128,23 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 	are the unit-testable layer; keep nodes thin wrappers around them.
 - Cube IBVS: `sim` -> `pose [name]` -> `ts_lmi_d|ts_lmi_c|classic|qmm`. Pose
 	names live in [move_to_view_pose.py](src/ibvs_control/scripts/move_to_view_pose.py)
-	(`default`, `view`, `high`, `low`, `table`, `cable_high`, `cable_low`, ...).
+	(`default`, `eth`, `view`, `high`, `low`, `left`, `right`, `table`,
+	`cable_high`, `cable_low`).
 - Cable: `cable_sim`, `cable_closed_loop [launch args]`, one-shot certified demo
 	`cable_qs_test [pose]`; offline pipeline `cable_dataset -> cable_basis ->
 	cable_identify -> cable_lmi` (extra CLI flags pass through). Starting,
 	stopping or debugging the live Gazebo+SOFA+Servo stack is covered by the
-	`cable-live-stack` skill; SOFA scene/coupling rules by the
-	`sofa-cosserat` instructions.
+	[cable-live-stack skill](.github/skills/cable-live-stack/SKILL.md); scene,
+	coupling and plugin changes use the
+	[SOFA instructions](.github/instructions/sofa-cosserat.instructions.md).
+	`cable_closed_loop enable_control:=true` needs
+	`modal_basis_file`, `ts_model_file`, `ts_gains_file` pointed at the `*_narrow`
+	artifacts (as qs_live_test.sh does): the launch defaults name files that do
+	not exist, so the controller refuses to start.
 - Optimus gates, in order and after any change to `third_party/`,
-	`optimus_scene.py`, `cosserat_model.py` or the estimator node:
+	`optimus_scene.py`, `cosserat_model.py` or the estimator node (run.sh names;
+	the `cable_identification` console scripts are `optimus_smoke_test`,
+	`optimus_recovery_test`, `optimus_pipeline_test`):
 	`optimus_smoke_test` (factory, 2 s) -> `cable_optimus_test` (D/E/H/F/G
 	recovery gates incl. per-marker occlusion and NIS consistency, ~20 s,
 	`OPTIMUS_RECOVERY_TEST_PASSED`) -> `cable_optimus_pipeline` (headless
@@ -151,6 +175,9 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 - Datasets: one shared excitation trajectory for all parameter vertices,
 	trajectory-wise train/validation split, errors reported in marker space (mm),
 	and `u[k]` is the command that drives `k -> k+1`.
+- Git: single `main` branch pushed straight to `origin`; one-line imperative
+	subjects naming the outcome (see `git log --oneline`). Commit and push only
+	when asked.
 
 ## Hardware and control safety
 

@@ -77,10 +77,28 @@ class RosCouplingController(Sofa.Core.Controller):
             self.grasp_pub = (self.node.create_publisher(
                 GraspState, "/cable/grasp_state", 10)
                 if self.coupling is not None else None)
+            if self.coupling is not None:
+                # explicit attach_mode: without these the GUI plant can never latch
+                from std_srvs.srv import Trigger
+                self._attach_srv = self.node.create_service(
+                    Trigger, "/cable/attach", self._on_attach)
+                self._detach_srv = self.node.create_service(
+                    Trigger, "/cable/detach", self._on_detach)
             self.ros_ok = True
             print("[cable_scene] ROS coupling active (TF + truth publishers)")
         except Exception as exc:  # ROS absent -> standalone GUI physics
             print(f"[cable_scene] ROS unavailable, standalone mode: {exc}")
+
+    def _on_attach(self, _request, response):
+        response.success = self.coupling.request_attach()
+        response.message = ("attach requested; waiting for the gripper to be in range"
+                            if response.success else "already attached")
+        return response
+
+    def _on_detach(self, _request, response):
+        response.success = self.coupling.request_detach()
+        response.message = "tip released" if response.success else "already detached"
+        return response
 
     def _lookup(self, target):
         from rclpy.time import Time
