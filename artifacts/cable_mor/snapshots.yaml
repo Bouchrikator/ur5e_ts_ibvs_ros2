@@ -75,7 +75,37 @@ settings:
     chain_length_error_m: 0.001
     hold_seconds: 600.0
     rollout_seconds: 2.0
-settings_sha256: c269e608606b81e8c8eeca3d3f138cc8135eac1e00c633a1c8557217fca1d41b
+  ts:
+    max_one_step_marker_rmse_m: 0.005
+    max_rollout_marker_rmse_m: 0.05
+    rollout_seconds: 2.0
+    ridge: 0.01
+    input_feedthrough: false
+  lmi:
+    mode: auto
+    eps: 1.0e-06
+    gain_penalty: 0.001
+    backend: sparse
+    max_iters: 20000
+  pdc:
+    settle_seconds: 6.0
+    duration_seconds: 12.0
+    max_linear_vel: 0.05
+    start_radius: 0.95
+    start_bearing: -0.25
+    goal_radius: 0.95
+    goal_bearing: 0.25
+    final_marker_rmse_m: 0.005
+    lyapunov_ratio: 0.05
+  observer:
+    seed: 7
+    marker_std_m: 0.002
+    dropout: 0.2
+    prior_std: 0.2
+    max_iterations: 3
+    warm_start_updates: 5
+    max_estimate_marker_rmse_m: 0.005
+settings_sha256: 4ea3b0f6c5b87d5977ec90451c91b68f559eaa6eac211d25c7fb98b5aafc6f90
 parameter_bounds:
   EI:
   - 0.005
@@ -83,7 +113,7 @@ parameter_bounds:
   rayleigh_stiffness:
   - 0.018
   - 0.022
-repo_commit: 2f9072790a6857d0f6c233291f8a79fde0ce6b6a
+repo_commit: bd9de550ba013d5c02b77cc70e3e203938797bed
 dataset_sha256: 91375dba0763c26b554413fdf6b6a789941d8b92c3693644fca64d8f0629cdc6
 training_state_sha256: a08a6b645c27ac52826ed62194fba1fc3c5172d6fd42df8778872e21b4080b58
 episodes:
@@ -94,7 +124,7 @@ episodes:
   state_sha256: 2136945495385a761f451d86d0da65112ce7cf3c113d7714f36ae7b8e3b5914c
   sample_start: 0
   sample_stop: 600
-  mean_step_seconds: 0.0019233173908332901
+  mean_step_seconds: 0.0018350567724996836
 - vertex_id: 0
   trajectory_id: 1
   split: train
@@ -102,7 +132,7 @@ episodes:
   state_sha256: cae4e35889e9f4c4e5eaa9ccaa775004c31bdafa2e9ce4c6c51e34edad6a8566
   sample_start: 600
   sample_stop: 1200
-  mean_step_seconds: 0.0018979245316666038
+  mean_step_seconds: 0.0018184584599998744
 - vertex_id: 0
   trajectory_id: 2
   split: train
@@ -110,7 +140,7 @@ episodes:
   state_sha256: 9df417277e7f795529f6627e37abc87a490e7a03b282bfb30baa5ccc181cd9cf
   sample_start: 1200
   sample_stop: 1800
-  mean_step_seconds: 0.001917865378749942
+  mean_step_seconds: 0.0018416132983338684
 - vertex_id: 0
   trajectory_id: 3
   split: train
@@ -118,7 +148,7 @@ episodes:
   state_sha256: 6c02e0c44355ab84f5bd286944ee5e78bb036490f7d5a5e20fe79b061c5c4e81
   sample_start: 1800
   sample_stop: 2400
-  mean_step_seconds: 0.0019135705675000737
+  mean_step_seconds: 0.0018124292329162017
 - vertex_id: 0
   trajectory_id: 4
   split: validation
@@ -126,7 +156,7 @@ episodes:
   state_sha256: 3b02730392a6cf35eeb30d1af96ca3799d9c409148cd1ddf633531a271f8a98c
   sample_start: 2400
   sample_stop: 3000
-  mean_step_seconds: 0.0019273255399999318
+  mean_step_seconds: 0.0018108539020833328
 - vertex_id: 0
   trajectory_id: 5
   split: test
@@ -134,7 +164,7 @@ episodes:
   state_sha256: 8ea9ac3351beeb78b690f1868084747b0f6eaa7170873b6f3ad2cb846769c0f4
   sample_start: 3000
   sample_stop: 3600
-  mean_step_seconds: 0.001910247069166644
+  mean_step_seconds: 0.0018157947650001916
 - vertex_id: 1
   trajectory_id: 0
   split: train
@@ -142,7 +172,7 @@ episodes:
   state_sha256: 2948377d1bf86e1536ab74ad3cbf5c6cd1632c656641348d7b38957e7dab0154
   sample_start: 3600
   sample_stop: 4200
-  mean_step_seconds: 0.0019232568362500995
+  mean_step_seconds: 0.0018034234825002689
 - vertex_id: 1
   trajectory_id: 1
   split: train
@@ -150,7 +180,7 @@ episodes:
   state_sha256: 48c698c820806185804c4dcad092e04ab260b673443ab24a2925885cf044c3fa
   sample_start: 4200
   sample_stop: 4800
-  mean_step_seconds: 0.0019252132162500856
+  mean_step_seconds: 0.0018213758541666418
 - vertex_id: 1
   trajectory_id: 2
   split: train
@@ -158,7 +188,7 @@ episodes:
   state_sha256: 7db48c8892d1890521d85f548e626628acd6ae0a4e416a8a4db0af23d4c5f70a
   sample_start: 4800
   sample_stop: 5400
-  mean_step_seconds: 0.0019317645345832564
+  mean_step_seconds: 0.0018326920499998779
 - vertex_id: 1
   trajectory_id: 3
   split: train
@@ -166,7 +196,7 @@ episodes:
   state_sha256: ab105ceb0c66b9d104f3d262044a4348e5d784cb5811d8ed69e8917ece0371c1
   sample_start: 5400
   sample_stop: 6000
-  mean_step_seconds: 0.001913471835416658
+  mean_step_seconds: 0.001805539606249719
 - vertex_id: 1
   trajectory_id: 4
   split: validation
@@ -174,7 +204,7 @@ episodes:
   state_sha256: 269d68ab217acd9cbe31e70eda5d378583a1acc9e722342c9756439c080e221a
   sample_start: 6000
   sample_stop: 6600
-  mean_step_seconds: 0.0019076327383334046
+  mean_step_seconds: 0.0018101516558332758
 - vertex_id: 1
   trajectory_id: 5
   split: test
@@ -182,7 +212,7 @@ episodes:
   state_sha256: a133c937ad7101e000290c48723aa33913448d60156f1853c35b6990cbc6b8ed
   sample_start: 6600
   sample_stop: 7200
-  mean_step_seconds: 0.0019268463191667706
+  mean_step_seconds: 0.0018209795724995577
 - vertex_id: 2
   trajectory_id: 0
   split: train
@@ -190,7 +220,7 @@ episodes:
   state_sha256: 8a1e023c1bda74f8f9ac2ffd9e1e41ff9fe4baa455514f6bb2ab4d1e4a974333
   sample_start: 7200
   sample_stop: 7800
-  mean_step_seconds: 0.001925381659583157
+  mean_step_seconds: 0.0017986698670832387
 - vertex_id: 2
   trajectory_id: 1
   split: train
@@ -198,7 +228,7 @@ episodes:
   state_sha256: 397cdca7254e74bbfc8e933727863f6f1178eebe6316f4f465449a689cd8c223
   sample_start: 7800
   sample_stop: 8400
-  mean_step_seconds: 0.0019198365754164114
+  mean_step_seconds: 0.001795195680000082
 - vertex_id: 2
   trajectory_id: 2
   split: train
@@ -206,7 +236,7 @@ episodes:
   state_sha256: 3a5a6d8e64e89887696b284370f0e3e6dad41f4884dedd6efff57def0f14ed3b
   sample_start: 8400
   sample_stop: 9000
-  mean_step_seconds: 0.0019284892062497267
+  mean_step_seconds: 0.0018729173408337373
 - vertex_id: 2
   trajectory_id: 3
   split: train
@@ -214,7 +244,7 @@ episodes:
   state_sha256: 28596bbf9d30a3ca68d87a690abd495b494dfed06c3c15d98a2e51cceedc19a0
   sample_start: 9000
   sample_stop: 9600
-  mean_step_seconds: 0.0019314541850000448
+  mean_step_seconds: 0.0018274827995833221
 - vertex_id: 2
   trajectory_id: 4
   split: validation
@@ -222,7 +252,7 @@ episodes:
   state_sha256: 8f6f20bd8635fcf5a538c50d0d05200b3fd9c5f9a2aca0062711802cef7d7c52
   sample_start: 9600
   sample_stop: 10200
-  mean_step_seconds: 0.0019213093433332537
+  mean_step_seconds: 0.001810443108333099
 - vertex_id: 2
   trajectory_id: 5
   split: test
@@ -230,7 +260,7 @@ episodes:
   state_sha256: 055bd0a204d5261ed66eece5a2231ab6f4b0f808af8864b73641f69c8a2b8fef
   sample_start: 10200
   sample_stop: 10800
-  mean_step_seconds: 0.0019443662870833123
+  mean_step_seconds: 0.0018179223441666182
 - vertex_id: 3
   trajectory_id: 0
   split: train
@@ -238,7 +268,7 @@ episodes:
   state_sha256: e907a6a0ef9199cd39c0f627aac933f987e771f9dfb447e250a469bc0cc722cf
   sample_start: 10800
   sample_stop: 11400
-  mean_step_seconds: 0.0019395093537502817
+  mean_step_seconds: 0.0018243292274996747
 - vertex_id: 3
   trajectory_id: 1
   split: train
@@ -246,7 +276,7 @@ episodes:
   state_sha256: 17d70b402fb634e22af0a6f79daab59fc53fccebd5d02ca4b4250e6fe28c805b
   sample_start: 11400
   sample_stop: 12000
-  mean_step_seconds: 0.0019230634500001997
+  mean_step_seconds: 0.0018081698916663906
 - vertex_id: 3
   trajectory_id: 2
   split: train
@@ -254,7 +284,7 @@ episodes:
   state_sha256: 901545c05fdda2290a56610cbd4e394068b1f6ea3316fe7fdde6899a5f640b54
   sample_start: 12000
   sample_stop: 12600
-  mean_step_seconds: 0.0019386336604164474
+  mean_step_seconds: 0.001813654212083596
 - vertex_id: 3
   trajectory_id: 3
   split: train
@@ -262,7 +292,7 @@ episodes:
   state_sha256: 493db2d418c7a40e91849e01cf952404eb200eb7a748ae321bbd05345a376472
   sample_start: 12600
   sample_stop: 13200
-  mean_step_seconds: 0.0019476754025000295
+  mean_step_seconds: 0.0017994403174998296
 - vertex_id: 3
   trajectory_id: 4
   split: validation
@@ -270,7 +300,7 @@ episodes:
   state_sha256: 97357300bbaa4963412a5133da83735edc37ac74ca45cb15e8d13df01c9b24e3
   sample_start: 13200
   sample_stop: 13800
-  mean_step_seconds: 0.0019780874441664765
+  mean_step_seconds: 0.001806473649583798
 - vertex_id: 3
   trajectory_id: 5
   split: test
@@ -278,4 +308,4 @@ episodes:
   state_sha256: df4c792c4949f97626ef37da3434828c822eace96afebfe21e2d8682ae8c1fad
   sample_start: 13800
   sample_stop: 14400
-  mean_step_seconds: 0.0019299699183333511
+  mean_step_seconds: 0.0018027401416664665

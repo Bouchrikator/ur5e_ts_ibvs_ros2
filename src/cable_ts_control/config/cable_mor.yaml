@@ -15,6 +15,8 @@ sweeps: 6.0
 pod_tolerances: [0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.001]
 rank_relative_tolerance: 1.0e-10
 basis_orthogonality_tolerance: 0.0005
+# FOM/ROM acceptance: 5 mm shape tolerance and <= 1 mm grasp error are the
+# existing marker-space requirements (docs section 5.16 / cable_target.yaml).
 validation:
   marker_rmse_m: 0.005
   marker_max_m: 0.01
@@ -24,3 +26,43 @@ validation:
   chain_length_error_m: 0.001
   hold_seconds: 600.0
   rollout_seconds: 2.0
+# Modal TS identification (same acceptance numbers as identify_ts_vertices).
+# input_feedthrough=false: the G u term is not identifiable next to D a_dot
+# (docs section 5.14); the gripper acts through its position block. The ridge
+# acts in the mass-normalised coordinates (see fit_modal_structured_model);
+# 1e-4 leaves the barely excited high strain modes unstable in rollout.
+ts:
+  max_one_step_marker_rmse_m: 0.005
+  max_rollout_marker_rmse_m: 0.05
+  rollout_seconds: 2.0
+  ridge: 0.01
+  input_feedthrough: false
+lmi:
+  mode: auto
+  eps: 1.0e-6
+  gain_penalty: 1.0e-3
+  # cvxpy's canonicalisation of the 68x68 blocks is OOM-killed on the 7 GB host;
+  # 'sparse' assembles the same inequalities directly for SCS (~30 ms/iteration
+  # at 34 states). Measured: the primal residual plateaus at 1.1-2.3 from
+  # iteration ~4500 on (20000 gave res_pri 1.09/1.51, verification residuals
+  # +141/+2.2), so a larger budget does not buy feasibility.
+  backend: sparse
+  max_iters: 6000
+pdc:
+  settle_seconds: 6.0
+  duration_seconds: 12.0
+  max_linear_vel: 0.05
+  start_radius: 0.95
+  start_bearing: -0.25
+  goal_radius: 0.95
+  goal_bearing: 0.25
+  final_marker_rmse_m: 0.005
+  lyapunov_ratio: 0.05
+observer:
+  seed: 7
+  marker_std_m: 0.002
+  dropout: 0.2
+  prior_std: 0.2
+  max_iterations: 3
+  warm_start_updates: 5
+  max_estimate_marker_rmse_m: 0.005

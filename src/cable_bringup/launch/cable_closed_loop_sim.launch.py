@@ -45,6 +45,7 @@ def launch_setup(context, *args, **kwargs):
     architecture = LaunchConfiguration("control_architecture").perform(context)
     enable_optimus = LaunchConfiguration("enable_optimus").perform(context)
     enable_control = LaunchConfiguration("enable_control").perform(context)
+    state_coordinates = LaunchConfiguration("state_coordinates").perform(context)
 
     if observation_source not in ("synthetic", "camera", "camera_markers"):
         raise RuntimeError("observation_source must be 'synthetic', 'camera' "
@@ -52,6 +53,9 @@ def launch_setup(context, *args, **kwargs):
                            "(legacy HSV fiducial tracker)")
     if architecture not in ("direct", "cascade"):
         raise RuntimeError("control_architecture must be 'direct' or 'cascade'")
+    if state_coordinates not in ("marker_modal", "cosserat_modal"):
+        raise RuntimeError("state_coordinates must be 'marker_modal' (legacy marker POD "
+                           "reducer) or 'cosserat_modal' (strain POD observer)")
 
     use_sim_time = {"use_sim_time": True}
     actions = []
@@ -199,8 +203,24 @@ def launch_setup(context, *args, **kwargs):
 
     # 7-9. Outer loop. Needs an identified basis + model, so it is opt-in.
     if enable_control.lower() in ("true", "1"):
-        cable_nodes.extend([
-            Node(
+        if state_coordinates == "cosserat_modal":
+            # One strain POD: the observer estimates a from the markers through
+            # the ROM mapping; no marker-POD reducer runs.
+            state_node = Node(
+                package="cable_ts_control",
+                executable="cable_modal_observer_node",
+                output="screen",
+                parameters=[use_sim_time, {
+                    "cable_config": LaunchConfiguration("truth_config"),
+                    "strain_modes_file": LaunchConfiguration("strain_modes_file"),
+                    "strain_modes_metadata": LaunchConfiguration("strain_modes_metadata"),
+                    "ts_model_file": LaunchConfiguration("ts_model_file"),
+                    "reference_frame": "cable_fixture_frame",
+                    "gripper_frame": "cable_grasp_frame",
+                }],
+            )
+        else:
+            state_node = Node(
                 package="cable_ts_control",
                 executable="cable_state_reducer_node",
                 output="screen",
@@ -208,7 +228,9 @@ def launch_setup(context, *args, **kwargs):
                     "modal_basis_file": LaunchConfiguration("modal_basis_file"),
                     "reference_frame": "cable_fixture_frame",
                 }],
-            ),
+            )
+        cable_nodes.extend([
+            state_node,
             Node(
                 package="cable_ts_control",
                 executable="cable_ts_controller_node",
@@ -216,6 +238,10 @@ def launch_setup(context, *args, **kwargs):
                 parameters=[use_sim_time, {
                     "ts_model_file": LaunchConfiguration("ts_model_file"),
                     "ts_gains_file": LaunchConfiguration("ts_gains_file"),
+                    "state_coordinates": state_coordinates,
+                    "strain_modes_metadata": (
+                        LaunchConfiguration("strain_modes_metadata")
+                        if state_coordinates == "cosserat_modal" else ""),
                     "reference_frame": "cable_fixture_frame",
                     "gripper_frame": "cable_grasp_frame",
                 }],
@@ -285,6 +311,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "enable_control", default_value="false",
             description="Run the outer loop; needs an identified basis + model"),
+        DeclareLaunchArgument(
+            "state_coordinates", default_value="marker_modal",
+            description="marker_modal (legacy reducer + ModalBasis) | cosserat_modal "
+                        "(strain-POD observer; ts_model/gains from cable_sofa_mor_pipeline)"),
+        DeclareLaunchArgument(
+            "strain_modes_file", default_value="/ros2_ws/artifacts/cable_mor/cable_strain_modes.txt"),
+        DeclareLaunchArgument(
+            "strain_modes_metadata",
+            default_value="/ros2_ws/artifacts/cable_mor/cable_strain_modes.yaml"),
         DeclareLaunchArgument(
             "truth_config", default_value=_config(CABLE_SHARE, "cable_truth.yaml")),
         DeclareLaunchArgument(

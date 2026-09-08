@@ -98,7 +98,8 @@ class CableMORSnapshotController(Sofa.Core.Controller):
         self.step += 1
 
 
-def prepare_episode(root, cfg, parameters, path, control_dt, state_file=None, reduction=None):
+def prepare_episode(root, cfg, parameters, path, control_dt, state_file=None, reduction=None,
+                    controller=True):
     extra = ["Sofa.Component.Playback"] if state_file else []
     if reduction is not None:
         extra.append("ModelOrderReduction")
@@ -128,9 +129,16 @@ def prepare_episode(root, cfg, parameters, path, control_dt, state_file=None, re
             time=[float(root.time.value)], period=control_dt,
             writeX=True, writeX0=True, writeV=True, writeF=False)
         writer.init()
+    if not controller:
+        return cable, coupling
     controller = root.addObject(CableMORSnapshotController(
         cable, coupling, path, control_dt, name="cableModalExcitation"))
     return cable, controller
+
+
+# The ROM dataset phase drives the same controller: it records a and a_dot when the
+# cable carries a modal state, so no second recorder exists.
+CableModalDatasetController = CableMORSnapshotController
 
 
 def run_episode(cfg, parameters, path, control_dt, state_file=None, reduction=None):

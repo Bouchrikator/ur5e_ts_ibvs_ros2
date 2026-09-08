@@ -1,0 +1,37 @@
+strain_basis_sha256: beb83b3c9b72d25bfbe7e83dc4361097e24e852fa623015deb8f320072b9e452
+settings:
+  seed: 7
+  marker_std_m: 0.002
+  dropout: 0.2
+  prior_std: 0.2
+  max_iterations: 3
+  warm_start_updates: 5
+  max_estimate_marker_rmse_m: 0.005
+report:
+  full_visibility:
+    rank_min: 14
+    rank_max: 14
+    condition_median: 95.32514126513207
+    condition_max: 107.96725031319066
+    estimate_marker_rmse_m: 0.0015514653636020989
+    modal_rmse: 4.508795794275392
+    modal_rmse_relative_to_range: 0.40095054994324286
+    modal_velocity_rmse: 1.8810661851211141
+    update_seconds_mean: 0.014588012293309778
+    update_seconds_max: 0.02269511000122293
+    prior: ts_model
+  occlusions:
+    rank_min: 4
+    rank_max: 14
+    condition_median: 88.90225547458414
+    condition_max: 107.96725031319066
+    estimate_marker_rmse_m: 0.0019326045831868318
+    modal_rmse: 4.864880086585984
+    modal_rmse_relative_to_range: 0.43261581032370927
+    modal_velocity_rmse: 2.1166868426724754
+    update_seconds_mean: 0.014171225610052716
+    update_seconds_max: 0.021963393000987708
+    prior: ts_model
+  n_modes: 16
+  n_measurements: 14
+  passed: true

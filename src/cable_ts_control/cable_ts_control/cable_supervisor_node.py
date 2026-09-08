@@ -165,7 +165,8 @@ class CableSupervisorNode(Node):
     def _shape_error(self):
         if self._reduced_state is None:
             return None
-        return float(np.linalg.norm(self._reduced_state - self.target))
+        # A [a*, g*] target: the shape error is on the modal block only.
+        return float(np.linalg.norm(self._reduced_state - self.target[:self._reduced_state.size]))
 
     def _tick(self):
         self.status_pub.publish(String(data=self.state))

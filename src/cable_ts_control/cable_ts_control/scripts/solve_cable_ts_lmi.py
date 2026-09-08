@@ -16,7 +16,9 @@ import numpy as np
 import yaml
 
 from cable_ts_control.lmi_synthesis import (
+    certificate_block_residuals,
     solve_cable_ts_pdc,
+    solve_cable_ts_pdc_sparse,
     verify_certificate,
     worst_spectral_radius,
 )
@@ -54,6 +56,16 @@ def main(argv=None):
                              "rule count, since complementary triangular "
                              "memberships leave every rule active inside the box")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--backend", choices=("cvxpy", "sparse"), default="cvxpy",
+                        help="'sparse' assembles the same LMIs directly (SCS); "
+                             "needed above ~20 states where cvxpy's canonicalisation "
+                             "and Clarabel's dense PSD Hessians exhaust the 7 GB host")
+    parser.add_argument("--max-iters", type=int, default=100000,
+                        help="iteration budget of the sparse backend; a primal residual "
+                             "that plateaus long before it is the infeasibility signature")
+    parser.add_argument("--report", default=None,
+                        help="YAML written on EVERY outcome (attempt statuses, worst "
+                             "blocks); the gains file is only written when certified")
     args = parser.parse_args(argv)
 
     with open(args.model, "r") as f:
@@ -69,22 +81,49 @@ def main(argv=None):
                 "relaxed": ["relaxed"]}[args.mode]
 
     certificate = None
+    solve = solve_cable_ts_pdc_sparse if args.backend == "sparse" else solve_cable_ts_pdc
+    extra = {"max_iters": args.max_iters} if args.backend == "sparse" else {}
+    outcome = {"backend": args.backend, "attempts": [], "certified": False,
+               "state_dim": int(model.state_dim), "n_rules": int(model.n_rules),
+               "n_parameter_vertices": len(vertex_sets)}
+
+    def write_report():
+        if args.report:
+            with open(args.report, "w") as f:
+                yaml.safe_dump(outcome, f, default_flow_style=False, width=200)
+
     for attempt in attempts:
-        candidate = solve_cable_ts_pdc(
+        candidate = solve(
             vertex_sets, eps=args.eps, gain_penalty=args.gain_penalty,
             verbose=args.verbose, relaxed=(attempt == "relaxed"),
-            max_active_rules=args.max_active_rules)
+            max_active_rules=args.max_active_rules, **extra)
         print(f"  {attempt:8s}: "
               f"{'feasible' if candidate.feasible else 'infeasible'}"
               f" (solver={candidate.solver_name}, "
               f"status={candidate.solver_status})")
+        record = {"conditions": attempt, "solver": candidate.solver_name,
+                  "solver_status": candidate.solver_status, "solver_feasible": bool(candidate.feasible)}
         if candidate.feasible:
+            # A first-order "solved" is a claim, not a certificate: verify before accepting.
+            check = verify_certificate(vertex_sets, candidate)
+            worst = certificate_block_residuals(vertex_sets, candidate)[:3]
+            record.update(verified=bool(check["satisfied"]),
+                          worst_diagonal_residual=float(check["worst_diagonal_residual"]),
+                          worst_cross_residual=float(check["worst_cross_residual"]),
+                          worst_blocks=worst)
+            print(f"           verification {'OK' if check['satisfied'] else 'FAILED'}: "
+                  f"worst block vertex {worst[0]['vertex']} rules "
+                  f"({worst[0]['rule_i']},{worst[0]['rule_j']}) residual {worst[0]['residual']:.3e}")
+        outcome["attempts"].append(record)
+        if candidate.feasible and record["verified"]:
             certificate = candidate
             break
 
     if certificate is None:
-        print("ERROR: the LMIs are infeasible. Widen the sampling period, "
-              "narrow the parameter bounds, or re-identify the vertices.")
+        write_report()
+        print("ERROR: no certified PDC gains (solver infeasible or its solution fails the "
+              "Lyapunov verification). Widen the sampling period, narrow the parameter "
+              "bounds, or re-identify the vertices.")
         return 1
 
     # Verify EXACTLY the inequalities that were solved. The individual
@@ -115,9 +154,13 @@ def main(argv=None):
           f"{'< 1 OK' if radius < 1.0 else '>= 1 FAILED'}")
 
     if not report["satisfied"] or radius >= 1.0:
+        write_report()
         print("\nERROR: the returned gains do not certify stability; "
               "nothing was written.")
         return 1
+
+    outcome["certified"] = True
+    write_report()
 
     for index, gain in enumerate(certificate.gains):
         print(f"  K{index} norm = {np.linalg.norm(gain):.4f}")

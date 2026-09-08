@@ -1,0 +1,85 @@
+vertices:
+- vertex_id: 0
+  cells:
+  - 806
+  - 315
+  - 392
+  - 883
+  open_loop_rho: 1.0
+  held_out:
+  - trajectory_id: 4
+    one_step_modal_rmse: 0.06339310541530423
+    one_step_marker_rmse_m: 0.0006699234098912374
+    rollout_marker_rmse_m: 0.04183803757116221
+    trivial_constant_velocity_rollout_m: 0.06058007587596554
+  - trajectory_id: 5
+    one_step_modal_rmse: 0.06323622980826514
+    one_step_marker_rmse_m: 0.0008276400906167162
+    rollout_marker_rmse_m: 0.04966935735024692
+    trivial_constant_velocity_rollout_m: 0.11181876689737685
+- vertex_id: 1
+  cells:
+  - 806
+  - 315
+  - 392
+  - 883
+  open_loop_rho: 1.0
+  held_out:
+  - trajectory_id: 4
+    one_step_modal_rmse: 0.06550072455616739
+    one_step_marker_rmse_m: 0.0006861402346054211
+    rollout_marker_rmse_m: 0.04136962508288558
+    trivial_constant_velocity_rollout_m: 0.07837966676026163
+  - trajectory_id: 5
+    one_step_modal_rmse: 0.05915937234089082
+    one_step_marker_rmse_m: 0.0008185166589064222
+    rollout_marker_rmse_m: 0.048490740470986594
+    trivial_constant_velocity_rollout_m: 0.11466058705378103
+- vertex_id: 2
+  cells:
+  - 806
+  - 315
+  - 392
+  - 883
+  open_loop_rho: 1.0
+  held_out:
+  - trajectory_id: 4
+    one_step_modal_rmse: 0.03650185278178347
+    one_step_marker_rmse_m: 0.0006477431834887583
+    rollout_marker_rmse_m: 0.037863083461557034
+    trivial_constant_velocity_rollout_m: 0.04379987093177367
+  - trajectory_id: 5
+    one_step_modal_rmse: 0.03635451146102608
+    one_step_marker_rmse_m: 0.0006536664476464577
+    rollout_marker_rmse_m: 0.04451772269118834
+    trivial_constant_velocity_rollout_m: 0.0796671397971353
+- vertex_id: 3
+  cells:
+  - 806
+  - 315
+  - 392
+  - 883
+  open_loop_rho: 1.0
+  held_out:
+  - trajectory_id: 4
+    one_step_modal_rmse: 0.03327357438780533
+    one_step_marker_rmse_m: 0.0006356017823626617
+    rollout_marker_rmse_m: 0.037610949172782064
+    trivial_constant_velocity_rollout_m: 0.04544717239990845
+  - trajectory_id: 5
+    one_step_modal_rmse: 0.03301692516964229
+    one_step_marker_rmse_m: 0.0006406662852600604
+    rollout_marker_rmse_m: 0.04442321490048836
+    trivial_constant_velocity_rollout_m: 0.07924333192732125
+mass_metric_condition: 674516.2578796023
+worst_one_step_marker_rmse_m: 0.0008276400906167162
+worst_rollout_marker_rmse_m: 0.04966935735024692
+premise_bounds:
+- - 0.07671202368218455
+  - 0.07999999991393736
+- - -0.3004482498922867
+  - 0.2311038030134709
+gripper_reference:
+- 0.6386885014614603
+- -0.028332856421631546
+passed: true

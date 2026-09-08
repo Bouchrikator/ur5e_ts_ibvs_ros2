@@ -23,6 +23,8 @@ from std_msgs.msg import Float64MultiArray
 
 from cable_msgs.msg import CableParameterEstimate, CableShapeTarget, CableState
 
+from cable_ts_control.modal_contract import (
+    COORDINATES, LEGACY_COORDINATES, check_model_contract, target_state)
 from cable_ts_control.ts_model import CableTsModel
 
 
@@ -57,12 +59,17 @@ class CableTsControllerNode(Node):
         self.declare_parameter("bias_anchor_alpha", 0.05)
         self.declare_parameter("bias_anchor_max_m", 0.05)
         self.declare_parameter("enable_bias_anchor", True)
+        # Coordinates the reduced-state publisher uses; a model in other
+        # coordinates (or on another strain basis) is refused at startup.
+        self.declare_parameter("state_coordinates", LEGACY_COORDINATES)
+        self.declare_parameter("strain_modes_metadata", "")
 
         model_file = self.get_parameter("ts_model_file").value
         if not model_file:
             raise ValueError("ts_model_file is required")
-        self.model = CableTsModel.load(
-            model_file, self.get_parameter("ts_gains_file").value or None)
+        gains_file = self.get_parameter("ts_gains_file").value or None
+        self.coordinates = self._check_contract(model_file, gains_file)
+        self.model = CableTsModel.load(model_file, gains_file)
         if self.model.gains is None:
             raise ValueError("the TS model carries no PDC gains; run the LMI solver")
 
@@ -125,6 +132,23 @@ class CableTsControllerNode(Node):
             f"rho bounds={self.model.premise_bounds}")
 
     # ------------------------------------------------------------------
+    def _check_contract(self, model_file, gains_file):
+        with open(model_file, "r") as f:
+            section = yaml.safe_load(f)["cable_ts_model"]
+        gains = None
+        if gains_file:
+            with open(gains_file, "r") as f:
+                gains = yaml.safe_load(f)["cable_ts_model"]
+        metadata = None
+        metadata_file = self.get_parameter("strain_modes_metadata").value
+        if metadata_file:
+            with open(metadata_file, "r") as f:
+                metadata = yaml.safe_load(f)
+        expected = self.get_parameter("state_coordinates").value
+        if expected == COORDINATES and metadata is None:
+            raise ValueError("cosserat_modal control needs strain_modes_metadata")
+        return check_model_contract(section, metadata, gains, expected_coordinates=expected)
+
     def _init_bias_anchor(self, gains_file):
         """Load U and the mean certified Jacobian from the quasi-static gains."""
         self._anchor_u = None
@@ -187,6 +211,13 @@ class CableTsControllerNode(Node):
     def _on_target(self, msg):
         q_star = np.asarray(msg.modal_coordinates, dtype=float)
         n_modes = self.model.n_modes
+        if self.coordinates == COORDINATES:
+            # a*, [a*, g*] or the full state; a non-rest a* needs its g* (equilibrium).
+            try:
+                self._target = target_state(q_star, n_modes, self.model.state_dim)
+            except ValueError as error:
+                self.get_logger().warn(str(error), throttle_duration_sec=5.0)
+            return
         if q_star.size != n_modes:
             self.get_logger().warn(
                 f"target has {q_star.size} modal coordinates, expected {n_modes}")

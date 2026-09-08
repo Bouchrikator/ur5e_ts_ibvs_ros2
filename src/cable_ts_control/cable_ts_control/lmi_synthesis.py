@@ -209,6 +209,245 @@ def solve_cable_ts_pdc(vertex_sets, eps=1e-9, gain_penalty=1e-3, verbose=False,
         solver_status=str(problem.status))
 
 
+class _SparseSdp:
+    """Conic problem assembled directly in sparse form (Clarabel or SCS).
+
+    cvxpy canonicalises the 2n x 2n blocks through dense intermediates and
+    Clarabel's interior point keeps a dense Hessian per PSD cone; at n = 34
+    (16 strain modes, 40 cones of size 68) both exceed the 7 GB host. SCS only
+    needs the sparse constraint matrix and one 68 x 68 eigendecomposition per
+    cone and iteration. The maps below are the same inequalities as
+    ``solve_cable_ts_pdc`` written column by column. Variables: upper triangle
+    of X (and Y), the M_j entries, one SOC bound per M_j.
+    """
+
+    def __init__(self, n, m, n_rules, relaxed):
+        self.n, self.m, self.n_rules = n, m, n_rules
+        self.tri = [(i, j) for j in range(n) for i in range(j + 1)]
+        self.x_index = {pair: k for k, pair in enumerate(self.tri)}
+        offset = len(self.tri)
+        self.y_offset = offset if relaxed else None
+        if relaxed:
+            offset += len(self.tri)
+        self.m_offset = offset
+        offset += n_rules * m * n
+        self.t_offset = offset
+        self.size = offset + n_rules
+        self.psd_blocks = []
+
+    def x_var(self, a, b):
+        return self.x_index[(min(a, b), max(a, b))]
+
+    def m_var(self, rule, d, b):
+        return self.m_offset + (rule * self.m + d) * self.n + b
+
+    def add_psd(self, entries, size):
+        """``entries``: {(row, col) upper: [(coefficient, var or None)]}; svec(F) in the PSD cone."""
+        self.psd_blocks.append((size, entries))
+
+    def block(self, a_i, b_i, a_j, b_j, rule_i, rule_j, left_x_scale, left_y_scale, eps):
+        """Upper triangle of [[left, G'], [G, X]] - eps I with G the (averaged) closed loop."""
+        n = self.n
+        entries = {}
+        for (r, c) in self.tri:
+            top = [(left_x_scale, self.x_var(r, c))]
+            if left_y_scale and self.y_offset is not None:
+                top.append((left_y_scale, self.y_offset + self.x_index[(r, c)]))
+            if r == c:
+                top.append((-eps, None))
+            entries[(r, c)] = top
+            bottom = [(1.0, self.x_var(r, c))]
+            if r == c:
+                bottom.append((-eps, None))
+            entries[(n + r, n + c)] = bottom
+        pairs = [(a_i, b_i, rule_j, 0.5 if a_j is not None else 1.0)]
+        if a_j is not None:
+            pairs.append((a_j, b_j, rule_i, 0.5))
+        for a in range(n):
+            for b in range(n):
+                terms = []
+                for a_mat, b_mat, rule, weight in pairs:
+                    # G[b, a] = sum_c A[b, c] X[c, a] - sum_d B[b, d] M_rule[d, a]  (entry F[a, n + b] = G[b, a])
+                    for c in range(n):
+                        if a_mat[b, c] != 0.0:
+                            terms.append((weight * a_mat[b, c], self.x_var(c, a)))
+                    for d in range(self.m):
+                        if b_mat[b, d] != 0.0:
+                            terms.append((-weight * b_mat[b, d], self.m_var(rule, d, a)))
+                entries[(a, n + b)] = terms
+        self.add_psd(entries, 2 * n)
+
+    def assemble(self, gain_penalty, lower_triangular, soc_first):
+        """Sparse ``A x + s = b``; PSD blocks vectorised upper-column-major (Clarabel)
+        or lower-column-major (SCS), off-diagonals scaled by sqrt(2)."""
+        import scipy.sparse as sp
+        rows, cols, vals, rhs = [], [], [], []
+        soc_dim = self.m * self.n + 1
+        psd_rows = sum(size * (size + 1) // 2 for size, _ in self.psd_blocks)
+        soc_start = 0 if soc_first else psd_rows
+        psd_start = self.n_rules * soc_dim if soc_first else 0
+        for rule in range(self.n_rules):
+            base = soc_start + rule * soc_dim
+            rows.append(base)
+            cols.append(self.t_offset + rule)
+            vals.append(-1.0)
+            for d in range(self.m):
+                for b in range(self.n):
+                    rows.append(base + 1 + d * self.n + b)
+                    cols.append(self.m_var(rule, d, b))
+                    vals.append(-1.0)
+        offset = psd_start
+        for size, entries in self.psd_blocks:
+            for (row, col), terms in entries.items():
+                scale = 1.0 if row == col else np.sqrt(2.0)
+                if lower_triangular:
+                    index = row * size - row * (row - 1) // 2 + (col - row)
+                else:
+                    index = col * (col + 1) // 2 + row
+                for coefficient, var in terms:
+                    if var is None:
+                        rhs.append((offset + index, scale * coefficient))
+                    else:
+                        rows.append(offset + index)
+                        cols.append(var)
+                        vals.append(-scale * coefficient)
+            offset += size * (size + 1) // 2
+        n_rows = psd_rows + self.n_rules * soc_dim
+        b = np.zeros(n_rows)
+        for row, value in rhs:
+            b[row] += value
+        q = np.zeros(self.size)
+        for i in range(self.n):
+            q[self.x_index[(i, i)]] = 1.0
+        q[self.t_offset:] = gain_penalty
+        a_matrix = sp.csc_matrix((vals, (rows, cols)), shape=(n_rows, self.size))
+        return a_matrix, b, q, [size for size, _ in self.psd_blocks], soc_dim
+
+    def solve(self, gain_penalty, verbose, solver, eps, max_iters):
+        if solver == "clarabel":
+            import clarabel
+            import scipy.sparse as sp
+            a_matrix, b, q, psd_sizes, soc_dim = self.assemble(gain_penalty, False, False)
+            cones = [clarabel.PSDTriangleConeT(size) for size in psd_sizes]
+            cones += [clarabel.SecondOrderConeT(soc_dim)] * self.n_rules
+            settings = clarabel.DefaultSettings()
+            settings.verbose = verbose
+            settings.max_iter = max_iters
+            solution = clarabel.DefaultSolver(sp.csc_matrix((self.size, self.size)), q, a_matrix, b,
+                                              cones, settings).solve()
+            return str(solution.status), np.asarray(solution.x), str(solution.status) in ("Solved", "AlmostSolved")
+        import scs
+        a_matrix, b, q, psd_sizes, soc_dim = self.assemble(gain_penalty, True, True)
+        solution = scs.SCS({"A": a_matrix, "b": b, "c": q}, {"q": [soc_dim] * self.n_rules, "s": psd_sizes},
+                           eps_abs=eps, eps_rel=eps, max_iters=max_iters, verbose=verbose).solve()
+        status = str(solution["info"]["status"])
+        self.last_info = {key: float(solution["info"][key]) for key in ("res_pri", "res_dual", "gap", "pobj")}
+        self.last_info["iterations"] = int(solution["info"]["iter"])
+        # "solved (inaccurate ...)" is accepted here: verify_certificate is the gate.
+        return status, np.asarray(solution["x"]), status.startswith("solved")
+
+    def matrix(self, solution, base):
+        out = np.zeros((self.n, self.n))
+        for (i, j), k in self.x_index.items():
+            out[i, j] = out[j, i] = solution[base + k]
+        return out
+
+
+def solve_cable_ts_pdc_sparse(vertex_sets, eps=1e-9, gain_penalty=1e-3, verbose=False,
+                              relaxed=False, max_active_rules=None, decay=0.999, solver="scs",
+                              solver_eps=1e-7, max_iters=100000):
+    """Same problem as :func:`solve_cable_ts_pdc`, assembled sparsely.
+
+    ``solver`` is ``"scs"`` (first order, memory-lean, the only one that fits the
+    34-state modal problem on this host) or ``"clarabel"`` (interior point,
+    small problems). Returns the same :class:`PdcCertificate`; acceptance still
+    goes through :func:`verify_certificate`, which checks the inequalities
+    independently of how they were assembled or how accurately they were solved.
+    """
+    vertex_sets = [(list(a), list(b)) for a, b in vertex_sets]
+    if not vertex_sets:
+        raise ValueError("at least one parameter vertex set is required")
+    n_rules = len(vertex_sets[0][0])
+    n, m = vertex_sets[0][0][0].shape[0], vertex_sets[0][1][0].shape[1]
+    for a_vertices, b_vertices in vertex_sets:
+        if len(a_vertices) != n_rules or len(b_vertices) != n_rules:
+            raise ValueError("every parameter vertex set needs the same rule count")
+    if not 0.0 <= decay < 1.0:
+        raise ValueError(f"decay must satisfy 0 <= decay < 1, got {decay}")
+    s = None
+    if relaxed:
+        s = n_rules if max_active_rules is None else int(max_active_rules)
+        if s < 1:
+            raise ValueError("max_active_rules must be >= 1")
+
+    sdp = _SparseSdp(n, m, n_rules, relaxed)
+    # X - I >= 0 and, relaxed, Y >= 0.
+    sdp.add_psd({(i, j): [(1.0, sdp.x_index[(i, j)])] + ([(-1.0, None)] if i == j else [])
+                 for (i, j) in sdp.tri}, n)
+    if relaxed:
+        sdp.add_psd({(i, j): [(1.0, sdp.y_offset + sdp.x_index[(i, j)])] for (i, j) in sdp.tri}, n)
+    for a_vertices, b_vertices in vertex_sets:
+        for i in range(n_rules):
+            sdp.block(a_vertices[i], b_vertices[i], None, None, i, i, decay,
+                      -(s - 1) if relaxed else 0.0, eps)
+        for i in range(n_rules):
+            for j in range(i + 1, n_rules):
+                sdp.block(a_vertices[i], b_vertices[i], a_vertices[j], b_vertices[j], i, j, decay,
+                          1.0 if relaxed else 0.0, 0.0)
+    solution_status, values, solved = sdp.solve(gain_penalty, verbose, solver, solver_eps, max_iters)
+    certificate_type = "relaxed" if relaxed else "basic"
+    name = f"{solver.upper()}(sparse)"
+    status = solution_status + (f" {getattr(sdp, 'last_info', '')}" if hasattr(sdp, "last_info") else "")
+    if not solved:
+        return PdcCertificate(feasible=False, certificate_type=certificate_type, beta=decay,
+                              max_active_rules=s, solver_name=name, solver_status=status)
+    x_value = sdp.matrix(values, 0)
+    x_inv = np.linalg.inv(x_value)
+    p = 0.5 * (x_inv + x_inv.T)
+    gains = []
+    for rule in range(n_rules):
+        m_value = values[sdp.m_offset + rule * m * n: sdp.m_offset + (rule + 1) * m * n].reshape(m, n)
+        gains.append(m_value @ x_inv)
+    q = None
+    if relaxed:
+        y = sdp.matrix(values, sdp.y_offset)
+        # A first-order solution may leave Y marginally indefinite (~1e-6); project
+        # it back onto the cone. verify_certificate re-checks every inequality.
+        eigenvalues, vectors = np.linalg.eigh(y)
+        y = vectors @ np.diag(np.clip(eigenvalues, 0.0, None)) @ vectors.T
+        q = p @ y @ p
+        q = 0.5 * (q + q.T)
+    return PdcCertificate(feasible=True, certificate_type=certificate_type, gains=gains, lyapunov=p,
+                          slack=q, beta=decay, max_active_rules=s, solver_name=name,
+                          solver_status=status)
+
+
+def certificate_block_residuals(vertex_sets, certificate):
+    """Largest eigenvalue of the certificate inequality per (vertex, rule pair), worst first.
+
+    Diagnostic companion of :func:`verify_certificate`: names WHICH block keeps a
+    non-certified solution from being accepted.
+    """
+    p = np.asarray(certificate.lyapunov, dtype=float)
+    relaxed = certificate.certificate_type == "relaxed"
+    q = np.asarray(certificate.slack, dtype=float) if relaxed else np.zeros_like(p)
+    s = int(certificate.max_active_rules) if relaxed else 1
+    blocks = []
+    for vertex, (a_vertices, b_vertices) in enumerate(vertex_sets):
+        for i in range(len(a_vertices)):
+            for j in range(i, len(a_vertices)):
+                if i == j:
+                    g = a_vertices[i] - b_vertices[i] @ certificate.gains[i]
+                    residual = g.T @ p @ g - p + (s - 1) * q
+                else:
+                    g = 0.5 * ((a_vertices[i] - b_vertices[i] @ certificate.gains[j])
+                               + (a_vertices[j] - b_vertices[j] @ certificate.gains[i]))
+                    residual = g.T @ p @ g - p - q
+                blocks.append({"vertex": vertex, "rule_i": i, "rule_j": j, "residual": float(
+                    np.max(np.linalg.eigvalsh(0.5 * (residual + residual.T))))})
+    return sorted(blocks, key=lambda block: -block["residual"])
+
+
 def verify_lyapunov_decrease(vertex_sets, gains, lyapunov):
     """Largest eigenvalue of ``G' P G - P`` over all rules and parameters.
 

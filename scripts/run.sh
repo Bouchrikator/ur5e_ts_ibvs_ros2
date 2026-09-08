@@ -15,6 +15,12 @@
 #                ./run.sh optimus        (build/repair patched Cosserat + Optimus)
 #   Cable:       ./run.sh cable_plugin_test | cable_forward_test
 #                ./scripts/run.sh cable_sofa_mor_plugin_test (pinned MOR mapping gate)
+#   SOFA MOR:    ./scripts/run.sh cable_sofa_mor_pipeline   (all gates below, in order)
+#                cable_sofa_mor_snapshots | cable_sofa_mor_compute_modes |
+#                cable_sofa_mor_validate | cable_sofa_modal_dataset |
+#                cable_sofa_modal_ts_identify | cable_sofa_modal_lmi |
+#                cable_sofa_pdc_test | cable_sofa_modal_observer_test
+#                (artifacts in artifacts/cable_mor/, docs/sofa_mor_pipeline.md)
 #                ./run.sh optimus_smoke_test    (factory gate, ~2 s)
 #                ./run.sh cable_optimus_test    (EI/GJ recovery gates, ~15 s)
 #                ./run.sh cable_optimus_pipeline [--duration 60]
@@ -144,7 +150,7 @@ case "$CMD" in
     printf -v mor_command '%q ' ros2 run cable_identification cable_sofa_mor_plugin_test "$@"
     in_live "$mor_command"
     ;;
-  cable_sofa_mor_snapshots|cable_sofa_mor_compute_modes|cable_sofa_mor_validate)
+  cable_sofa_mor_snapshots|cable_sofa_mor_compute_modes|cable_sofa_mor_validate|cable_sofa_modal_dataset|cable_sofa_modal_ts_identify|cable_sofa_modal_lmi|cable_sofa_pdc_test|cable_sofa_modal_observer_test|cable_sofa_mor_pipeline)
     printf -v mor_command '%q ' env "CABLE_REPO_COMMIT=$(git rev-parse HEAD)" \
       OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
       ros2 run cable_ts_control cable_sofa_mor_pipeline --phase "${CMD#cable_sofa_}" "$@"
@@ -212,7 +218,7 @@ case "$CMD" in
       --event-handlers console_direct+ && colcon test-result --verbose"
     ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|optimus|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_optimus_test|cable_optimus_pipeline|cable_sim|cable_identify_sim|cable_closed_loop|cable_qs_test|cable_qs_disturb|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|optimus|cable_plugin_test|cable_forward_test|optimus_smoke_test|cable_optimus_test|cable_optimus_pipeline|cable_sim|cable_identify_sim|cable_closed_loop|cable_qs_test|cable_qs_disturb|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests|cable_sofa_mor_plugin_test|cable_sofa_mor_pipeline|cable_sofa_mor_snapshots|cable_sofa_mor_compute_modes|cable_sofa_mor_validate|cable_sofa_modal_dataset|cable_sofa_modal_ts_identify|cable_sofa_modal_lmi|cable_sofa_pdc_test|cable_sofa_modal_observer_test}"
     exit 1
     ;;
 esac

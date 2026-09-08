@@ -973,6 +973,17 @@ running pytest, or the stale installed copy is tested.
 
 ## 7. Next steps, in order
 
+> 2026-09-08: the strain-POD (ModelOrderReduction) chain of
+> [sofa_mor_pipeline.md](sofa_mor_pipeline.md) is implemented and gated end to
+> end on the SAME SOFA graph: native `WriteState` snapshots, the plugin's POD,
+> `ModelOrderReductionMapping`, TS identification on the ROM's own coordinate
+> `a`, a visual observer of `a`, and the PDC LMI. Findings that bear on this
+> list: r = 16 is the full planar rank (no cheaper model exists at the shape
+> tolerance), and the dynamic LMI is again not certified, this time with a
+> mechanism: 7-22 uncontrollable eigen-directions on the unit circle per rule
+> (PBH), i.e. the weakly excited high strain modes fit as marginal integrators.
+> Items 2 and 3 below are therefore the ones that decide the dynamic route.
+
 Items 1–3 of the previous revision are done (model order, boundary block,
 gripper in the runtime state) and item 8 is done (the image carries Cosserat
 again, and `install_cosserat.sh` repairs a recreated container). The verifier

@@ -1,6 +1,6 @@
 ---
 description: "Use when editing SOFA Cosserat cable scenes, grasp coupling, cable YAML configs, the Optimus estimator, the SOFA<->ROS 2 adapter, or Cosserat/Optimus installers, source and patches. Covers SOFA v25.12 API pitfalls, mapped-state constraints/forces, planar clamp, grasp spring, Optimus ROUKF wiring, plugin rebuilds and runSofa GUI quirks."
-applyTo: "src/cable_identification/**, src/sofa_ros2_adapter/**, scripts/install_cosserat.sh, scripts/install_optimus.sh, third_party/cosserat-patches/**, third_party/Optimus/**"
+applyTo: "src/cable_identification/**, src/sofa_ros2_adapter/**, src/cable_ts_control/cable_ts_control/sofa_*.py, src/cable_ts_control/cable_ts_control/cable_modal_observer_node.py, src/cable_ts_control/config/cable_mor.yaml, scripts/install_cosserat.sh, scripts/install_optimus.sh, scripts/install_model_order_reduction.sh, third_party/cosserat-patches/**, third_party/Optimus/**, third_party/model-order-reduction-patches/**"
 ---
 # SOFA v25.12 + Cosserat cable scene rules
 
@@ -90,3 +90,23 @@ Headless A/B scripts that step the real `cable_identification` code
 (`PYTHONPATH=/ros2_ws/src/cable_identification`), long holds (>= 600 s), with
 chain length and max |strain| as divergence metrics; then
 `./scripts/run.sh cable_plugin_test` and `cable_forward_test` (`*_PASSED` lines).
+
+## Strain-POD ROM (ModelOrderReduction), [docs/sofa_mor_pipeline.md](../../docs/sofa_mor_pipeline.md)
+- `build_cable(..., reduction=ReductionSpec(modes, metadata, r))` inserts
+  `modalCoordinateMO` (Vec1d, independent) -> `ModelOrderReductionMapping` ->
+  `cosseratCoordinateMO` (now MAPPED: no projective constraint on it, `save_state`
+  /`restore_state` act on the modal state, `refresh_mapping` re-applies MOR then
+  Cosserat). `reduction=None` is the unchanged FOM.
+- `WriteState` records the strain MO on SOFA's continuous clock: pass
+  `time=[root.time.value]`, never reset `root.time` (child contexts lag one step
+  and the first record is duplicated); labels are indented (`  X=`).
+- The only POD is the plugin's `readStateFilesAndComputeModes` on the training
+  `WriteState` files; never fit a basis on markers for `a`.
+- Fits in `a` must use the mass metric from the scene mapping
+  (`sofa_modal_ts_identification.mass_metric`): the PSD projection in raw strain
+  coordinates destroys the model. Rollout metrics must be windowed (index 0 is
+  a hold).
+- LMIs above ~20 states: `solve_cable_ts_lmi --backend sparse` (SCS); cvxpy and
+  Clarabel are OOM-killed. The verifier is the gate, not the solver status.
+- `cable_sofa_*` commands install the pinned MOR plugin through `in_live`; the
+  FOM commands do not need it.

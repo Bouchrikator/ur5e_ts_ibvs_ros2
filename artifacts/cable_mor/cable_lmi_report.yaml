@@ -1,0 +1,48 @@
+attempts:
+- conditions: basic
+  solver: SCS(sparse)
+  solver_feasible: true
+  solver_status: 'solved (inaccurate - reached max_iters) {''res_pri'': 1.1202535530023134, ''res_dual'': 0.0012241921523913713, ''gap'': 0.0005304517082746023, ''pobj'': 177.22822003678135, ''iterations'':
+    6000}'
+  verified: false
+  worst_blocks:
+  - residual: 36.95525838477895
+    rule_i: 3
+    rule_j: 3
+    vertex: 0
+  - residual: 36.0008587226711
+    rule_i: 3
+    rule_j: 3
+    vertex: 1
+  - residual: 33.07670649887871
+    rule_i: 1
+    rule_j: 3
+    vertex: 0
+  worst_cross_residual: 33.07670649887871
+  worst_diagonal_residual: 36.95525838477895
+- conditions: relaxed
+  solver: SCS(sparse)
+  solver_feasible: true
+  solver_status: 'solved (inaccurate - reached max_iters) {''res_pri'': 1.187796241440073, ''res_dual'': 0.001000000000000078, ''gap'': 0.02083306372633409, ''pobj'': 2.1714574330546563, ''iterations'':
+    6000}'
+  verified: false
+  worst_blocks:
+  - residual: 6.313185518805679
+    rule_i: 1
+    rule_j: 1
+    vertex: 0
+  - residual: 6.263353689165672
+    rule_i: 1
+    rule_j: 1
+    vertex: 1
+  - residual: 6.110779803747819
+    rule_i: 0
+    rule_j: 0
+    vertex: 2
+  worst_cross_residual: 5.253017058412134
+  worst_diagonal_residual: 6.313185518805679
+backend: sparse
+certified: false
+n_parameter_vertices: 4
+n_rules: 4
+state_dim: 34

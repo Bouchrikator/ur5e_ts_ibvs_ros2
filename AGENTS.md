@@ -67,11 +67,20 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 - `scripts/cable/`: in-container demo helpers, mounted read-only at
 	`/ros2_ws/scripts/cable`.
 - `third_party/`: the Optimus port to SOFA 25.12 (`Optimus/`, minimal core,
-	pinned upstream SHA in `Optimus/UPSTREAM.md`) and the Cosserat patch that makes
+	pinned upstream SHA in `Optimus/UPSTREAM.md`), the Cosserat patch that makes
 	`BeamHookeLawForceField` rebuild its stiffness cache when EI/GI change
-	(`cosserat-patches/`). Read [docs/optimus_port.md](docs/optimus_port.md)
+	(`cosserat-patches/`) and the ModelOrderReduction patches (`d94dc49`,
+	mapping-only build) installed by `scripts/install_model_order_reduction.sh`.
+	Read [docs/optimus_port.md](docs/optimus_port.md)
 	before touching the estimator scene, the wrapper or the patch; gate results and
 	the deferred 21.12 parity oracle are recorded there.
+- SOFA strain-POD chain (one modal coordinate `a` for ROM, TS, PDC and observer):
+	`./scripts/run.sh cable_sofa_mor_pipeline` or its phases; artifacts and gate
+	numbers in `artifacts/cable_mor/`, design, measured limits (r = 16 is the full
+	planar rank, no speed-up; 14 measurements < r so the observer is dynamic) in
+	[docs/sofa_mor_pipeline.md](docs/sofa_mor_pipeline.md). Settings/thresholds:
+	[cable_mor.yaml](src/cable_ts_control/config/cable_mor.yaml); never loosen them
+	to promote a smaller order.
 - `artifacts/`: datasets, modal bases, TS models, gains. The certified set is
 	`*_narrow` (`cable_modal_basis_narrow.yaml`, `cable_qs_model_narrow.yaml`,
 	`cable_qs_gains_narrow.yaml`). Never hand-edit or fabricate a basis/model/
