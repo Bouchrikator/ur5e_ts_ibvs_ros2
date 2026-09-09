@@ -27,6 +27,7 @@ setup(
             "cable_plugin_test = cable_identification.plugin_test:main",
             "cable_forward_test = cable_identification.forward_test:main",
             "cable_sofa_mor_plugin_test = cable_identification.mor_plugin_test:main",
+            "cable_dynamics_dump = cable_identification.dynamics_dump:main",
             "optimus_smoke_test = cable_identification.optimus_smoke_test:main",
             "optimus_recovery_test = cable_identification.optimus_recovery_test:main",
             "optimus_pipeline_test = cable_identification.optimus_pipeline_test:main",

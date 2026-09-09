@@ -26,6 +26,20 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
   change must be exercised on both paths (`cable_forward_test` check 7 is pre-init).
 - Keep the marker indices, `L`, substep/`control_dt` ratio and `marker_s_over_l`
   consistent with the basis/model YAML; the offline pipeline reads them from there.
+- Assembled matrices (`build_cable(..., expose_matrices=True)`, `CableHandles.system_matrices()`,
+  `./scripts/run.sh cable_dynamics`, doc section 9): `import Sofa.SofaLinearSystem` **before**
+  `addObject` or the `MatrixLinearSystem` handle has no `A()/b()/x()`. `CompositeLinearSystem`
+  in 25.12 never raises its own `factorizationInvalidation`, so the solver never factorises
+  (dv = 0, cable frozen) unless that Data is linked to the solved system's. Observer systems
+  must be `template="FullMatrix"` (an unsolved CRS matrix is never compressed and reads back
+  as zeros) and `FullMatrix.A()` is a view on SOFA memory: `np.array(..., copy=True)` before
+  the next step or `unload`. `applyMappedComponents=False` separates the Hooke law and the
+  clamp from the projected grasp spring. The documented `GlobalSystemMatrixExporter` IS
+  shipped (plugin `SofaMatrix` under `/opt/sofa/plugins`, not `/opt/sofa/include`).
+  A force field's own `rayleighStiffness` enters `A` only (`-h (h + rK + rK_ff)`), never the
+  RHS. `DiscreteCosseratMapping.applyJ/applyJT` are mutually consistent but are NOT the
+  derivative of `apply()` (lumped-node lever `l (L - s_i)`): do not build a check that
+  assumes `J^T lambda` equals the virtual work of the frames.
 
 ## Grasp coupling ([coupling.py](../../src/cable_identification/cable_identification/coupling.py))
 - The spring is disabled while DETACHED and re-enabled on the latch edge with its

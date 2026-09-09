@@ -15,6 +15,7 @@ Units: SI (m, kg, s, N).
 
 import os
 
+import numpy as np
 import yaml
 
 DEFAULT_CONFIG = {
@@ -57,6 +58,7 @@ REQUIRED_PLUGINS = [
     "Sofa.Component.AnimationLoop",
     "Sofa.Component.ODESolver.Backward",
     "Sofa.Component.LinearSolver.Direct",
+    "Sofa.Component.LinearSystem",
     "Sofa.Component.StateContainer",
     "Sofa.Component.SolidMechanics.Spring",
     "Sofa.Component.Constraint.Projective",
@@ -144,7 +146,7 @@ class CableHandles:
 
     def __init__(self, solver_node, base_mo, strain_mo, force_field, frames_mo, cfg,
                  grasp_target_mo=None, ode_solver=None, grasp_spring=None, mapping=None,
-                 modal_mo=None, mor_mapping=None):
+                 modal_mo=None, mor_mapping=None, linear_systems=None):
         self.solver_node = solver_node
         self.base_mo = base_mo
         self.strain_mo = strain_mo
@@ -157,7 +159,56 @@ class CableHandles:
         self.mapping = mapping
         self.modal_mo = modal_mo
         self.mor_mapping = mor_mapping
+        # {"A": MatrixLinearSystem, "M": ..., "B": ..., "K": ...} when built with expose_matrices
+        self.linear_systems = linear_systems or {}
         self.marker_indices = marker_frame_indices(cfg)
+
+    def system_matrices(self):
+        """The implicit system SOFA solved in the last step, as numpy/scipy.
+
+        EulerImplicitSolver (v25.12 source): ``A dv = b`` with
+        ``A = (1 + h rM) M - h B - h (h + rK) K`` and ``b = h (f + ((h + rK) K - rM M) v)``,
+        K = df/dq (negative for a spring). A force field's own ``rayleighStiffness``
+        (``rK_ff``, the Hooke law here) is added to its K factor in ``A`` only
+        (``kFactorIncludingRayleighDamping``; the RHS uses B(0)), so its factor is
+        ``-h (h + rK + rK_ff)``. Observers assemble one term each (pre-multiplied);
+        ``K_direct`` skips the mapped components (grasp spring, frame mass), which
+        splits K into the Hooke law (strain block), the base clamp (base block) and
+        the projected grasp spring ``J^T K_g J``. Needs ``expose_matrices=True`` + a step.
+        """
+        if not self.linear_systems:
+            raise RuntimeError("build the cable with expose_matrices=True")
+        h = float(self.solver_node.getRoot().dt.value)
+        rM = float(self.ode_solver.rayleighMass.value)
+        rK = float(self.ode_solver.rayleighStiffness.value)
+        rK_ff = float(self.force_field.rayleighStiffness.value)
+        # FullMatrix comes back as a view on SOFA's buffer: copy before the next step
+        # (or the scene unload) overwrites it.
+        terms = {key: np.array(self.linear_systems[key].A(), dtype=float, copy=True)
+                 for key in ("M", "B", "K", "K_direct")}
+        kF_springs, kF_hooke = -h * (h + rK), -h * (h + rK + rK_ff)
+        nb = self.base_mo.position.value.size - 1  # Rigid3d: 7 coords, 6 dofs
+        k_clamp = np.zeros_like(terms["K"])
+        k_clamp[:nb, :nb] = terms["K_direct"][:nb, :nb] / kF_springs
+        out = {
+            "A": self.linear_systems["A"].A(), "b": self.linear_systems["A"].b(),
+            "x": self.linear_systems["A"].x(),
+            "M_term": terms["M"], "B_term": terms["B"], "K_term": terms["K"],
+            "K_direct_term": terms["K_direct"],
+            "M": terms["M"] / (1.0 + h * rM), "B": terms["B"] / -h, "K_clamp": k_clamp,
+            "factors": {"h": h, "rM": rM, "rK": rK, "rK_ff": rK_ff, "mF": 1.0 + h * rM,
+                        "bF": -h, "kF_springs": kF_springs, "kF_hooke": kF_hooke},
+        }
+        if self.modal_mo is None:
+            k_int = np.zeros_like(terms["K"])
+            k_int[nb:, nb:] = terms["K_direct"][nb:, nb:] / kF_hooke
+            k_grasp = (terms["K"] - terms["K_direct"]) / kF_springs
+            out.update(K_int=k_int, K_grasp=k_grasp, K=k_int + k_clamp + k_grasp)
+        else:
+            # ROM: the Hooke law sits on the mapped strain state, so it and the grasp
+            # spring both reach the modal dofs through Phi with their own factors.
+            out["K_mapped_term"] = terms["K"] - terms["K_direct"]
+        return out
 
     def set_base_pose(self, pose7):
         """Kinematically drive/relocate the cable base: [x y z qx qy qz qw].
@@ -282,8 +333,12 @@ _FORCE_FIELD_DATA = {"EI": "EI", "GJ": "GI", "GI": "GI", "EA": "EA", "GA": "GA",
 
 
 def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-                show=False, reduction=None):
-    """Build the cable under `parent`; returns CableHandles."""
+                show=False, reduction=None, expose_matrices=False):
+    """Build the cable under `parent`; returns CableHandles.
+
+    ``expose_matrices`` routes the solver through an explicit ``MatrixLinearSystem``
+    (same assembled A, readable from Python) and adds M/B/K observer systems.
+    """
     if reduction is not None:
         from cable_identification.strain_basis import validate_reduction
         modes_path, _, _ = validate_reduction(cfg, reduction)
@@ -296,8 +351,36 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
         "EulerImplicitSolver",
         rayleighMass=float(cfg["rayleigh_mass_per_s"]),
         rayleighStiffness=float(cfg["rayleigh_stiffness_s"]))
-    solver.addObject("SparseLDLSolver", name="solver",
-                     template="CompressedRowSparseMatrixd")
+    linear_systems = {}
+    if expose_matrices:
+        # The typed binding (A()/b()/x()) is chosen at addObject time, so import first.
+        import Sofa.SofaLinearSystem  # noqa: F401
+        template = "CompressedRowSparseMatrixd"
+        linear_systems["A"] = solver.addObject("MatrixLinearSystem", template=template, name="systemA")
+        # One contribution each, never solved: the terms of the dynamics equation. Dense
+        # on purpose: a sparse matrix only compresses when a solver factorises it, and
+        # the Python binding reads the compressed arrays (an unsolved sparse observer
+        # reads back as all zeros).
+        for key, flags in (("M", (True, False, False)), ("B", (False, True, False)),
+                           ("K", (False, False, True)), ("K_direct", (False, False, True))):
+            linear_systems[key] = solver.addObject(
+                "MatrixLinearSystem", template="FullMatrix", name=f"system{key}",
+                assembleMass=flags[0], assembleDamping=flags[1], assembleStiffness=flags[2],
+                assembleGeometricStiffness=False, applyProjectiveConstraints=False,
+                applyMappedComponents=key != "K_direct")
+        # The composite assembles every listed system each step and hands A to the solver.
+        # SOFA 25.12 never raises the composite's own change flag (it only forwards), so
+        # the solver would never factorise: link the flag to the solved system's.
+        composite = solver.addObject(
+            "CompositeLinearSystem", template=template, name="systemComposite",
+            linearSystems=[s.getLinkPath() for s in linear_systems.values()],
+            solverLinearSystem=linear_systems["A"].getLinkPath(),
+            factorizationInvalidation="@systemA.factorizationInvalidation")
+        solver.addObject("SparseLDLSolver", name="solver", template=template,
+                         linearSystem=composite.getLinkPath())
+    else:
+        solver.addObject("SparseLDLSolver", name="solver",
+                         template="CompressedRowSparseMatrixd")
 
     rigid_base = solver.addChild("rigidBase")
     base_mo = rigid_base.addObject(
@@ -379,4 +462,4 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
 
     return CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
                         grasp_target_mo, ode_solver, grasp_spring, mapping,
-                        modal_mo, mor_mapping)
+                        modal_mo, mor_mapping, linear_systems)

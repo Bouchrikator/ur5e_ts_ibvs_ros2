@@ -245,3 +245,114 @@ reproduced bit-for-bit (same hashes), and it stopped at `modal_lmi`.
 Every artifact of the chain carries the strain-basis hash
 (`beb83b3c...`), the dataset hash, the config hash and the two commits; the
 nodes refuse anything that does not match (`modal_contract.py`).
+
+## 9. The equation SOFA actually solves, term by term
+
+`./scripts/run.sh cable_dynamics` (`cable_identification/dynamics_dump.py`)
+builds the truth cable with `build_cable(..., expose_matrices=True)`, attaches
+and drags the tip to a bent configuration and, for the last step, writes every
+term of
+
+    M(q) q'' + C(q,q') q' + f_int(q; EA,EI,GJ) = f_g + J_g(q)^T lambda
+
+to `artifacts/cable_dynamics/` (`cable_dynamics.npz`, `.png`, a report with
+every array printed in full, and `sofa_export/*.txt` written by SOFA's own
+`GlobalSystemMatrixExporter`, plugin `SofaMatrix`, shipped under
+`/opt/sofa/plugins`). Every number comes from a SOFA component:
+
+| term | SOFA source | shape |
+|---|---|---|
+| `q`, `q'` | `MechanicalObject.position/velocity` of the rigid base (6 dofs) and the 16 x 3 strains (torsion, bend_y, bend_z) | 54 |
+| `q''` | `(q'+ - q')/h`, `q'+ - q'` = `SparseLDLSolver` solution (`MatrixLinearSystem.x`) | 54 |
+| `M(q)` | `MatrixLinearSystem(assembleMass)` / `(1 + h rM)` = `J^T diag(m) J` of the frames' `UniformMass` (0.07 kg): dense, configuration dependent, SPD | 54 x 54 |
+| `C(q,q') q'` | `EulerImplicitSolver` Rayleigh damping `(rM M - rK K) q'+` (implicit) `- rK_ff K_int dq'`; SOFA computes **no Coriolis/centrifugal term** for mapped masses | 54 |
+| `f_int` | `BeamHookeLawForceField`: `-K_int (q - q0)`, `K_int = -diag(GI l, EI l, EI l)` from `MatrixLinearSystem(assembleStiffness, applyMappedComponents=0)` | 54 |
+| `f_g` | `UniformMass x root.gravity` = 0 (table model); the base clamp reaction `f_clamp` (RestShapeSprings 1e8) is the other external force | 54 |
+| `lambda` | `FramesMO.force[tip]`: the grasp `RestShapeSpringsForceField` wrench `(F, tau) = (k (p_target - p_tip), -k_a rotvec)` | 6 |
+| `J_g(q)` | `DiscreteCosseratMapping.applyJ` probed with unit velocities (the Jacobian SOFA uses) | 6 x 54 |
+| `J_g^T lambda` | `DiscreteCosseratMapping.applyJT` (strain/base force minus Hooke and clamp) == probed `J_g^T lambda` | 54 |
+
+What SOFA does with them (`EulerImplicitSolver.cpp` v25.12): `A dq' = b` with
+`A = (1 + h rM) M - h B - h (h + rK) K` and `b = h (f + ((h + rK) K - rM M) q')`,
+`K = df/dq`. A force field's own `rayleighStiffness` (`rK_ff`, the Hooke law here)
+is added to its K factor in `A` only (`kFactorIncludingRayleighDamping`, the RHS
+uses `B(0)`), so it damps the velocity **increment**: `-rK_ff K_int dq'` (1e-5 N m
+here), not a `rK_ff K q'` force. Rewritten, SOFA's step is exactly
+`M q'' + (rM M - rK K) q'+ - rK_ff K_int dq' = f(q) + h K q'+ ~ f(q+)`, the
+equation above at the new configuration; the dump asserts that identity to
+1e-14 on the free dofs. `B == 0` (no component implements
+`buildDampingMatrix`); the planar `PartialFixedProjectiveConstraint` shows up in
+`A` as identity rows/columns on the 32 locked dofs.
+
+Measured property of the pinned Cosserat release (f64e029, also the source of
+the patched build): `applyJT == applyJ^T`, but **`applyJ` is not the derivative
+of `apply()`**. On the straight rod the tip moves by `l (L - s_i)` per unit
+bend rate of section `i` (rotation about the section START node) instead of
+`l (L - s_i - l/2)` (curvature distributed over the section): the tangent
+operator of `updateTangExpSE3` lacks the angular-linear coupling. At the bent
+dump configuration `J_g^T lambda` differs from a consistent Jacobian by 1.5-3 %
+at the base sections, 27-58 % near the tip and flips sign on the last one.
+`M = J^T diag(m) J`, `J^T K_g J` and `J_g^T lambda` all use this `J`, so the
+equation is exact for SOFA's own `J` but not the virtual work of the frames'
+motion. This is recorded, not changed (it is the plant everything was identified
+on); it is a candidate explanation for the energy pumped into the rod by forces
+on mapped frames (status doc section 5.16), which is a hypothesis, not a result.
+
+The dump asserts: exporter files == binding read, `A == M_term + B_term +
+K_term`, `||A dq' - b|| <= 1e-8 ||b||`, `q'+ - q' == dq'`, `M` SPD with the
+cable mass on the base translation block, `K_int` == the force-field Data,
+`K_clamp` == the base spring Data, `lambda` == the grasp spring law, the frames
+carry no other force, `applyJT == applyJ^T`, the clamp translation law, the
+lumped-node lever on the straight rod, the residual and the locked-dof pattern;
+then prints `CABLE_DYNAMICS_DUMP_PASSED`.
+
+### 9.1 The form of the discretisation (what "finite element" means here)
+
+SOFA's own FEM components (`TetrahedronFEMForceField` etc.) discretise a volume
+with shape functions and assemble `K = sum_e integral B^T D B` per element. The
+cable is **not** one of those: it is a Cosserat rod in strain coordinates
+(SofaDefrost `Cosserat` plugin, Renda et al. piecewise-constant-strain model),
+so the "elements" are the 16 sections and the nodal unknowns are the strains:
+
+| FEM notion | cable equivalent (`cosserat_model.py`) |
+|---|---|
+| element | one section of length `l = L/16`, constant strain `(kappa_x, kappa_y, kappa_z)` |
+| nodal dofs | 6 rigid base dofs + 3 strains per section = 54 |
+| shape functions | `DiscreteCosseratMapping`: frames `g(s) = g_base exp(l_1 hat(xi_1)) ... exp((s - s_i) hat(xi_i))` (SE(3) exponentials, `apply`) |
+| element stiffness | `BeamHookeLawForceField`: `K_e = -diag(GI, EI, EI) l` per section, block-diagonal, constant (linear constitutive law, geometric nonlinearity only through the mapping) |
+| element mass | none on the strains: `UniformMass` puts `0.07/41 kg` on each of the 41 mapped frames and SOFA projects it, `M(q) = J(q)^T diag(m) J(q)` every step |
+| boundary conditions | `PartialFixedProjectiveConstraint` (planar: rows of `A` replaced by identity), `RestShapeSpringsForceField` 1e8 on the base, 2e3 on the tip (penalty, not Lagrange) |
+| assembly | `MatrixLinearSystem`: force fields write their local blocks (`buildStiffnessMatrix` / legacy `addKToMatrix`), mapped components are projected with the mappings' assembled Jacobians (`J^T K J`, `J^T M J`), then projective constraints are applied |
+| time integration | `EulerImplicitSolver`: one linearised implicit Euler step per `h = 0.01 s`, no Newton iterations |
+
+What the dump shows about this form: `K_int` is exactly the block-diagonal
+Hooke law (values `3.5e-4, 4.375e-4, 4.375e-4 N m^2` per section), `M` is dense
+because every frame depends on every upstream strain, the two springs dominate
+`K` by 4 to 11 decades, and the only nonlinearity is `J(q)`.
+
+### 9.2 The form of the POD-Galerkin reduction (`--rom`)
+
+`./scripts/run.sh cable_dynamics --rom` repeats the dump on the reduced cable
+(`build_cable(..., reduction=...)`, section 1 of this document) and writes
+`cable_dynamics_rom.{npz,png}`, `cable_dynamics_rom_report.txt`,
+`sofa_export_rom/`. Default basis: the promoted `cable_strain_modes.txt`
+(r = 16, the full planar rank); `--modes/--modes-metadata` selects a candidate,
+e.g. `candidates/tol_0.2` for r = 3 (98.27 % of the snapshot energy).
+
+| POD step | where it happens |
+|---|---|
+| snapshots | `WriteState` on the strain MO during the 24 training drags (`cable_sofa_mor_snapshots`), `X0` = `kappa_0 = 0` |
+| SVD | the plugin's `readStateFilesAndComputeModes` (`cable_sofa_mor_compute_modes`), singular values in `cable_strain_modes.yaml` (874, 685, 204, 110, 78, 54, 27, 17, ...; 0 after 16 = the 32 planar-locked rows) |
+| basis | `Phi` 48 x r, orthonormal columns, torsion/bend_y rows exactly zero |
+| reduced coordinates | `modalCoordinateMO` (Vec1d, r values) -> `ModelOrderReductionMapping` -> `cosseratCoordinateMO`: `kappa = kappa_0 + Phi a`, `kappa' = Phi a'`, `f_a = Phi^T f_kappa` |
+| reduced operators | assembled by SOFA through the mapping chain: `M_r = Phi^T J^T diag(m) J Phi` (6+r square, base block untouched), `K_int_r = Phi^T K_int Phi`, `K_grasp_r = Phi^T J^T K_g J Phi`, clamp unchanged |
+| reduced equation | `M_r a'' + C_r a' + f_int_r = J_r^T lambda` with `f_int_r = -Phi^T K_int (kappa - kappa_0)`, `J_r^T lambda = Phi^T J_g^T lambda` |
+
+The dump checks the Galerkin property directly: SOFA's assembled `M_r` and
+`K_r` equal `Phi^T (.) Phi` of the full model placed at `kappa_0 + Phi a` to
+1e-8 (the text precision of the mode file), `kappa == kappa_0 + Phi a`
+exactly, and the reduced equation balances to 6e-15. No hyper-reduction (ECSW)
+is used: the Hooke law is 48 diagonal entries, there is nothing to sample.
+With r = 16 the reduced matrices are a change of basis (no speed-up, section
+3); with r = 3 the modal mass is 3 x 3 and the internal stiffness
+`Phi^T K_int Phi` is 3 x 3.
