@@ -7,7 +7,8 @@ Scene layout (protocol §12): the physical cable is built unchanged by
       cable_solver       OptimParams, StochasticStateWrapper (strains in state,
                          parameter reduced), BoundaryController
         rigidBase        RigidBaseMO
-        cosseratCoordinate  cosseratCoordinateMO, hooke (EI <- @estimated_EI.value)
+        cosseratCoordinate  cosseratCoordinateMO (Vec6d), hooke (EI <- @estimated_EI.value),
+                            kelvinVoigt (coefficients re-synced to EI at every propagation)
           frames         FramesMO, DiscreteCosseratMapping
             markers      Vec3 points at the marker frames (RigidMapping),
                          SimulatedStateObservationSource (trackedObservations),
@@ -77,6 +78,9 @@ def make_boundary_controller(cable):
             cable.set_base_pose(self.pose)
             with cable.base_mo.velocity.writeable() as v:
                 v[:] = 0.0
+            # the Kelvin-Voigt coefficients are proportional to the stiffness the sigma point
+            # is propagated with (EI through the OptimParams Data link)
+            cable.sync_damping()
             self.applications += 1
 
     return BoundaryController()
@@ -253,7 +257,7 @@ def build_optimus_cable(root, cfg, parameters=("EI",), init_values=None, relativ
         cable.force_field.findData(_PARAM_FIELD[p]).setParent(params[p].findData("value"))
 
     wrapper = solver.addObject(
-        "StochasticStateWrapper", name="stateWrapper", template="Vec3d",
+        "StochasticStateWrapper", name="stateWrapper", template="Vec6d",
         mstate="cosseratCoordinate/cosseratCoordinateMO",
         mappedState="rigidBase/frames/markers/markersMO",
         estimatePosition=True, estimateVelocity=False, positionStdev=[0.0],
@@ -274,8 +278,10 @@ def build_optimus_cable(root, cfg, parameters=("EI",), init_values=None, relativ
     obs_source = markers.addObject(
         "SimulatedStateObservationSource", name="observations", template="Vec3d",
         trackedObservations=[[0.0, 0.0, 0.0]] * n_markers)
+    # <filter, master (Vec6 strains), observed (Vec3 markers)>: the observations carry the
+    # observed type (Optimus port, MappedStateObservationManager)
     obs_manager = markers.addObject(
-        "MappedStateObservationManager", name="observationManager",
+        "MappedStateObservationManager", name="observationManager", template="double,Vec6d,Vec3d",
         observationStdev=float(observation_std), observationIndices=list(range(n_markers)),
         stateWrapper=wrapper.getLinkPath(), verbose=False)
 

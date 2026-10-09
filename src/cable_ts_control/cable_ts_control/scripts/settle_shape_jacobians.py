@@ -82,7 +82,6 @@ def settle_case(cfg, parameters, targets, sofa_dt, settle_steps, ramp_steps,
         Sofa.Simulation.animate(root, sofa_dt)
     tip = cable.tip_pose()
     coupling.update_grasp(tip, 0.0)
-    coupling.ramp_s = 0.0
 
     check = max(1, int(0.5 / sofa_dt))
     max_blocks = max(1, (settle_steps * 5) // check)

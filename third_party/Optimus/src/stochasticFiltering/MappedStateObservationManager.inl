@@ -22,6 +22,7 @@
 #pragma once
 
 #include <sofa/simulation/Node.h>
+#include <type_traits>
 #include "MappedStateObservationManager.h"
 
 
@@ -141,11 +142,11 @@ void MappedStateObservationManager<FilterType, DataTypes1, DataTypes2>::initiali
         inputStateSize = observationSource->getStateSize();
     }
 
-    inputVectorSize = inputStateSize*DataTypes1::spatial_dimensions;
+    inputVectorSize = inputStateSize*DataTypes2::spatial_dimensions;
     masterVectorSize = masterStateSize*DataTypes1::spatial_dimensions;
-    mappedVectorSize = mappedStateSize*DataTypes1::spatial_dimensions;
+    mappedVectorSize = mappedStateSize*DataTypes2::spatial_dimensions;
 
-    typename DataTypes1::VecCoord& inputObsState = *inputObservationData.beginEdit();
+    typename DataTypes2::VecCoord& inputObsState = *inputObservationData.beginEdit();
     inputObsState.resize(inputStateSize);
     observationSource->getStateAtTime(0.0, inputObsState);
 
@@ -155,7 +156,7 @@ void MappedStateObservationManager<FilterType, DataTypes1, DataTypes2>::initiali
             return;
         }
         PRNS("Non-mapping version, |observations| = |input observation state| = |mapped state| = " << inputStateSize);
-        sofa::helper::WriteAccessor< Data<typename DataTypes1::VecCoord> > mappedObsState = mappedObservationData;
+        sofa::helper::WriteAccessor< Data<typename DataTypes2::VecCoord> > mappedObsState = mappedObservationData;
         mappedObsState.resize(mappedStateSize);
         this->observationSize = mappedVectorSize;
         for (size_t i = 0; i < mappedStateSize; i++)
@@ -171,8 +172,13 @@ void MappedStateObservationManager<FilterType, DataTypes1, DataTypes2>::initiali
             return;
         }
         PRNS("Mapping version, |observations| = " << mappedVectorSize << " |input observation state| = |master state| = " << inputStateSize);
-        sofa::core::MechanicalParams mp;
-        mapping->apply(&mp, mappedObservationData, inputObservationData);
+        if constexpr (std::is_same_v<DataTypes1, DataTypes2>) {
+            sofa::core::MechanicalParams mp;
+            mapping->apply(&mp, mappedObservationData, inputObservationData);
+        } else {
+            PRNE("Mapping version requires observations in master coordinates (identical master/observed types)");
+            return;
+        }
         this->observationSize = mappedVectorSize;
     }
 
@@ -193,7 +199,7 @@ bool MappedStateObservationManager<FilterType, DataTypes1, DataTypes2>::hasObser
         Inherit::initialiseObservationsAtFirstStep.setValue(false);
     }
 
-    typename DataTypes1::VecCoord& inputObsState = *inputObservationData.beginEdit();
+    typename DataTypes2::VecCoord& inputObsState = *inputObservationData.beginEdit();
     //PRNS("Getting observation at time " << this->actualTime);
     bool hasObservation = observationSource->getObservation(this->actualTime, inputObsState);
 
@@ -211,21 +217,25 @@ bool MappedStateObservationManager<FilterType, DataTypes1, DataTypes2>::hasObser
             PRNE("Mapping the input observations requires a direct mapping");
             return (false);
         }
-        sofa::core::MechanicalParams mp;
-        //std::cout << "Input observation: " << inputObsState << std::endl;
-        mapping->apply(&mp, mappedObservationData, inputObservationData);
-        sofa::helper::WriteAccessor< Data<typename DataTypes1::VecCoord> > mappedObsState = mappedObservationData;
-        //std::cout << "Mapped observation: " << mappedObsState << std::endl;
+        if constexpr (std::is_same_v<DataTypes1, DataTypes2>) {
+            sofa::core::MechanicalParams mp;
+            mapping->apply(&mp, mappedObservationData, inputObservationData);
+        } else {
+            PRNE("Mapping version requires observations in master coordinates (identical master/observed types)");
+            return (false);
+        }
+        sofa::helper::WriteAccessor< Data<typename DataTypes2::VecCoord> > mappedObsState = mappedObservationData;
 
+        const size_t dim = DataTypes2::spatial_dimensions;
         for (size_t i = 0; i < mappedStateSize; i++) {
-            for (size_t d = 0; d < 3; d++) {
+            for (size_t d = 0; d < dim; d++) {
                 if (noiseStdev.getValue() != 0.0)
                     mappedObsState[i][d] += (*pVarNorm)();
-                actualObservation(3 * i + d) = mappedObsState[i][d];
+                actualObservation(dim * i + d) = mappedObsState[i][d];
             }
         }
     } else {
-        sofa::helper::WriteAccessor< Data<typename DataTypes1::VecCoord> > mappedObsState = mappedObservationData;
+        sofa::helper::WriteAccessor< Data<typename DataTypes2::VecCoord> > mappedObsState = mappedObservationData;
         if (mappedObsState.size() != inputObsState.size()) {
             PRNE("Different mapped and input observation size: " << mappedObsState.size() << " vs " << inputObsState.size());
             return (false);
@@ -234,11 +244,12 @@ bool MappedStateObservationManager<FilterType, DataTypes1, DataTypes2>::hasObser
         for (size_t i = 0; i < mappedObsState.size(); i++)
             mappedObsState[i] = inputObsState[observationIndices[i]];
 
+        const size_t dim = DataTypes2::spatial_dimensions;
         for (size_t i = 0; i < mappedObsState.size(); i++) {
-            for (size_t d = 0; d < 3; d++) {
+            for (size_t d = 0; d < dim; d++) {
                 if (noiseStdev.getValue() != 0.0)
                     mappedObsState[i][d] += (*pVarNorm)();
-                actualObservation(3 * i + d) = mappedObsState[i][d];
+                actualObservation(dim * i + d) = mappedObsState[i][d];
             }
         }
     }

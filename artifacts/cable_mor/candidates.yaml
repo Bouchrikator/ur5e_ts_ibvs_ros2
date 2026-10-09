@@ -1,35 +1,50 @@
-- n_modes: 3
-  modes_path: candidates/tol_0.2.txt
-  metadata_path: candidates/tol_0.2.yaml
-  position_projection_relative: 0.13148870675287921
-  velocity_projection_relative: 0.38348122136595075
-- n_modes: 4
+- n_modes: 5
   modes_path: candidates/tol_0.1.txt
   metadata_path: candidates/tol_0.1.yaml
-  position_projection_relative: 0.08897703618056074
-  velocity_projection_relative: 0.3441039159975208
-- n_modes: 6
-  modes_path: candidates/tol_0.05.txt
-  metadata_path: candidates/tol_0.05.yaml
-  position_projection_relative: 0.03208304195524067
-  velocity_projection_relative: 0.20377585472375853
-- n_modes: 8
+  position_projection_relative: 0.06501337138863507
+  velocity_projection_relative: 0.2989228220926148
+- n_modes: 7
   modes_path: candidates/tol_0.02.txt
   metadata_path: candidates/tol_0.02.yaml
-  position_projection_relative: 0.014813460985233543
-  velocity_projection_relative: 0.1289921316111941
+  position_projection_relative: 0.01438713796041664
+  velocity_projection_relative: 0.09481806466276799
 - n_modes: 9
   modes_path: candidates/tol_0.01.txt
   metadata_path: candidates/tol_0.01.yaml
-  position_projection_relative: 0.009656264250036512
-  velocity_projection_relative: 0.09745447105942308
-- n_modes: 12
+  position_projection_relative: 0.008050777482354042
+  velocity_projection_relative: 0.06017826056589839
+- n_modes: 11
   modes_path: candidates/tol_0.005.txt
   metadata_path: candidates/tol_0.005.yaml
-  position_projection_relative: 0.004139743432253791
-  velocity_projection_relative: 0.04466048911037425
-- n_modes: 16
+  position_projection_relative: 0.0038153631005919415
+  velocity_projection_relative: 0.028109908970946496
+- n_modes: 18
   modes_path: candidates/tol_0.001.txt
   metadata_path: candidates/tol_0.001.yaml
-  position_projection_relative: 1.5390946051992618e-05
-  velocity_projection_relative: 1.647826861715804e-05
+  position_projection_relative: 0.0006716955530683284
+  velocity_projection_relative: 0.008232826212504745
+- n_modes: 24
+  modes_path: candidates/tol_0.0002.txt
+  metadata_path: candidates/tol_0.0002.yaml
+  position_projection_relative: 0.00017191452337380622
+  velocity_projection_relative: 0.003298509625174918
+- n_modes: 28
+  modes_path: candidates/tol_5e-05.txt
+  metadata_path: candidates/tol_5e-05.yaml
+  position_projection_relative: 5.065333124373058e-05
+  velocity_projection_relative: 0.0006794620032002022
+- n_modes: 33
+  modes_path: candidates/tol_1e-05.txt
+  metadata_path: candidates/tol_1e-05.yaml
+  position_projection_relative: 2.860603240786176e-05
+  velocity_projection_relative: 0.0001543920998149053
+- n_modes: 39
+  modes_path: candidates/tol_2e-06.txt
+  metadata_path: candidates/tol_2e-06.yaml
+  position_projection_relative: 2.800099167590605e-05
+  velocity_projection_relative: 5.3160011829522875e-05
+- n_modes: 48
+  modes_path: candidates/tol_1e-07.txt
+  metadata_path: candidates/tol_1e-07.yaml
+  position_projection_relative: 2.9266691115932977e-05
+  velocity_projection_relative: 2.8749457479254554e-05

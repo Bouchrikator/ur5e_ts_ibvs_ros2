@@ -1,4 +1,12 @@
-"""Validate SOFA state/mode files before passing them to native components."""
+"""Validate SOFA state/mode files before passing them to native components.
+
+The strain POD lives in the strain-energy inner product ``<q1, q2> = q1^T W q2``,
+``W = diag(Sigma) l`` of the nominal cable (``cosserat_model.strain_weights``): the
+official SOFA-MOR POD is run on the scaled snapshots ``W^1/2 q`` and its Euclidean-
+orthonormal modes ``Phi_tilde`` are stored unscaled, ``Phi = W^-1/2 Phi_tilde``, so the
+ROM mapping reads ``q = q0 + Phi a`` directly and ``Phi^T W Phi = I``. The matching
+projection is ``a = Phi^T W (q - q0)`` (``project_strain``), never ``Phi^T q``.
+"""
 
 import hashlib
 import json
@@ -7,6 +15,23 @@ from pathlib import Path
 
 import numpy as np
 import yaml
+
+from cable_identification import cosserat_model as cm
+
+INNER_PRODUCT = "strain_energy"
+MAPPING_TEMPLATE = "Vec1d->Vec6d"
+
+
+def installed_plugin_patches(sofa_root=None):
+    """Patch-set markers of the installed Cosserat and ModelOrderReduction builds
+    (``{name: "<commit> <patches sha256>"}``); a basis is only compatible with the mechanics
+    and mapping it was generated with."""
+    import os
+
+    root = Path(sofa_root or os.environ.get("SOFA_ROOT", "/opt/sofa")) / "plugins"
+    markers = {"Cosserat": root / "Cosserat/.cable-cosserat-build",
+               "ModelOrderReduction": root / "ModelOrderReduction/.cable-mor-build"}
+    return {name: (path.read_text().strip() if path.is_file() else "unknown") for name, path in markers.items()}
 
 
 @dataclass(frozen=True)
@@ -83,28 +108,68 @@ def read_modes(path):
     return modes
 
 
+def write_modes(path, modes):
+    """Exact MatrixLoader text format (``rows cols`` header), full precision."""
+    modes = np.asarray(modes, dtype=float)
+    np.savetxt(path, modes, header=f"{modes.shape[0]} {modes.shape[1]}", comments="", fmt="%.17g")
+
+
+def scale_state_file(source, target, factors):
+    """Copy a WriteState file with every ``X0=/X=/V=`` vector multiplied by ``factors``."""
+    factors = np.asarray(factors, dtype=float)
+    with open(source) as src, open(target, "w") as dst:
+        for line in src:
+            key, separator, values = line.partition("=")
+            if separator and key.strip() in ("X0", "X", "V"):
+                vector = np.asarray(values.split(), dtype=float)
+                if vector.size != factors.size:
+                    raise ValueError(f"{key.strip()} has {vector.size}, expected {factors.size} scalars")
+                dst.write(f"{key}= " + " ".join(f"{v:.17g}" for v in vector * factors) + "\n")
+            else:
+                dst.write(line)
+
+
+def project_strain(modes, weights, strain, reference=0.0):
+    """W-orthogonal projection ``a = Phi^T W (q - q0)`` (rows of ``strain`` are states)."""
+    return (np.asarray(strain, dtype=float) - reference) @ (np.asarray(weights)[:, None] * modes)
+
+
+def weighted_norm(weights, strain):
+    return float(np.sqrt(np.sum(np.asarray(weights) * np.asarray(strain, dtype=float) ** 2)))
+
+
 def validate_reduction(cfg, reduction):
     modes = read_modes(reduction.modes_path)
     with open(reduction.metadata_path) as stream:
         metadata = yaml.safe_load(stream)
     order = reduction.n_modes
-    dimension = 3 * int(cfg["number_of_sections"])
+    dimension = cm.strain_dimension(cfg)
     if not isinstance(order, int) or isinstance(order, bool) or not 1 <= order <= modes.shape[1]:
         raise ValueError("Requested MOR order is outside the mode file")
     if modes.shape[0] != dimension or metadata["full_dimension"] != dimension:
         raise ValueError("MOR strain dimension does not match the cable")
     if metadata["n_modes"] != modes.shape[1] or metadata["number_of_sections"] != cfg["number_of_sections"]:
         raise ValueError("MOR metadata dimensions disagree with the mode file")
-    if metadata["state_coordinates"] != "cosserat_modal" or metadata["component_order"] != [
-            "kappa_x", "kappa_y", "kappa_z"]:
-        raise ValueError("MOR coordinates must be section-major Cosserat strains")
+    if metadata["state_coordinates"] != "cosserat_modal" or metadata["component_order"] != list(
+            cm.STRAIN_COMPONENTS):
+        raise ValueError("MOR coordinates must be section-major 6-component Cosserat strains")
     if metadata["strain_basis_sha256"] != file_sha256(reduction.modes_path):
         raise ValueError("MOR mode file hash mismatch")
     if metadata["config_sha256"] != config_sha256(cfg):
         raise ValueError("MOR basis was generated for another cable configuration")
-    reference = np.asarray(metadata["kappa_0"], dtype=float)
+    reference = np.asarray(metadata["q_0"], dtype=float)
     if reference.shape != (dimension,) or np.any(reference != 0.):
         raise ValueError("The current cable ROM requires the physical zero-strain reference")
+    weights = np.asarray(metadata["pod_weights"], dtype=float)
+    if metadata["inner_product"] != INNER_PRODUCT or weights.shape != (dimension,) or not np.allclose(
+            weights, cm.strain_weights(cfg), rtol=1e-12, atol=0.):
+        raise ValueError("MOR inner product is not the strain-energy metric of this cable")
+    if metadata["mapping_template"] != MAPPING_TEMPLATE:
+        raise ValueError("MOR basis was generated for another mapping template")
+    installed = installed_plugin_patches()
+    if any(installed[name] != "unknown" and installed[name] != metadata["plugin_patches"].get(name)
+           for name in installed):
+        raise ValueError("MOR basis was generated with other Cosserat/MOR plugin patches than installed")
     singular = np.asarray(metadata["singular_values"], dtype=float)
     if singular.ndim != 1 or len(singular) < order or not np.all(np.isfinite(singular)):
         raise ValueError("Missing or invalid POD singular values")
@@ -113,12 +178,13 @@ def validate_reduction(cfg, reduction):
     tolerance = float(metadata["orthogonality_tolerance"])
     if not 0. < tolerance <= 0.001:
         raise ValueError("Invalid MOR text precision tolerance")
-    np.testing.assert_allclose(modes[:, :order].T @ modes[:, :order], np.eye(order),
+    retained = modes[:, :order]
+    np.testing.assert_allclose(retained.T @ (weights[:, None] * retained), np.eye(order),
                                atol=tolerance, rtol=0.)
-    active = list(range(2, dimension, 3)) if cfg["planar"] else list(range(dimension))
+    active = cm.active_components(cfg)
     if metadata["active_components"] != active:
         raise ValueError("MOR active components do not match the planar configuration")
     inactive = sorted(set(range(dimension)) - set(active))
-    if inactive and np.max(np.abs(modes[inactive, :order])) > 1e-10:
-        raise ValueError("Planar ROM has torsion or out-of-plane bending modes")
-    return str(Path(reduction.modes_path).resolve()), modes[:, :order], metadata
+    if inactive and np.max(np.abs(retained[inactive])) > 1e-10:
+        raise ValueError("Planar ROM has torsion, out-of-plane bending or out-of-plane shear modes")
+    return str(Path(reduction.modes_path).resolve()), retained, metadata

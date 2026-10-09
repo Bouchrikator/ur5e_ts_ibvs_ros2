@@ -5,8 +5,8 @@ cable:
   length_m: 0.7
   radius_m: 0.004
   mass_kg: 0.07
-  EA_N: 5000.0          # axial rigidity (declared; reduced model is bend/twist)
-  GA_N: 2000.0          # shear rigidity
+  EA_N: 5000.0          # axial rigidity (finite: the rod is extensible)
+  GA_N: 2000.0          # shear rigidity (in-plane shear is a free planar strain)
   number_of_sections: 16
   number_of_frames: 40
   timestep_s: 0.01
@@ -14,20 +14,18 @@ cable:
   marker_s_over_l: [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0]
   # Table shaping: the rod rests on the table -> no effective gravity, and the
   # motion is constrained to the base plane instead of modelling contact.
+  # Friction with the table is neglected (rayleigh_mass_per_s = 0 in the
+  # physical configs); the only damping is the Kelvin-Voigt internal law.
   gravity: [0.0, 0.0, 0.0]
   planar: true
   grasp_tip: true
-  # Attachment stiffness, chosen from a measured trade-off (spring_sweep):
-  # the spring acts on MAPPED Cosserat frames, whose geometric stiffness the
-  # implicit solver never sees, so overly stiff springs pump energy until the
-  # rod coils (at 2e4 N/m the chain collapses 0.70 -> 0.26 m within seconds
-  # of dragging). 2e3 N/m holds a 300 s attached drag with 0.21 mm tip error
-  # (identifiability spec <= 1 mm) and zero drift in chain length.
-  grasp_stiffness: 2000.0
-  # Rod-scaled: tip moments are EI*kappa ~ mNm; holding the latch orientation
-  # at 0.5+ Nm/rad stores ~0.1 Nm and pushes mm-level position error.
-  grasp_angular_stiffness: 0.05
+  # No-slip grasp (no measurement of the real mounting yet): stiff penalty
+  # springs on the grasped frame so the attachment error stays far below the
+  # 1 mm / 0.02 rad identifiability budget (1e5 N/m: 0.1 mm per 10 N of cable
+  # tension; 10 N.m/rad: 4 mrad per EI*kappa = 0.04 N.m end moment). Lower
+  # these only to a measured grasp compliance.
+  grasp_stiffness: 100000.0
+  grasp_angular_stiffness: 10.0
   attach_mode: explicit    # a supervisor requests the grasp; no proximity magic
   attach_distance_m: 0.15  # xy proximity to the free end for the snap
   attach_height_m: 0.01    # gripper within 1 cm of the table plane to snap
-  attach_ramp_s: 0.5       # quick smooth snap once conditions are met

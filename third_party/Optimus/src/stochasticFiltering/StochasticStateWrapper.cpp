@@ -49,11 +49,13 @@ void registerStochasticStateWrapper(sofa::core::ObjectFactory* factory)
 {
     factory->registerObjects(core::ObjectRegistrationData("Interface between the filter state (Eigen) and the SOFA mechanical state and parameters")
         .add< StochasticStateWrapper<Vec3Types, double> >(true)
+        .add< StochasticStateWrapper<Vec6Types, double> >()
         .add< StochasticStateWrapper<Rigid3Types, double> >());
 }
 
 
 template class SOFA_STOCHASTIC_API StochasticStateWrapper<Vec3Types, double>;
+template class SOFA_STOCHASTIC_API StochasticStateWrapper<Vec6Types, double>;
 template class SOFA_STOCHASTIC_API StochasticStateWrapper<Rigid3Types, double>;
 
 

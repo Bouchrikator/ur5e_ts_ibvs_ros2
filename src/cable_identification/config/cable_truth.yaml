@@ -7,5 +7,5 @@ cable:
   base: cable_common.yaml
   EI_Nm2: 0.010            # bending rigidity
   GJ_Nm2: 0.008            # torsional rigidity (Cosserat data field name: GI)
-  rayleigh_mass_per_s: 0.10
-  rayleigh_stiffness_s: 0.02
+  rayleigh_mass_per_s: 0.0    # table friction neglected
+  rayleigh_stiffness_s: 0.02  # Kelvin-Voigt internal damping [s]

@@ -1,5 +1,33 @@
-schema_version: 1
+schema_version: 2
 state_coordinates: cosserat_strain
+component_order:
+- kappa_x
+- kappa_y
+- kappa_z
+- epsilon_x
+- epsilon_y
+- epsilon_z
+operating_envelope:
+  radial_min: 0.92
+  radial_max: 1.002
+  angle_limit: 0.55
+  max_speed: 0.15
+  yaw_limit: 0.5
+  max_yaw_rate: 0.5
+  radial_bend: 0.97
+  angle_limit_taut: 0.2
+  length_m: 0.7
+  parameter_bounds: &id001
+    EI:
+    - 0.005
+    - 0.015
+    rayleigh_stiffness:
+    - 0.018
+    - 0.022
+  gripper_yaw_commanded: true
+plugin_patches:
+  Cosserat: f64e029de61d320700bcb5f0ececc4efc0d8b1d9 6fc73ae2b5830456f9b982aa9cc24c84206635cd8454ed8cd8d015773088f0bb
+  ModelOrderReduction: d94dc49dff66d936ad11c33a8f195cc167c98b61 981ac37d1d9f3b1f54dd850d7dad12d65ff217026ecd39859b8c1f223b2fc620
 config:
   length_m: 0.7
   radius_m: 0.004
@@ -8,7 +36,7 @@ config:
   GJ_Nm2: 0.008
   EA_N: 5000.0
   GA_N: 2000.0
-  rayleigh_mass_per_s: 0.1
+  rayleigh_mass_per_s: 0.0
   rayleigh_stiffness_s: 0.02
   number_of_sections: 16
   number_of_frames: 40
@@ -28,18 +56,17 @@ config:
   grasp_tip: true
   attach_distance_m: 0.15
   attach_height_m: 0.01
-  attach_ramp_s: 0.5
   attach_mode: explicit
-  grasp_stiffness: 2000.0
-  grasp_angular_stiffness: 0.05
+  grasp_stiffness: 100000.0
+  grasp_angular_stiffness: 10.0
   planar: true
-  planar_stiffness: 10000.0
-config_sha256: 43d3bae0f6b940a364aa447a266a7c1962e5c771b92c4f37e1305e2ea1fbd803
+  convective_inertia: false
+config_sha256: 767e445dc4dffbb93bb628e3eccc6d8ba18b2c629df610dd68c91231b91e662c
 settings:
   control_dt: 0.04
   velocity_alpha: 0.35
   seed: 20260908
-  n_trajectories: 6
+  n_trajectories: 7
   control_steps: 600
   hold_control_steps: 125
   train_trajectories:
@@ -49,29 +76,45 @@ settings:
   - 3
   validation_trajectories:
   - 4
-  test_trajectories:
   - 5
+  test_trajectories:
+  - 6
   radial_min: 0.92
-  radial_max: 0.985
+  radial_max: 1.002
   angle_limit: 0.55
   max_speed: 0.15
-  sweeps: 6.0
+  yaw_limit: 0.5
+  max_yaw_rate: 0.5
+  radial_bend: 0.97
+  angle_limit_taut: 0.2
+  sweeps: 1.5
   pod_tolerances:
-  - 0.2
   - 0.1
-  - 0.05
   - 0.02
   - 0.01
   - 0.005
   - 0.001
+  - 0.0002
+  - 5.0e-05
+  - 1.0e-05
+  - 2.0e-06
+  - 1.0e-07
   rank_relative_tolerance: 1.0e-10
   basis_orthogonality_tolerance: 0.0005
   validation:
     marker_rmse_m: 0.005
     marker_max_m: 0.01
+    centerline_rmse_m: 0.005
+    centerline_max_m: 0.01
     tip_position_m: 0.001
     tip_orientation_rad: 0.02
+    grasp_position_m: 0.001
+    grasp_orientation_rad: 0.02
     strain_relative_error: 0.05
+    strain_component_relative_error: 0.05
+    strain_rate_relative_error: 0.1
+    grasp_wrench_relative_error: 0.05
+    physical_length_error_m: 0.001
     chain_length_error_m: 0.001
     hold_seconds: 600.0
     rollout_seconds: 2.0
@@ -86,7 +129,7 @@ settings:
     eps: 1.0e-06
     gain_penalty: 0.001
     backend: sparse
-    max_iters: 20000
+    max_iters: 6000
   pdc:
     settle_seconds: 6.0
     duration_seconds: 12.0
@@ -105,207 +148,233 @@ settings:
     max_iterations: 3
     warm_start_updates: 5
     max_estimate_marker_rmse_m: 0.005
-settings_sha256: 4ea3b0f6c5b87d5977ec90451c91b68f559eaa6eac211d25c7fb98b5aafc6f90
-parameter_bounds:
-  EI:
-  - 0.005
-  - 0.015
-  rayleigh_stiffness:
-  - 0.018
-  - 0.022
-repo_commit: bd9de550ba013d5c02b77cc70e3e203938797bed
-dataset_sha256: 91375dba0763c26b554413fdf6b6a789941d8b92c3693644fca64d8f0629cdc6
-training_state_sha256: a08a6b645c27ac52826ed62194fba1fc3c5172d6fd42df8778872e21b4080b58
+settings_sha256: d7681291dcde0463d08008e5ba404e577094faa74b5f2527b9e50986aaf4eb98
+parameter_bounds: *id001
+repo_commit: 128333426df5dacda9743519df304aa0c2f43391
+dataset_sha256: 51484ba568a93e5c7a52d849b0b978d2fd0b270f5c5b88aa877c89f4132ff87f
+training_state_sha256: 666826f516775e10e46664d940b8e708c57652c01eb554c0179f6c885ac43611
 episodes:
 - vertex_id: 0
   trajectory_id: 0
   split: train
   state_file: states/vertex_0_trajectory_0.state
-  state_sha256: 2136945495385a761f451d86d0da65112ce7cf3c113d7714f36ae7b8e3b5914c
+  state_sha256: ea9be83ecf3b075e01be3d0860623c45060add2724b8feed51ab9f1286c37fcb
   sample_start: 0
   sample_stop: 600
-  mean_step_seconds: 0.0018350567724996836
+  mean_step_seconds: 0.0017536471220834452
 - vertex_id: 0
   trajectory_id: 1
   split: train
   state_file: states/vertex_0_trajectory_1.state
-  state_sha256: cae4e35889e9f4c4e5eaa9ccaa775004c31bdafa2e9ce4c6c51e34edad6a8566
+  state_sha256: be2ee628be1bfe2ba2a0b70970b7d84dc3c8e0a2ef93b35b42c6c892f152c522
   sample_start: 600
   sample_stop: 1200
-  mean_step_seconds: 0.0018184584599998744
+  mean_step_seconds: 0.001753044779583585
 - vertex_id: 0
   trajectory_id: 2
   split: train
   state_file: states/vertex_0_trajectory_2.state
-  state_sha256: 9df417277e7f795529f6627e37abc87a490e7a03b282bfb30baa5ccc181cd9cf
+  state_sha256: ee3a3fdf0317a1700c64d3ffea2b6b6750cf3d58a6fc94c1c107f7cd9c4fa9cf
   sample_start: 1200
   sample_stop: 1800
-  mean_step_seconds: 0.0018416132983338684
+  mean_step_seconds: 0.0017694771379168136
 - vertex_id: 0
   trajectory_id: 3
   split: train
   state_file: states/vertex_0_trajectory_3.state
-  state_sha256: 6c02e0c44355ab84f5bd286944ee5e78bb036490f7d5a5e20fe79b061c5c4e81
+  state_sha256: 7a53ac67c26b23b9c23567c234f590ede442ff4a5cad4bd7d7986f8b551f4340
   sample_start: 1800
   sample_stop: 2400
-  mean_step_seconds: 0.0018124292329162017
+  mean_step_seconds: 0.001754262758333122
 - vertex_id: 0
   trajectory_id: 4
   split: validation
   state_file: states/vertex_0_trajectory_4.state
-  state_sha256: 3b02730392a6cf35eeb30d1af96ca3799d9c409148cd1ddf633531a271f8a98c
+  state_sha256: 6ce28d075ef2493d55c5bdc8fd80d0bd145330a5e5e1a88cafdaf72789e772e6
   sample_start: 2400
   sample_stop: 3000
-  mean_step_seconds: 0.0018108539020833328
+  mean_step_seconds: 0.001752325533750536
 - vertex_id: 0
   trajectory_id: 5
-  split: test
+  split: validation
   state_file: states/vertex_0_trajectory_5.state
-  state_sha256: 8ea9ac3351beeb78b690f1868084747b0f6eaa7170873b6f3ad2cb846769c0f4
+  state_sha256: 5cd294018f8f9b646e3052e661e8845cda1cb970c3127de5d995a1e57856fd05
   sample_start: 3000
   sample_stop: 3600
-  mean_step_seconds: 0.0018157947650001916
+  mean_step_seconds: 0.0017535216504173453
+- vertex_id: 0
+  trajectory_id: 6
+  split: test
+  state_file: states/vertex_0_trajectory_6.state
+  state_sha256: a4cb052ab72a723df541bd8df9fb40b05c7d55ca78f25b6d92e12e2d39573f5a
+  sample_start: 3600
+  sample_stop: 4200
+  mean_step_seconds: 0.00174467462833339
 - vertex_id: 1
   trajectory_id: 0
   split: train
   state_file: states/vertex_1_trajectory_0.state
-  state_sha256: 2948377d1bf86e1536ab74ad3cbf5c6cd1632c656641348d7b38957e7dab0154
-  sample_start: 3600
-  sample_stop: 4200
-  mean_step_seconds: 0.0018034234825002689
+  state_sha256: 7eeb141333c50a6783f0383c8a979841f10fb2ff895549df6460200fe8be7805
+  sample_start: 4200
+  sample_stop: 4800
+  mean_step_seconds: 0.0017468928587504706
 - vertex_id: 1
   trajectory_id: 1
   split: train
   state_file: states/vertex_1_trajectory_1.state
-  state_sha256: 48c698c820806185804c4dcad092e04ab260b673443ab24a2925885cf044c3fa
-  sample_start: 4200
-  sample_stop: 4800
-  mean_step_seconds: 0.0018213758541666418
+  state_sha256: afdf1ece4488d3c616756b82a2f14dec224f918ea9b0bbc83ed00dc2a6d52458
+  sample_start: 4800
+  sample_stop: 5400
+  mean_step_seconds: 0.0017606745512496976
 - vertex_id: 1
   trajectory_id: 2
   split: train
   state_file: states/vertex_1_trajectory_2.state
-  state_sha256: 7db48c8892d1890521d85f548e626628acd6ae0a4e416a8a4db0af23d4c5f70a
-  sample_start: 4800
-  sample_stop: 5400
-  mean_step_seconds: 0.0018326920499998779
+  state_sha256: dcf191288d5f3aec330536993703923f8dff880d982cad1a4b1a35ad08c3aa35
+  sample_start: 5400
+  sample_stop: 6000
+  mean_step_seconds: 0.0017651615183338738
 - vertex_id: 1
   trajectory_id: 3
   split: train
   state_file: states/vertex_1_trajectory_3.state
-  state_sha256: ab105ceb0c66b9d104f3d262044a4348e5d784cb5811d8ed69e8917ece0371c1
-  sample_start: 5400
-  sample_stop: 6000
-  mean_step_seconds: 0.001805539606249719
+  state_sha256: b8661237d1c7f704addd6c25319261f59e4613a60895d349a1c088fc5269eb09
+  sample_start: 6000
+  sample_stop: 6600
+  mean_step_seconds: 0.0017503679329168638
 - vertex_id: 1
   trajectory_id: 4
   split: validation
   state_file: states/vertex_1_trajectory_4.state
-  state_sha256: 269d68ab217acd9cbe31e70eda5d378583a1acc9e722342c9756439c080e221a
-  sample_start: 6000
-  sample_stop: 6600
-  mean_step_seconds: 0.0018101516558332758
-- vertex_id: 1
-  trajectory_id: 5
-  split: test
-  state_file: states/vertex_1_trajectory_5.state
-  state_sha256: a133c937ad7101e000290c48723aa33913448d60156f1853c35b6990cbc6b8ed
+  state_sha256: 386862dd12e1f39763e890fdd8f69a16f3dab4a66fdff7946e913794685a3234
   sample_start: 6600
   sample_stop: 7200
-  mean_step_seconds: 0.0018209795724995577
+  mean_step_seconds: 0.0017966377754161536
+- vertex_id: 1
+  trajectory_id: 5
+  split: validation
+  state_file: states/vertex_1_trajectory_5.state
+  state_sha256: 12b2d7bb304acedf7642c70296f1a38b376f2893582baf0d6966f0d8651df590
+  sample_start: 7200
+  sample_stop: 7800
+  mean_step_seconds: 0.001764977145416348
+- vertex_id: 1
+  trajectory_id: 6
+  split: test
+  state_file: states/vertex_1_trajectory_6.state
+  state_sha256: 44b648ca62b33471d087f85bd829cff4bf9f150780f61fb65fd63da21b57439e
+  sample_start: 7800
+  sample_stop: 8400
+  mean_step_seconds: 0.0017321271945835784
 - vertex_id: 2
   trajectory_id: 0
   split: train
   state_file: states/vertex_2_trajectory_0.state
-  state_sha256: 8a1e023c1bda74f8f9ac2ffd9e1e41ff9fe4baa455514f6bb2ab4d1e4a974333
-  sample_start: 7200
-  sample_stop: 7800
-  mean_step_seconds: 0.0017986698670832387
+  state_sha256: f6ceb7aa5cabab20bd0431e4936b84ce50e142fb8da8de284b51d1b001a9b4d9
+  sample_start: 8400
+  sample_stop: 9000
+  mean_step_seconds: 0.0017540498620837752
 - vertex_id: 2
   trajectory_id: 1
   split: train
   state_file: states/vertex_2_trajectory_1.state
-  state_sha256: 397cdca7254e74bbfc8e933727863f6f1178eebe6316f4f465449a689cd8c223
-  sample_start: 7800
-  sample_stop: 8400
-  mean_step_seconds: 0.001795195680000082
+  state_sha256: 46ba851f0f54170312d6ee3b3768d90a50c0527390d20f8ad78c2878e63b3594
+  sample_start: 9000
+  sample_stop: 9600
+  mean_step_seconds: 0.0017861003895836803
 - vertex_id: 2
   trajectory_id: 2
   split: train
   state_file: states/vertex_2_trajectory_2.state
-  state_sha256: 3a5a6d8e64e89887696b284370f0e3e6dad41f4884dedd6efff57def0f14ed3b
-  sample_start: 8400
-  sample_stop: 9000
-  mean_step_seconds: 0.0018729173408337373
+  state_sha256: a1a4a63e4da40248dfedba278c960ec5d7bf1dbce3f57e31b00464a5ea0cb90f
+  sample_start: 9600
+  sample_stop: 10200
+  mean_step_seconds: 0.001772915548333458
 - vertex_id: 2
   trajectory_id: 3
   split: train
   state_file: states/vertex_2_trajectory_3.state
-  state_sha256: 28596bbf9d30a3ca68d87a690abd495b494dfed06c3c15d98a2e51cceedc19a0
-  sample_start: 9000
-  sample_stop: 9600
-  mean_step_seconds: 0.0018274827995833221
+  state_sha256: 8fe1b78e00a15d839db8bec32c10354f600896bf06316c6f1594b1b85966dc47
+  sample_start: 10200
+  sample_stop: 10800
+  mean_step_seconds: 0.0017412254745833404
 - vertex_id: 2
   trajectory_id: 4
   split: validation
   state_file: states/vertex_2_trajectory_4.state
-  state_sha256: 8f6f20bd8635fcf5a538c50d0d05200b3fd9c5f9a2aca0062711802cef7d7c52
-  sample_start: 9600
-  sample_stop: 10200
-  mean_step_seconds: 0.001810443108333099
+  state_sha256: 70dd71cfc043b9016c8d049da1e684f782814f1173a53f2c90a64b7828bc4cf8
+  sample_start: 10800
+  sample_stop: 11400
+  mean_step_seconds: 0.001750653619166466
 - vertex_id: 2
   trajectory_id: 5
-  split: test
+  split: validation
   state_file: states/vertex_2_trajectory_5.state
-  state_sha256: 055bd0a204d5261ed66eece5a2231ab6f4b0f808af8864b73641f69c8a2b8fef
-  sample_start: 10200
-  sample_stop: 10800
-  mean_step_seconds: 0.0018179223441666182
+  state_sha256: 3064ed50970bafcbfa41077906be13fdae1034d6ef32ec3703ac8abab7a3fe07
+  sample_start: 11400
+  sample_stop: 12000
+  mean_step_seconds: 0.0017401346879167552
+- vertex_id: 2
+  trajectory_id: 6
+  split: test
+  state_file: states/vertex_2_trajectory_6.state
+  state_sha256: b27f3f4c2b2a8f52fa408458233e2dd8dd378d60336f9f99cf8ef68a5590ae4b
+  sample_start: 12000
+  sample_stop: 12600
+  mean_step_seconds: 0.001750474403750104
 - vertex_id: 3
   trajectory_id: 0
   split: train
   state_file: states/vertex_3_trajectory_0.state
-  state_sha256: e907a6a0ef9199cd39c0f627aac933f987e771f9dfb447e250a469bc0cc722cf
-  sample_start: 10800
-  sample_stop: 11400
-  mean_step_seconds: 0.0018243292274996747
+  state_sha256: da0d62fcd933d02e2f581b8a31020883e379a8422c60ab6f9e51be6be28cfb42
+  sample_start: 12600
+  sample_stop: 13200
+  mean_step_seconds: 0.0017366471425005632
 - vertex_id: 3
   trajectory_id: 1
   split: train
   state_file: states/vertex_3_trajectory_1.state
-  state_sha256: 17d70b402fb634e22af0a6f79daab59fc53fccebd5d02ca4b4250e6fe28c805b
-  sample_start: 11400
-  sample_stop: 12000
-  mean_step_seconds: 0.0018081698916663906
+  state_sha256: ffacc60fcc998c6c850b121d34be4ec93242bde9496557066e2b4c4d3bc775ab
+  sample_start: 13200
+  sample_stop: 13800
+  mean_step_seconds: 0.0017283087329171092
 - vertex_id: 3
   trajectory_id: 2
   split: train
   state_file: states/vertex_3_trajectory_2.state
-  state_sha256: 901545c05fdda2290a56610cbd4e394068b1f6ea3316fe7fdde6899a5f640b54
-  sample_start: 12000
-  sample_stop: 12600
-  mean_step_seconds: 0.001813654212083596
+  state_sha256: a1699c59a970834f07dc4881264ef3a99009130d6d8ff8321e2c9a694d158862
+  sample_start: 13800
+  sample_stop: 14400
+  mean_step_seconds: 0.0017319943504170018
 - vertex_id: 3
   trajectory_id: 3
   split: train
   state_file: states/vertex_3_trajectory_3.state
-  state_sha256: 493db2d418c7a40e91849e01cf952404eb200eb7a748ae321bbd05345a376472
-  sample_start: 12600
-  sample_stop: 13200
-  mean_step_seconds: 0.0017994403174998296
+  state_sha256: a7947b4a0890f6f7f7b80d13d7aec50c2850ab306b6745acf5b635e939c3c999
+  sample_start: 14400
+  sample_stop: 15000
+  mean_step_seconds: 0.0017378035458333822
 - vertex_id: 3
   trajectory_id: 4
   split: validation
   state_file: states/vertex_3_trajectory_4.state
-  state_sha256: 97357300bbaa4963412a5133da83735edc37ac74ca45cb15e8d13df01c9b24e3
-  sample_start: 13200
-  sample_stop: 13800
-  mean_step_seconds: 0.001806473649583798
+  state_sha256: 1c5dc605356f2acbb6e6d8828f2bf1c7c98202c25b09508f895af740a5380d69
+  sample_start: 15000
+  sample_stop: 15600
+  mean_step_seconds: 0.0017767308045836218
 - vertex_id: 3
   trajectory_id: 5
-  split: test
+  split: validation
   state_file: states/vertex_3_trajectory_5.state
-  state_sha256: df4c792c4949f97626ef37da3434828c822eace96afebfe21e2d8682ae8c1fad
-  sample_start: 13800
-  sample_stop: 14400
-  mean_step_seconds: 0.0018027401416664665
+  state_sha256: 3123b7565e71ab9bf1500800bce6a096ac93127f8647f073ff5c299f7813690c
+  sample_start: 15600
+  sample_stop: 16200
+  mean_step_seconds: 0.0017506415770837218
+- vertex_id: 3
+  trajectory_id: 6
+  split: test
+  state_file: states/vertex_3_trajectory_6.state
+  state_sha256: 2e1d7995c9e3b02119d2b62255932337250117d64243ebfea1cd98e731a1309c
+  sample_start: 16200
+  sample_stop: 16800
+  mean_step_seconds: 0.0017503131991664608

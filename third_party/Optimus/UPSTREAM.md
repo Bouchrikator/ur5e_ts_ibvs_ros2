@@ -33,7 +33,12 @@ gates that exercise them in `docs/optimus_port.md` §2):
 - `StochasticStateWrapper`: `mstate` path data, `getMappedPosFromFilterVector`,
   `PartialFixedProjectiveConstraint` ignored (nodes stay in the state).
 - `MappedStateObservationManager`: mapping optional, wrapper-based mapped
-  positions, prediction-only when no observation is valid.
+  positions, prediction-only when no observation is valid; observations typed by
+  the observed state `DataTypes2` (direct-mapping path only for identical
+  master/observed types); instantiation `<double, Vec6Types, Vec3Types>` for the
+  Vec6 Cosserat strain state.
+- `StochasticStateWrapper<Vec6Types, double>` (`stateDim` 6/6) for the Vec6
+  strain state.
 - `ObservationManager` base: `observationVariances` (per-coordinate R, zero
   weight for unobserved coordinates), `getObservedSize()`.
 - `SimulatedStateObservationSource`: `trackedObservationsValid` data.

@@ -1,28 +1,71 @@
 control_dt: 0.04
 velocity_alpha: 0.35
 seed: 20260908
-n_trajectories: 6
+# Whole-trajectory split (every parameter vertex of a trajectory goes with it): the
+# basis is fitted on train, the order is selected on validation, and the test
+# trajectory is evaluated once with the frozen order (never used for selection;
+# trajectories 0-5 took part in earlier selections, 6 is fresh).
+n_trajectories: 7
 control_steps: 600
 hold_control_steps: 125
 train_trajectories: [0, 1, 2, 3]
-validation_trajectories: [4]
-test_trajectories: [5]
+validation_trajectories: [4, 5]
+test_trajectories: [6]
+# Declared gripper range of the excitation, in rest lengths: below 1 the rod bends,
+# above 1 it is pulled taut and stretches (1.002 L = 1.4 mm = 10 N of tension at
+# EA = 5 kN; the extension mode only appears in the POD when this is excited).
 radial_min: 0.92
-radial_max: 0.985
+radial_max: 1.002
 angle_limit: 0.55
 max_speed: 0.15
-sweeps: 6.0
-pod_tolerances: [0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.001]
+# Gripper yaw is commanded together with the translation (the no-slip grasp
+# transmits it): chord bearing + relative yaw inside +-yaw_limit [rad], at most
+# max_yaw_rate [rad/s]. Taut cable (radius -> 1): bearing and relative yaw taper
+# linearly from their slack limits at radial_bend to angle_limit_taut at the rest
+# length, because a clamp angle theta on a cable under tension T bends it with
+# kappa ~ theta sqrt(T/EI) within sqrt(EI/T) ~ 15-30 mm of the clamp (0.2 rad at
+# 10-13 N and EI 0.005: kappa 4-8 /m, resolved to 0.5 mm in marker position by 16
+# sections; 0.5 rad: kappa > 20 /m, outside the linear law and the section size).
+yaw_limit: 0.5
+max_yaw_rate: 0.5
+radial_bend: 0.97
+angle_limit_taut: 0.2
+# angle sweep cycles per trajectory; the radius (2.2x) and yaw (0.7x) sweeps are
+# incommensurate with it. 1.5 cycles keep the +-angle_limit boundary reachable at
+# max_speed and leave speed budget for the radial sweep (6 cycles were trimmed
+# to +-15 deg by the speed limiter, 2 starved the taut peaks).
+sweeps: 1.5
+# nu = sqrt(sum(discarded sigma^2) / sum(all sigma^2)) in the strain-energy metric: a
+# snapshot-energy criterion that generates the candidates, not an accuracy bound.
+# The list reaches the full active rank (48 planar strains, nu ~ 1.5e-8) so the
+# selection can fall back to a pure coordinate change if no truncation passes.
+pod_tolerances: [0.1, 0.02, 0.01, 0.005, 0.001, 0.0002, 0.00005, 0.00001, 0.000002, 0.0000001]
 rank_relative_tolerance: 1.0e-10
 basis_orthogonality_tolerance: 0.0005
-# FOM/ROM acceptance: 5 mm shape tolerance and <= 1 mm grasp error are the
-# existing marker-space requirements (docs section 5.16 / cable_target.yaml).
+# FOM/ROM acceptance, fixed before any order is selected: 5 mm shape tolerance
+# (markers and the full centreline at matching material coordinates) and <= 1 mm
+# / 0.02 rad grasp error are the existing marker-space requirements (docs
+# section 5.16 / cable_target.yaml), applied to the ROM-FOM tip AND to each
+# model's tracking of the commanded grasp pose. Strain errors are relative in
+# the strain-energy norm and per active component (bending, extension, shear)
+# so bending cannot hide an axial error; strain rates and the grasp reaction
+# wrench get their own budgets. physical_length_error_m compares
+# sum(l_i |v_i|) of ROM and FOM (both may depart from the rest length);
+# chain_length_error_m is the polyline chord, kept for the PDC stage only.
 validation:
   marker_rmse_m: 0.005
   marker_max_m: 0.01
+  centerline_rmse_m: 0.005
+  centerline_max_m: 0.01
   tip_position_m: 0.001
   tip_orientation_rad: 0.02
+  grasp_position_m: 0.001
+  grasp_orientation_rad: 0.02
   strain_relative_error: 0.05
+  strain_component_relative_error: 0.05
+  strain_rate_relative_error: 0.10
+  grasp_wrench_relative_error: 0.05
+  physical_length_error_m: 0.001
   chain_length_error_m: 0.001
   hold_seconds: 600.0
   rollout_seconds: 2.0

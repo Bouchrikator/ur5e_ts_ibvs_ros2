@@ -13,7 +13,7 @@
 #   SOFA:        ./run.sh sofa [scene]   (host ~/SOFA/scenes → /scenes)
 #                ./run.sh cosserat       (restore the Cosserat plugin)
 #                ./run.sh optimus        (build/repair patched Cosserat + Optimus)
-#   Cable:       ./run.sh cable_plugin_test | cable_forward_test
+#   Cable:       ./run.sh cable_plugin_test | cable_forward_test | cable_fom_test
 #                ./scripts/run.sh cable_dynamics [--rom] [--drag-steps N] [--tip-offset dx dy]
 #                    (every term of M q'' + C q' + f_int = f_g + Jg^T lambda as SOFA
 #                     assembles it; --rom adds the POD-Galerkin reduced system M_r, K_r
@@ -45,11 +45,21 @@
 
 set -e
 
+# A login session that predates joining the docker group cannot reach
+# docker.sock; re-exec under that group once instead of requiring newgrp/re-login.
+if [[ -z "$RUN_SH_SG" ]] && ! docker info >/dev/null 2>&1 \
+    && getent group docker | grep -qw "$(id -un)"; then
+  export RUN_SH_SG=1
+  exec sg docker -c "$(printf '%q ' "$0" "$@")"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Allow X11 forwarding
 xhost +local:docker 2>/dev/null || true
+
+export RENDER_GID="${RENDER_GID:-$(getent group render | cut -d: -f3)}"
 
 in_container() {
   docker compose run --rm ur5e_ts_ibvs bash -c \
@@ -72,8 +82,15 @@ ensure_optimus() {
   docker compose exec -T ur5e_ts_ibvs bash /ros2_ws/scripts/install_optimus.sh
 }
 
+# Quiet when healthy, but never let set -e swallow the reason (e.g. docker.sock
+# permission denied when the login session predates joining the docker group).
+live_up() {
+  local out
+  out=$(docker compose up -d 2>&1) || { echo "$out" >&2; exit 1; }
+}
+
 in_live() {
-  docker compose up -d >/dev/null 2>&1
+  live_up
   ensure_cosserat
   ensure_optimus
   if [[ "$CMD" == cable_sofa_* ]]; then
@@ -136,11 +153,11 @@ case "$CMD" in
     docker compose run --rm ur5e_ts_ibvs runSofa "$@"
     ;;
   cosserat)
-    docker compose up -d >/dev/null 2>&1
+    live_up
     ensure_cosserat
     ;;
   optimus)
-    docker compose up -d >/dev/null 2>&1
+    live_up
     ensure_cosserat
     ensure_optimus
     ;;
@@ -149,6 +166,11 @@ case "$CMD" in
     ;;
   cable_forward_test)
     in_live "ros2 run cable_identification cable_forward_test"
+    ;;
+  cable_fom_test)
+    # numerical verification of the FOM: traction, bending, Jacobian/virtual work, grasp,
+    # energy balance, convergence (prints CABLE_FOM_TEST_PASSED)
+    in_live "ros2 run cable_identification cable_fom_test $*"
     ;;
   cable_sofa_mor_plugin_test)
     printf -v mor_command '%q ' ros2 run cable_identification cable_sofa_mor_plugin_test "$@"
@@ -229,7 +251,7 @@ case "$CMD" in
       --event-handlers console_direct+ && colcon test-result --verbose"
     ;;
   *)
-    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|optimus|cable_plugin_test|cable_forward_test|cable_dynamics|optimus_smoke_test|cable_optimus_test|cable_optimus_pipeline|cable_sim|cable_identify_sim|cable_closed_loop|cable_qs_test|cable_qs_disturb|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests|cable_sofa_mor_plugin_test|cable_sofa_mor_pipeline|cable_sofa_mor_snapshots|cable_sofa_mor_compute_modes|cable_sofa_mor_validate|cable_sofa_modal_dataset|cable_sofa_modal_ts_identify|cable_sofa_modal_lmi|cable_sofa_pdc_test|cable_sofa_modal_observer_test}"
+    echo "Usage: $0 {build|run|up|down|rebuild|test|sim|pose|ts_lmi_d|ts_lmi_c|classic|qmm|eth_<controller>|real|plotjuggler|sofa|cosserat|optimus|cable_plugin_test|cable_forward_test|cable_fom_test|cable_dynamics|optimus_smoke_test|cable_optimus_test|cable_optimus_pipeline|cable_sim|cable_identify_sim|cable_closed_loop|cable_qs_test|cable_qs_disturb|cable_dataset|cable_basis|cable_identify|cable_lmi|cable_unit_tests|cable_sofa_mor_plugin_test|cable_sofa_mor_pipeline|cable_sofa_mor_snapshots|cable_sofa_mor_compute_modes|cable_sofa_mor_validate|cable_sofa_modal_dataset|cable_sofa_modal_ts_identify|cable_sofa_modal_lmi|cable_sofa_pdc_test|cable_sofa_modal_observer_test}"
     exit 1
     ;;
 esac

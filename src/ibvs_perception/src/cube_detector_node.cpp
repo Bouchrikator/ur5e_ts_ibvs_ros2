@@ -26,6 +26,10 @@
 #include <visp3/core/vpPoint.h>
 #include <visp3/vision/vpPose.h>
 
+#ifdef ENABLE_VISP_NAMESPACE
+using namespace VISP_NAMESPACE_NAME;  // ViSP >= 3.6.1 wraps its classes in namespace visp
+#endif
+
 #include "ibvs_msgs/msg/feature_target.hpp"
 #include "ibvs_perception/corner_matching.hpp"
 

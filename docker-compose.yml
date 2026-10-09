@@ -36,7 +36,7 @@ services:
     group_add:
       # Numeric host GIDs (names may not exist inside the image)
       - "44"   # video
-      - "109"  # render
+      - "${RENDER_GID:-109}"  # render (host GID, exported by scripts/run.sh)
 
     # NVIDIA GPU support (host toolkit is in CDI mode; the legacy
     # deploy/device-reservation hook is not supported there)
@@ -60,6 +60,7 @@ services:
       # Display (Gazebo, RViz, PlotJuggler)
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
+      - XAUTHORITY=/root/.Xauthority
       - LIBGL_ALWAYS_SOFTWARE=0
 
       # Fix XDG_RUNTIME_DIR warning
@@ -84,8 +85,8 @@ services:
       - /dev/bus/usb:/dev/bus/usb
       # X11 socket
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      # X11 auth
-      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+      # X11 auth (GDM keeps it under /run/user/<uid>/gdm, not ~/.Xauthority)
+      - ${XAUTHORITY:-${HOME}/.Xauthority}:/root/.Xauthority:rw
 
     restart: "no"
     init: true

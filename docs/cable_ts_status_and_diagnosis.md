@@ -8,6 +8,19 @@ reproduce each number are given.
 
 ## 1. Summary
 
+> **2026-10-09: the SOFA plant was replaced underneath this stack** (section 5.17):
+> planar extensible Cosserat model with a consistent Jacobian, physical frame
+> inertia, Kelvin-Voigt damping and a no-slip grasp. The FOM is numerically
+> verified (`./scripts/run.sh cable_fom_test`); the strain-POD ROM is rebuilt up to
+> the order selection, which was stopped before an order was promoted
+> ([sofa_mor_pipeline.md §3](sofa_mor_pipeline.md)). **Everything identified,
+> certified or measured below on the plant (TS models, the `*_narrow` gains and
+> certificate, closed-loop and identification numbers) refers to the previous
+> plant** and has not been re-run on the new one; the `*_narrow` artifacts carry no
+> plant hash, so nothing prevents `cable_qs_test` / `cable_closed_loop` from using
+> them against the new plant: treat any such run as unverified. Remaining work and
+> the missing physical measurements: section 7.
+
 The plant, the observation pipeline and the online parameter identification
 work and are verified. The reduced model is now good enough to be worth
 certifying — the free-running rollout is inside the 50 mm gate on a matched
@@ -827,12 +840,64 @@ excitation — a ~1 % perturbation of the input coupling, second order next to
 the model's 3.8 mm one-step residual. The dataset is not invalidated; regard
 regeneration as hygiene for the next identification pass, not a blocker.
 
+**Root cause found (2026-10-09, see 5.17):** the pinned Cosserat plugin's `applyJ`
+was not the derivative of `apply()`, so the mapped spring force was not the gradient
+of the spring potential and did net work over cycles. With `cosserat-patches/0002`
+the same 600 s holds (bending, and sustained tension at 1.002 L) are stable with a
+1e5 N/m / 10 N m/rad grasp, and the 99 % reach clamp is gone.
+
 One operational lesson recorded alongside: during the debugging a *zombie*
 truth node from a half-killed earlier launch kept publishing its coiled state
 onto `/cable/truth/frames`, interleaved with the healthy publisher — the chain
 metric flapped 0.70 / 0.27 m at ~1 Hz. Two publishers on one topic is silent
 in ROS 2; `ros2 topic info -v` (publisher count) is the discriminating probe,
 and stack restarts must verify `pgrep -f cable_sofa_node` returns exactly one.
+
+### 5.17 The mechanical model was inconsistent in five places (2026-10-09)
+
+Found while making the cable extensible (prompt: planar extensible Cosserat model +
+POD). Each is a plugin or scene defect, verified by `cable_fom_test` and the
+`cable_dynamics` identities after the fix; details in
+[cable_dynamics_remarks.md](cable_dynamics_remarks.md) and `cosserat-patches/0002`.
+
+1. **Tangent operator without the axial strain** (`BaseCosseratMapping::computeTangExp`
+   padded the twist with `(0,0,0)` while `buildXiHat` used `(1,0,0)`): `applyJ` rotated
+   the distal rod about the section start node (lever `l (L - s_i)` instead of
+   `l (L - s_i - l/2)`), so `J^T lambda`, `J^T K_g J` and `J^T M J` were not the virtual
+   work of the frames. This is the mechanism behind 5.16. Fixed: FD agreement 1.5e-10,
+   `J^T lambda = -grad V_grasp` to 2.7e-8.
+2. **The Vec6 route of the pinned release was unusable**: `applyJ` wrote the strain
+   rate into component `i` (section index) instead of `u`; `applyJT` copied its output
+   accessors by value (no force reached the inputs) and projected the linear-strain rows
+   to zero (3-row selector); the Hooke law read `d_EIy/d_EIz`, Data that were declared
+   but never initialised (zero bending stiffness). Fixed in the same patch; the scene
+   is now `Vec6d` with finite EA and GA (traction `dL = F L/EA` to 7e-5).
+3. **Rotational inertia equal to the mass**: `UniformMass(totalMass=...)` on Rigid3d
+   frames leaves `inertiaMatrix` at identity, 1.7e-3 kg m² per frame against the
+   physical 5e-8 (rod segment). Fixed with `vertexMass=frame_rigid_mass(cfg)`; this is
+   what made GJ look identifiable under a base roll (optimus_port.md §7).
+4. **Damping was not a force**: the Hooke law's `rayleighStiffness` only damps the
+   velocity increment on the matrix side and the solver's Rayleigh factors damp the
+   clamp and grasp springs too. Now `DiagonalVelocityDampingForceField` applies the
+   Kelvin-Voigt law `rayleigh_stiffness_s diag(Sigma) l q'` on the strains (implicit
+   through `B`) and `rayleigh_mass_per_s = 0` (table friction neglected). The
+   convective inertia of the mapped masses `-m (dJ/dt) q'` (dropped by SOFA; 0.2 %
+   median, 3 % max of the elastic force along the excitation, 5 % in a fast free
+   oscillation) is available as an explicit frame wrench (`convective_inertia`) but
+   **off by default**: explicit at h = 0.01 s it diverged once when the softest cable
+   snapped taut, and is stable at h = 0.005 s. Implicit Euler at h = 0.01 s still
+   removes 0.44x the Kelvin-Voigt dissipation (measured, first order in h).
+5. **Grasp**: the target was the gripper position (the latch offset was discarded)
+   with an arbitrary 0.05 N m/rad compliance and a 99 % reach clamp. Now the frame
+   nearest to the gripper is grasped, the relative pose met at latch is kept (no ramp),
+   pulling past the rest length stretches the rod, and the no-slip springs are
+   1e5 N/m / 10 N m/rad until the real mounting is measured. Consequence for the
+   identification: with a rigid grasp and no gravity the quasi-static shape does not
+   depend on EI (0.2 sigma_obs separation along gate I's trajectory), so EI must be
+   identified hanging under gravity or from the grasp wrench (optimus_port.md §7).
+
+The POD chain was rebuilt on this model with the strain-energy inner product and an
+independent test trajectory ([sofa_mor_pipeline.md](sofa_mor_pipeline.md)).
 
 ---
 
@@ -972,6 +1037,49 @@ running pytest, or the stale installed copy is tested.
 ---
 
 ## 7. Next steps, in order
+
+> **2026-10-09, mechanical model and POD (work stopped on request; do these first).**
+> State: FOM implemented and numerically verified (`cable_plugin_test`,
+> `cable_forward_test`, `cable_fom_test` 12/12, `cable_dynamics`); Optimus ported to
+> the Vec6 state and gated (GJ and table-EI are measured identifiability limits,
+> [optimus_port.md §7](optimus_port.md)); snapshots and weighted POD regenerated
+> (r = 5..48); order selection stopped during r = 24, nothing promoted. Nothing is
+> experimentally validated: every parameter is nominal.
+>
+> 1. Finish `./scripts/run.sh cable_sofa_mor_validate` (restarts at r = 5, then holds
+>    and projected rollouts for the first passing order), evaluate the test trajectory
+>    6 once, report a failure as such. Decide explicitly, before or after, whether the
+>    5 % per-component tolerance on the in-plane shear is the mechanical requirement
+>    (it decides the order from r = 7 to 18 while positions are at the micrometre
+>    level) or whether a targeted shear-free comparison justifies dropping shear;
+>    do not change it to make an order pass.
+> 2. On the promoted basis: `cable_sofa_mor_plugin_test --cable-modes ...`,
+>    `cable_dynamics --rom` (Galerkin identities, `Phi^T W Phi = I`,
+>    `B_r = Phi^T B Phi`).
+> 3. Fix the dump's straight-rod probe that leaves 1e-4 in the locked strains of the
+>    dumped state ([sofa_mor_pipeline.md §9](sofa_mor_pipeline.md)), and add a
+>    locked-strain == 0 assertion.
+> 4. Out of this change's scope, required before any closed-loop claim on the new
+>    plant: regenerate the ROM dataset, modal TS, observer, LMI and PDC stages (they
+>    refuse the old basis by hash/dimension), and re-identify or retire the legacy
+>    `*_narrow` TS/gains (identified on the previous plant, no plant hash).
+>
+> **Physical measurements needed (none exist; all values are nominal):**
+> - `EI` (and its spread): hanging cantilever sag or a three-point bend; the table
+>   setup with a rigid grasp cannot give it from marker positions (optimus_port §7).
+> - `EA`: traction test, `dL = F L0 / EA` in the linear range (`cable_fom_test`
+>   reproduces the formula to 7e-5); also the strain range where it stays linear.
+> - `GA` (in-plane shear) or evidence that shear is negligible for this cable.
+> - Internal damping: free-oscillation log decrement of a cantilever at two
+>   amplitudes (Kelvin-Voigt `c_R`), and the table friction the model neglects
+>   (drag test on the table: is `rayleigh_mass_per_s = 0` defensible?).
+> - Mass per length and section radius (inertia).
+> - Grasp: relative pose of cable and fingers at latch (position/orientation offset,
+>   slip under the operating tension) and the translational/rotational compliance of
+>   the real mounting; the model's 1e5 N/m and 10 N m/rad encode "no slip", not a
+>   measurement. A wrist F/T sensor would also make EI identifiable in the table setup.
+> - Independent validation motions (recorded marker trajectories with the gripper
+>   poses) to validate the calibrated model on trajectories not used to fit it.
 
 > 2026-09-08: the strain-POD (ModelOrderReduction) chain of
 > [sofa_mor_pipeline.md](sofa_mor_pipeline.md) is implemented and gated end to

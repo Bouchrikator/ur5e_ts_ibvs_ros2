@@ -66,11 +66,16 @@ public:
     typedef core::behavior::MechanicalState<DataTypes1> MasterState;
     typedef core::behavior::MechanicalState<DataTypes2> MappedState;
     typedef sofa::core::Mapping<DataTypes1, DataTypes2> Mapping;
-    typedef sofa::component::container::SimulatedStateObservationSource<DataTypes1> ObservationSource;
+    /// DataTypes1 = master state wrapped by the filter (e.g. Vec6 Cosserat strains),
+    /// DataTypes2 = mapped/observed state (e.g. Vec3 marker points): the observations and the
+    /// observation source carry the OBSERVED type. The direct-mapping path (master -> mapped
+    /// Mapping applied to observations given in master coordinates) only exists when both
+    /// types coincide, as in the original <double, Vec3, Vec3> instantiation.
+    typedef sofa::component::container::SimulatedStateObservationSource<DataTypes2> ObservationSource;
     typedef StochasticStateWrapper<DataTypes1,FilterType> StateWrapper;
 
 
-    Data< typename DataTypes1::VecCoord > inputObservationData;
+    Data< typename DataTypes2::VecCoord > inputObservationData;
     Data< typename DataTypes2::VecCoord > mappedObservationData;
     Data< double > noiseStdev;
     Data< int > abberantIndex;

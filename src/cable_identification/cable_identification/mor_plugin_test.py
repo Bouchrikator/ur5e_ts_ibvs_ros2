@@ -1,4 +1,4 @@
-"""Headless gate for the pinned official Vec1d -> Vec3d MOR mapping."""
+"""Headless gate for the pinned official MOR mapping, Vec1d -> Vec3d and Vec1d -> Vec6d."""
 
 import os
 from pathlib import Path
@@ -12,26 +12,35 @@ MOR_COMMIT = "d94dc49dff66d936ad11c33a8f195cc167c98b61"
 
 
 def check_mapping():
-    import Sofa.Core
-    import Sofa.Simulation
-
     prefix = Path(os.environ.get("SOFA_ROOT", "/opt/sofa")) / "plugins/ModelOrderReduction"
     marker = prefix / ".cable-mor-build"
     if not marker.is_file() or marker.read_text().split()[0] != MOR_COMMIT:
         raise RuntimeError("Install the pinned plugin with install_model_order_reduction.sh")
+    for template in ("Vec3d", "Vec6d"):
+        check_mapping_template(template)
+    print(f"MOR revision: {MOR_COMMIT}")
+    print("Position, velocity, transpose force and assembled mapped mass (Vec3d, Vec6d): passed")
 
-    modes = np.array([[1., 0.], [0., 1.], [1., 1.],
-                      [2., 0.], [0., 2.], [1., -1.]])
-    neutral = np.array([[0.1, 0.2, 0.3], [-0.1, -0.2, -0.3]])
+
+def check_mapping_template(template):
+    """Two modes over two output nodes of ``dim`` components; every operation is checked
+    against numpy, so a leftover three-component assumption fails for Vec6d."""
+    import Sofa.Core
+    import Sofa.Simulation
+
+    dim = int(template[3])
+    rng = np.random.default_rng(dim)
+    modes = rng.normal(size=(2 * dim, 2))
+    neutral = rng.normal(size=(2, dim))
     initial = np.array([0.1, -0.2])
     velocity = np.array([0.02, -0.01])
-    forces = np.array([[0.01, -0.02, 0.03], [0.04, 0.05, -0.06]])
+    forces = rng.normal(size=(2, dim)) * 0.05
     timestep = 0.01
     with tempfile.TemporaryDirectory(prefix="cable-mor-plugin-") as directory:
         modes_path = Path(directory) / "modes.txt"
-        np.savetxt(modes_path, modes, header="6 2", comments="", fmt="%.17g")
+        np.savetxt(modes_path, modes, header=f"{2 * dim} 2", comments="", fmt="%.17g")
         root = Sofa.Core.Node("mor_mapping_gate")
-        root.gravity = [0., 0., 0.]
+        root.gravity = [0.] * 3
         root.dt = timestep
         root.addObject("RequiredPlugin", pluginName=[
             "Sofa.Component.AnimationLoop", "Sofa.Component.StateContainer",
@@ -45,20 +54,21 @@ def check_mapping():
         modal_mo = modal.addObject("MechanicalObject", template="Vec1d",
                                    position=initial.tolist(), velocity=velocity.tolist())
         full = modal.addChild("fullCoordinate")
-        full_mo = full.addObject("MechanicalObject", template="Vec3d",
+        full_mo = full.addObject("MechanicalObject", template=template,
                                  position=neutral.tolist(), rest_position=neutral.tolist())
         mapping = full.addObject(
             "ModelOrderReductionMapping", name="strainModalMapping",
             input=modal_mo.getLinkPath(), output=full_mo.getLinkPath(),
             modesPath=str(modes_path.resolve()))
         full.addObject("UniformMass", totalMass=2.)
-        full.addObject("ConstantForceField", template="Vec3d", forces=forces.tolist())
+        full.addObject("ConstantForceField", template=template, forces=forces.tolist())
         try:
             Sofa.Simulation.init(root)
             assert mapping.getClassName() == "ModelOrderReductionMapping"
             np.testing.assert_allclose(full_mo.position.value.ravel(),
                                        neutral.ravel() + modes @ initial, atol=1e-12)
             Sofa.Simulation.animate(root, timestep)
+            # UniformMass(totalMass=2) over two nodes: M = I per component, M_r = Phi^T Phi
             expected_velocity = velocity + timestep * np.linalg.solve(
                 modes.T @ modes, modes.T @ forces.ravel())
             np.testing.assert_allclose(modal_mo.velocity.value.ravel(),
@@ -70,8 +80,6 @@ def check_mapping():
                                            initial + timestep * expected_velocity), atol=1e-12)
         finally:
             Sofa.Simulation.unload(root)
-    print(f"MOR revision: {MOR_COMMIT}")
-    print("Position, velocity, transpose force and assembled mapped mass: passed")
 
 
 def main():

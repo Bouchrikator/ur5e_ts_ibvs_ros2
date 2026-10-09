@@ -1,0 +1,129 @@
+diff -ruN a/src/Cosserat/forcefield/BeamHookeLawForceField.cpp b/src/Cosserat/forcefield/BeamHookeLawForceField.cpp
+--- a/src/Cosserat/forcefield/BeamHookeLawForceField.cpp	2026-10-09 14:36:24.831713073 +0200
++++ b/src/Cosserat/forcefield/BeamHookeLawForceField.cpp	2026-10-09 14:40:07.130149972 +0200
+@@ -73,9 +73,11 @@
+     if (d_useInertiaParams.getValue())
+    {
+         msg_info() << "Pre-calculated inertia parameters are used for the computation of the stiffness matrix.";
++        // d_EIy/d_EIz are declared but never initData'd (not Data of the component, always 0):
++        // the circular section uses the one registered EI for both bending axes, as Vec3 does.
+         m_K_section66[0][0] = d_GI.getValue();
+-        m_K_section66[1][1] = d_EIy.getValue();
+-        m_K_section66[2][2] = d_EIz.getValue();
++        m_K_section66[1][1] = d_EI.getValue();
++        m_K_section66[2][2] = d_EI.getValue();
+         m_K_section66[3][3] = d_EA.getValue();
+         m_K_section66[4][4] = d_GA.getValue();
+         m_K_section66[5][5] = d_GA.getValue();
+diff -ruN a/src/Cosserat/mapping/BaseCosseratMapping.inl b/src/Cosserat/mapping/BaseCosseratMapping.inl
+--- a/src/Cosserat/mapping/BaseCosseratMapping.inl	2026-10-09 14:36:24.831960567 +0200
++++ b/src/Cosserat/mapping/BaseCosseratMapping.inl	2026-10-09 14:38:52.950850030 +0200
+@@ -396,10 +396,17 @@
+                                                            const Coord1 &strain_i,
+                                                            Mat6x6 &TgX)
+ {
++    // The tangent operator integrates Ad_{exp(s xi^)} = exp(s ad_xi) over the section
++    // (Renda et al. 2016, eq. 11), so ad_xi must be built from the SAME twist as the
++    // exponential in buildXiHat: the full linear strain, whose rest value is the unit
++    // axial stretch (1, 0, 0). Omitting it drops the angular/linear coupling and makes
++    // applyJ rotate the distal rod about the section start node instead of being the
++    // derivative of apply().
+     if constexpr( Coord1::static_size == 3 )
+-        computeTangExpImplementation(curv_abs_n, Vec6(strain_i(0),strain_i(1),strain_i(2),0,0,0), TgX);
++        computeTangExpImplementation(curv_abs_n, Vec6(strain_i(0),strain_i(1),strain_i(2),1,0,0), TgX);
+     else
+-        computeTangExpImplementation(curv_abs_n, strain_i, TgX);
++        computeTangExpImplementation(curv_abs_n, Vec6(strain_i(0),strain_i(1),strain_i(2),
++                                                     1 + strain_i(3),strain_i(4),strain_i(5)), TgX);
+ }
+ 
+ template <class TIn1, class TIn2, class TOut>
+diff -ruN a/src/Cosserat/mapping/DiscreteCosseratMapping.cpp b/src/Cosserat/mapping/DiscreteCosseratMapping.cpp
+--- a/src/Cosserat/mapping/DiscreteCosseratMapping.cpp	2026-10-09 14:36:24.832029491 +0200
++++ b/src/Cosserat/mapping/DiscreteCosseratMapping.cpp	2026-10-09 14:39:52.104178276 +0200
+@@ -84,7 +84,7 @@
+ 
+         Vec6 node_Xi_dot;
+         for (unsigned int u =0; u<6; u++)
+-            node_Xi_dot(i) = in1_vel[i-1][u];
++            node_Xi_dot(u) = in1_vel[i-1][u];
+ 
+         Vec6 eta_node_i = Adjoint * (m_nodesVelocityVectors[i-1] + m_nodesTangExpVectors[i] *node_Xi_dot );
+         m_nodesVelocityVectors.push_back(eta_node_i);
+@@ -122,8 +122,8 @@
+     msg_info() << " ########## ApplyJT force R Function ########";
+     const sofa::VecDeriv_t<Out>& in = dataVecInForce[0]->getValue();
+ 
+-    sofa::VecDeriv_t<In1> out1 = sofa::helper::getWriteAccessor(*dataVecOut1Force[0]);
+-    sofa::VecDeriv_t<In2> out2 = sofa::helper::getWriteAccessor(*dataVecOut2Force[0]);
++    auto out1 = sofa::helper::getWriteAccessor(*dataVecOut1Force[0]);
++    auto out2 = sofa::helper::getWriteAccessor(*dataVecOut2Force[0]);
+     const auto baseIndex = d_baseIndex.getValue();
+ 
+     const sofa::VecCoord_t<Out>& frame =
+@@ -155,9 +155,7 @@
+     Vec6 F_tot; F_tot.clear();
+     m_totalBeamForceVectors.push_back(F_tot);
+ 
+-    TangentTransform matB_trans; matB_trans.clear();
+-    for(unsigned int k=0; k<3; k++) matB_trans[k][k] = 1.0;
+-
++    // Vec6 strains: every row of TgX^T F is a generalized force (no 3-row selector).
+     for (auto s = sz ; s-- ; ) {
+         TangentTransform coAdjoint;
+ 
+@@ -165,7 +163,7 @@
+         Vec6 node_F_Vec = coAdjoint * local_F_Vec[s];
+         Mat6x6 temp = m_framesTangExpVectors[s];   // m_framesTangExpVectors[s] computed in applyJ (here we transpose)
+         temp.transpose();
+-        Vec6 f = matB_trans * temp * node_F_Vec;
++        Vec6 f = temp * node_F_Vec;
+ 
+         if(index != m_indicesVectors[s]){
+             index--;
+@@ -175,7 +173,7 @@
+             Mat6x6 temp_mat = m_nodesTangExpVectors[index];
+             temp_mat.transpose();
+             //apply F_tot to the new beam
+-            const Vec6 temp_f = matB_trans * temp_mat * F_tot;
++            const Vec6 temp_f = temp_mat * F_tot;
+             out1[index-1] += temp_f;
+         }
+ 
+@@ -191,7 +189,7 @@
+     out2[baseIndex] += M * F_tot;
+ 
+     msg_info()
+-            << "Node forces "<< out1 << msgendl
++            << "Node forces "<< out1.ref() << msgendl
+             << "base Force: "<< out2[baseIndex];
+ }
+ 
+@@ -217,9 +215,6 @@
+         m_strain_state->read(sofa::core::vec_id::read_access::position);
+     const sofa::VecCoord_t<In1> x1from = x1fromData->getValue();
+ 
+-    TangentTransform matB_trans; matB_trans.clear();
+-    for(unsigned int k=0; k<3; k++) matB_trans[k][k] = 1.0;
+-
+     vector< std::tuple<int,Vec6> > NodesInvolved;
+     vector< std::tuple<int,Vec6> > NodesInvolvedCompressed;
+ 
+@@ -268,7 +263,7 @@
+ 
+             Vec6 local_F =  coAdjoint * P_trans * valueConst; // constraint direction in local frame of the beam.
+ 
+-            Vec6 f = matB_trans * temp * local_F; // constraint direction in the strain space.
++            Vec6 f = temp * local_F; // constraint direction in the strain space.
+ 
+             o1.addCol(indexBeam-1, f);
+             std::tuple<int,Vec6> node_force = std::make_tuple(indexBeam, local_F);
+@@ -346,7 +341,7 @@
+                 // transfer to strain space (local coordinates)
+                 Mat6x6 temp = m_nodesTangExpVectors[i-1];
+                 temp.transpose();
+-                Vec6 temp_f = matB_trans * temp * CumulativeF;
++                Vec6 temp_f = temp * CumulativeF;
+ 
+                 if(i>1) o1.addCol(i-2, temp_f);
+                 i--;

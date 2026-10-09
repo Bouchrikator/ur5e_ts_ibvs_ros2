@@ -105,7 +105,6 @@ def run_rollout(cfg, parameters, path, control_dt, substeps, settle_steps=50):
         Sofa.Simulation.animate(root, sofa_dt)
     tip = cable.tip_pose()
     coupling.update_grasp(tip, 0.0)
-    coupling.ramp_s = 0.0
 
     shapes = np.zeros((len(path), 2 * len(cable.marker_indices)))
     applied = np.zeros((len(path), 2))

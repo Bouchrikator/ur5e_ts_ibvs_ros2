@@ -1,16 +1,31 @@
-passed: true
+passed: false
 limits:
   marker_rmse_m: 0.005
   marker_max_m: 0.01
+  centerline_rmse_m: 0.005
+  centerline_max_m: 0.01
   tip_position_m: 0.001
   tip_orientation_rad: 0.02
+  grasp_position_m: 0.001
+  grasp_orientation_rad: 0.02
   strain_relative_error: 0.05
+  strain_component_relative_error: 0.05
+  strain_rate_relative_error: 0.1
+  grasp_wrench_relative_error: 0.05
+  physical_length_error_m: 0.001
   chain_length_error_m: 0.001
   hold_seconds: 600.0
   rollout_seconds: 2.0
+selection_trajectories:
+- 0
+- 4
+- 5
+test_trajectories:
+- 6
+active_dimension: 48
 candidates:
-- n_modes: 3
-  strain_basis_sha256: 108dc3a26734795f6cdb5e6e0d46f6b1257233f4db7a7959e18a5821543b4503
+- n_modes: 5
+  strain_basis_sha256: ee09dbe448d4ba79e24c337812a8df5278dfb2bb051099c5a61fa0cd2e3baffe
   passed: false
   episodes:
   - vertex_id: 0
@@ -20,43 +35,100 @@ candidates:
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.003933358266091176
-    marker_max_m: 0.03044101235982623
-    tip_position_m: 0.0008531059518920548
-    tip_orientation_rad: 0.4109110894566568
-    strain_relative_error: 0.24141548362844764
-    chain_length_error_m: 0.00018698543709438908
-    fom_step_seconds: 0.0017742895466669021
-    rom_step_seconds: 0.0015537443008338415
-    speedup: 1.141944363506081
+    marker_rmse_m: 0.0010133044511425127
+    marker_max_m: 0.01108263432339042
+    centerline_rmse_m: 0.0014481932786295395
+    centerline_max_m: 0.011120649849084834
+    tip_position_m: 5.850834555237227e-05
+    tip_orientation_rad: 0.007962929107431552
+    strain_relative_error: 0.1632103480723246
+    strain_rate_relative_error: 0.6377010052564549
+    physical_length_error_m: 0.0007554445973121382
+    chord_length_error_m: 0.0007633341831000395
+    grasp_wrench_relative_error: 0.5139967854582275
+    grasp_position_m: 0.00016754452650740166
+    grasp_orientation_rad: 0.011121990893096062
+    fom_grasp:
+      position_m: 0.00011383629401657634
+      orientation_rad: 0.0037963297060139675
+      compliance_m: 0.00011383629401657634
+    rom_grasp:
+      position_m: 0.00016754452650740166
+      orientation_rad: 0.011121990893096062
+      compliance_m: 0.00016754452650740164
+    fom_step_seconds: 0.0017078966329161934
+    rom_step_seconds: 0.001422644192499926
+    speedup: 1.2005086316874571
+    strain_bend_relative_error: 0.1479433283326156
+    strain_extension_relative_error: 0.6361481337701412
+    strain_shear_relative_error: 1.0461590332478496
+    strain_component_relative_error: 1.0461590332478496
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.04631784381454497
-    marker_max_m: 0.22152413074339966
-    tip_position_m: 0.0015716780908893438
-    tip_orientation_rad: 1.3848385666178007
-    strain_relative_error: 1.124836622962102
-    chain_length_error_m: 0.0002105888617235374
-    fom_step_seconds: 0.0017681257108332223
-    rom_step_seconds: 0.0015580405937498654
-    speedup: 1.134839309018084
+    marker_rmse_m: 0.006850134161868242
+    marker_max_m: 0.13522443163837178
+    centerline_rmse_m: 0.009802881549262616
+    centerline_max_m: 0.13617211984725663
+    tip_position_m: 0.00017465974399644022
+    tip_orientation_rad: 0.005436656095309384
+    strain_relative_error: 0.2602428762733815
+    strain_rate_relative_error: 0.9208927082517776
+    physical_length_error_m: 0.0004408186244524437
+    chord_length_error_m: 0.0004444500423872455
+    grasp_wrench_relative_error: 1.0241013254857496
+    grasp_position_m: 0.00017054967041619422
+    grasp_orientation_rad: 0.005346482250490338
+    fom_grasp:
+      position_m: 0.00017054967041619422
+      orientation_rad: 0.00309478701875855
+      compliance_m: 0.0001705496704161942
+    rom_grasp:
+      position_m: 0.00015561879777954834
+      orientation_rad: 0.005346482250490338
+      compliance_m: 0.00015561879777954834
+    fom_step_seconds: 0.0017220454233332324
+    rom_step_seconds: 0.0014383273504169362
+    speedup: 1.1972555641343072
+    strain_bend_relative_error: 0.2593791905473623
+    strain_extension_relative_error: 0.33874972325592884
+    strain_shear_relative_error: 1.4128830793763105
+    strain_component_relative_error: 1.4128830793763105
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.0034416703102646265
-    marker_max_m: 0.029504319435776354
-    tip_position_m: 0.0008280969691897798
-    tip_orientation_rad: 0.3973613483259447
-    strain_relative_error: 0.23992948791537888
-    chain_length_error_m: 0.00017899987165703735
-    fom_step_seconds: 0.0017558631454168486
-    rom_step_seconds: 0.001551161507083331
-    speedup: 1.131966682643138
+    marker_rmse_m: 0.000561648366020238
+    marker_max_m: 0.012302025059595175
+    centerline_rmse_m: 0.0008012624365091873
+    centerline_max_m: 0.012419049382697925
+    tip_position_m: 3.695359603016879e-05
+    tip_orientation_rad: 0.003991597286495772
+    strain_relative_error: 0.073396602219439
+    strain_rate_relative_error: 0.5776635345800719
+    physical_length_error_m: 0.00048815253017653326
+    chord_length_error_m: 0.0004912001987326109
+    grasp_wrench_relative_error: 0.3487744040517229
+    grasp_position_m: 0.00011797411307690474
+    grasp_orientation_rad: 0.006645248757459508
+    fom_grasp:
+      position_m: 0.00010595713868965304
+      orientation_rad: 0.004370758804763668
+      compliance_m: 0.00010595713868965303
+    rom_grasp:
+      position_m: 0.00011797411307690474
+      orientation_rad: 0.006645248757459508
+      compliance_m: 0.00011797411307690474
+    fom_step_seconds: 0.00172567598083333
+    rom_step_seconds: 0.0014270428925002912
+    speedup: 1.2092670724212151
+    strain_bend_relative_error: 0.06591660504131863
+    strain_extension_relative_error: 0.27472401919529543
+    strain_shear_relative_error: 0.9675347587162558
+    strain_component_relative_error: 0.9675347587162558
   - vertex_id: 1
     parameters: &id002
       EI: 0.005
@@ -64,43 +136,100 @@ candidates:
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.0034671697853818064
-    marker_max_m: 0.028233018649463683
-    tip_position_m: 0.0008612552891115767
-    tip_orientation_rad: 0.3769357418995082
-    strain_relative_error: 0.22553619601589492
-    chain_length_error_m: 0.00019216501346919213
-    fom_step_seconds: 0.0017560899275000945
-    rom_step_seconds: 0.001549629818749357
-    speedup: 1.1332318894827171
+    marker_rmse_m: 0.0010012344479270671
+    marker_max_m: 0.010631703669684484
+    centerline_rmse_m: 0.0014308857142639956
+    centerline_max_m: 0.010664918755377027
+    tip_position_m: 5.8129467293206454e-05
+    tip_orientation_rad: 0.007890740152064285
+    strain_relative_error: 0.16244301321618618
+    strain_rate_relative_error: 0.6056122524532044
+    physical_length_error_m: 0.0007571407756823412
+    chord_length_error_m: 0.0007653675948259275
+    grasp_wrench_relative_error: 0.5037953835633361
+    grasp_position_m: 0.00016937607265669343
+    grasp_orientation_rad: 0.011230573034859364
+    fom_grasp:
+      position_m: 0.00011538976736560608
+      orientation_rad: 0.003898855089641626
+      compliance_m: 0.00011538976736560608
+    rom_grasp:
+      position_m: 0.00016937607265669343
+      orientation_rad: 0.011230573034859364
+      compliance_m: 0.00016937607265669346
+    fom_step_seconds: 0.001732327859582862
+    rom_step_seconds: 0.0014206326274999507
+    speedup: 1.2194059365167735
+    strain_bend_relative_error: 0.14719073479829808
+    strain_extension_relative_error: 0.6343562447037921
+    strain_shear_relative_error: 1.044222967330837
+    strain_component_relative_error: 1.044222967330837
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.048924130664243025
-    marker_max_m: 0.24733688294777126
-    tip_position_m: 0.001815565494135163
-    tip_orientation_rad: 1.489484720830001
-    strain_relative_error: 1.1835233040983912
-    chain_length_error_m: 0.00021281489412738885
-    fom_step_seconds: 0.001765722600416666
-    rom_step_seconds: 0.001553438770417112
-    speedup: 1.136654134068351
+    marker_rmse_m: 0.007018911913251384
+    marker_max_m: 0.1371166914821206
+    centerline_rmse_m: 0.01004459042803253
+    centerline_max_m: 0.13755334235351022
+    tip_position_m: 0.00014582252066851583
+    tip_orientation_rad: 0.005336985085547409
+    strain_relative_error: 0.2620871969686609
+    strain_rate_relative_error: 0.9151018451524465
+    physical_length_error_m: 0.0004398836628466407
+    chord_length_error_m: 0.00044354817925496004
+    grasp_wrench_relative_error: 1.030536812093398
+    grasp_position_m: 0.00014191646251977981
+    grasp_orientation_rad: 0.005351308454741853
+    fom_grasp:
+      position_m: 0.00014150197634348743
+      orientation_rad: 0.002826927039525143
+      compliance_m: 0.0001415019763434874
+    rom_grasp:
+      position_m: 0.00014191646251977981
+      orientation_rad: 0.005351308454741853
+      compliance_m: 0.00014191646251977981
+    fom_step_seconds: 0.0017184685324999312
+    rom_step_seconds: 0.0014284759504168201
+    speedup: 1.2030083754637193
+    strain_bend_relative_error: 0.2612450770218685
+    strain_extension_relative_error: 0.33882260218450605
+    strain_shear_relative_error: 1.4020894623083568
+    strain_component_relative_error: 1.4020894623083568
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.003034461228843491
-    marker_max_m: 0.027359698078640384
-    tip_position_m: 0.0008355099252201397
-    tip_orientation_rad: 0.36435879621138606
-    strain_relative_error: 0.22324686141933026
-    chain_length_error_m: 0.00018253659450118143
-    fom_step_seconds: 0.0017522824620831063
-    rom_step_seconds: 0.0015464975624998563
-    speedup: 1.1330651302486414
+    marker_rmse_m: 0.000559458600609834
+    marker_max_m: 0.013075622177512984
+    centerline_rmse_m: 0.0007981235085781773
+    centerline_max_m: 0.013138337263874204
+    tip_position_m: 3.684328442696313e-05
+    tip_orientation_rad: 0.003945838386961778
+    strain_relative_error: 0.0727311562342034
+    strain_rate_relative_error: 0.5471801143880105
+    physical_length_error_m: 0.00048354457691734964
+    chord_length_error_m: 0.00048649069433837067
+    grasp_wrench_relative_error: 0.3480310449756293
+    grasp_position_m: 0.00011773326442669649
+    grasp_orientation_rad: 0.006599009057803736
+    fom_grasp:
+      position_m: 0.00010586654350082897
+      orientation_rad: 0.0043773525742309
+      compliance_m: 0.00010586654350082897
+    rom_grasp:
+      position_m: 0.00011773326442669649
+      orientation_rad: 0.006599009057803736
+      compliance_m: 0.00011773326442669649
+    fom_step_seconds: 0.001721639434166112
+    rom_step_seconds: 0.0014284985275003236
+    speedup: 1.205209106640624
+    strain_bend_relative_error: 0.06522832026548188
+    strain_extension_relative_error: 0.27379971595728975
+    strain_shear_relative_error: 0.9652191361333431
+    strain_component_relative_error: 0.9652191361333431
   - vertex_id: 2
     parameters: &id003
       EI: 0.015
@@ -108,43 +237,100 @@ candidates:
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.0010876213917747962
-    marker_max_m: 0.008196287017405747
-    tip_position_m: 0.00021933176329714965
-    tip_orientation_rad: 0.1550085716721671
-    strain_relative_error: 0.15817280466562914
-    chain_length_error_m: 8.158085974818707e-05
-    fom_step_seconds: 0.001774485790416141
-    rom_step_seconds: 0.00155730464166633
-    speedup: 1.1394596426023782
+    marker_rmse_m: 0.0008528674938230133
+    marker_max_m: 0.013464620721394035
+    centerline_rmse_m: 0.001219509553311515
+    centerline_max_m: 0.013464620721394035
+    tip_position_m: 6.122387021615527e-05
+    tip_orientation_rad: 0.0062308257722768386
+    strain_relative_error: 0.13807543610064293
+    strain_rate_relative_error: 0.5274779556748282
+    physical_length_error_m: 0.0006024099115018444
+    chord_length_error_m: 0.0006061487306630031
+    grasp_wrench_relative_error: 0.49143020741966925
+    grasp_position_m: 0.0001626919499091484
+    grasp_orientation_rad: 0.012612911159623126
+    fom_grasp:
+      position_m: 0.00012458211585692882
+      orientation_rad: 0.007015087169031823
+      compliance_m: 0.00012458211585692882
+    rom_grasp:
+      position_m: 0.0001626919499091484
+      orientation_rad: 0.012612911159623126
+      compliance_m: 0.0001626919499091484
+    fom_step_seconds: 0.0017202267750000525
+    rom_step_seconds: 0.0014217162541664645
+    speedup: 1.209964906822143
+    strain_bend_relative_error: 0.12551905071964273
+    strain_extension_relative_error: 0.3957475039245892
+    strain_shear_relative_error: 0.5142102251195044
+    strain_component_relative_error: 0.5142102251195044
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.0011309799156205504
-    marker_max_m: 0.010357743207717467
-    tip_position_m: 0.00024761006422768366
-    tip_orientation_rad: 0.17219785973965063
-    strain_relative_error: 0.15817176435989266
-    chain_length_error_m: 8.149657574885172e-05
-    fom_step_seconds: 0.001750303634166812
-    rom_step_seconds: 0.0015419327183334038
-    speedup: 1.1351361919725174
+    marker_rmse_m: 0.005691471069771335
+    marker_max_m: 0.12764157778389057
+    centerline_rmse_m: 0.00814434948290681
+    centerline_max_m: 0.1283640730845151
+    tip_position_m: 0.000298509782955628
+    tip_orientation_rad: 0.014841166711402969
+    strain_relative_error: 0.2223131326267225
+    strain_rate_relative_error: 0.9176957220397267
+    physical_length_error_m: 0.0003027376132853643
+    chord_length_error_m: 0.00030386374920854387
+    grasp_wrench_relative_error: 1.0866966995297125
+    grasp_position_m: 0.00029521311168172193
+    grasp_orientation_rad: 0.008682257684883248
+    fom_grasp:
+      position_m: 0.0002746945278227987
+      orientation_rad: 0.008276718605634836
+      compliance_m: 0.0002746945278227987
+    rom_grasp:
+      position_m: 0.00029521311168172193
+      orientation_rad: 0.008682257684883248
+      compliance_m: 0.00029521311168172193
+    fom_step_seconds: 0.0017203897941665976
+    rom_step_seconds: 0.0014278965683335325
+    speedup: 1.2048420258999766
+    strain_bend_relative_error: 0.2224202773831965
+    strain_extension_relative_error: 0.17787363096148512
+    strain_shear_relative_error: 0.4673998648386153
+    strain_component_relative_error: 0.4673998648386153
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.0010608865788756558
-    marker_max_m: 0.007886091487781582
-    tip_position_m: 0.00024327369331935997
-    tip_orientation_rad: 0.13899189085131952
-    strain_relative_error: 0.14897823772308322
-    chain_length_error_m: 8.297329945761156e-05
-    fom_step_seconds: 0.0017515989220828487
-    rom_step_seconds: 0.0015510957841668946
-    speedup: 1.1292654779689482
+    marker_rmse_m: 0.00027319330765595407
+    marker_max_m: 0.0026238139653394555
+    centerline_rmse_m: 0.00038911508044553786
+    centerline_max_m: 0.002941529210418262
+    tip_position_m: 2.4919295820482164e-05
+    tip_orientation_rad: 0.002920488086659865
+    strain_relative_error: 0.049729709988825636
+    strain_rate_relative_error: 0.24996626843429395
+    physical_length_error_m: 0.00033577950124741296
+    chord_length_error_m: 0.00033648982702771946
+    grasp_wrench_relative_error: 0.22656371977000395
+    grasp_position_m: 0.00011580400889969903
+    grasp_orientation_rad: 0.008377951359832903
+    fom_grasp:
+      position_m: 0.00010999334300605909
+      orientation_rad: 0.007010745066571212
+      compliance_m: 0.00010999334300605909
+    rom_grasp:
+      position_m: 0.00011580400889969903
+      orientation_rad: 0.008377951359832903
+      compliance_m: 0.00011580400889969903
+    fom_step_seconds: 0.0017247994083330316
+    rom_step_seconds: 0.001430889384166676
+    speedup: 1.2054037352003444
+    strain_bend_relative_error: 0.043665105961849
+    strain_extension_relative_error: 0.16838748633886286
+    strain_shear_relative_error: 0.38497561322877616
+    strain_component_relative_error: 0.38497561322877616
   - vertex_id: 3
     parameters: &id004
       EI: 0.015
@@ -152,43 +338,100 @@ candidates:
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.0010201448825804442
-    marker_max_m: 0.007024351108297247
-    tip_position_m: 0.00021224083850899345
-    tip_orientation_rad: 0.15362690592426706
-    strain_relative_error: 0.1555715908904754
-    chain_length_error_m: 8.141808721295885e-05
-    fom_step_seconds: 0.0017470836691662348
-    rom_step_seconds: 0.0015467338858335703
-    speedup: 1.1295308683462968
+    marker_rmse_m: 0.0008429631223149424
+    marker_max_m: 0.012369531227787512
+    centerline_rmse_m: 0.0012053206047184168
+    centerline_max_m: 0.012369531227787512
+    tip_position_m: 5.107973660815531e-05
+    tip_orientation_rad: 0.006366574636959045
+    strain_relative_error: 0.13759312218400455
+    strain_rate_relative_error: 0.5149698363284851
+    physical_length_error_m: 0.0006020737277540045
+    chord_length_error_m: 0.0006058453991339974
+    grasp_wrench_relative_error: 0.4078739557037348
+    grasp_position_m: 0.00016643006342931892
+    grasp_orientation_rad: 0.01283383815553246
+    fom_grasp:
+      position_m: 0.00012523321211857638
+      orientation_rad: 0.007018510055896178
+      compliance_m: 0.00012523321211857638
+    rom_grasp:
+      position_m: 0.00016643006342931892
+      orientation_rad: 0.01283383815553246
+      compliance_m: 0.00016643006342931892
+    fom_step_seconds: 0.0017514788933332662
+    rom_step_seconds: 0.0014746343129165022
+    speedup: 1.1877377855593407
+    strain_bend_relative_error: 0.12515301101833468
+    strain_extension_relative_error: 0.3935124598542061
+    strain_shear_relative_error: 0.514002162564527
+    strain_component_relative_error: 0.514002162564527
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.001052423148722471
-    marker_max_m: 0.009253011051734287
-    tip_position_m: 0.0002473184726982004
-    tip_orientation_rad: 0.16078581315227855
-    strain_relative_error: 0.15523585364418957
-    chain_length_error_m: 8.134892594613419e-05
-    fom_step_seconds: 0.0017618200983338284
-    rom_step_seconds: 0.0015544489775000633
-    speedup: 1.1334049067131615
+    marker_rmse_m: 0.006410626855546689
+    marker_max_m: 0.1289415722146903
+    centerline_rmse_m: 0.009173703192131191
+    centerline_max_m: 0.12909523067998724
+    tip_position_m: 0.0002827000898312428
+    tip_orientation_rad: 0.014415523393206748
+    strain_relative_error: 0.24391604075312018
+    strain_rate_relative_error: 0.9563018993634185
+    physical_length_error_m: 0.00030309104871339976
+    chord_length_error_m: 0.0003042294582031868
+    grasp_wrench_relative_error: 1.2438367786615623
+    grasp_position_m: 0.00028015354330411356
+    grasp_orientation_rad: 0.008735292830641438
+    fom_grasp:
+      position_m: 0.0002272804862986642
+      orientation_rad: 0.008331472837653262
+      compliance_m: 0.0002272804862986642
+    rom_grasp:
+      position_m: 0.00028015354330411356
+      orientation_rad: 0.008735292830641438
+      compliance_m: 0.0002801535433041135
+    fom_step_seconds: 0.0017346631095832283
+    rom_step_seconds: 0.0014449962874997862
+    speedup: 1.2004619835976464
+    strain_bend_relative_error: 0.24420813492812163
+    strain_extension_relative_error: 0.18056278122085656
+    strain_shear_relative_error: 0.47946319019918104
+    strain_component_relative_error: 0.47946319019918104
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.000984356230796808
-    marker_max_m: 0.006885442128741245
-    tip_position_m: 0.00024231367384784284
-    tip_orientation_rad: 0.13444773736826013
-    strain_relative_error: 0.14598207208569405
-    chain_length_error_m: 8.27927651967375e-05
-    fom_step_seconds: 0.001758061822916564
-    rom_step_seconds: 0.0015514825933329727
-    speedup: 1.1331495631799564
+    marker_rmse_m: 0.00027120667843150495
+    marker_max_m: 0.0026223141345525073
+    centerline_rmse_m: 0.0003862534447473927
+    centerline_max_m: 0.002940129314536142
+    tip_position_m: 2.4977156582717768e-05
+    tip_orientation_rad: 0.0029129920256438036
+    strain_relative_error: 0.04957395824129455
+    strain_rate_relative_error: 0.23703058988520528
+    physical_length_error_m: 0.0003341734868513857
+    chord_length_error_m: 0.00033498791137420714
+    grasp_wrench_relative_error: 0.2262195312757144
+    grasp_position_m: 0.00011630843407893465
+    grasp_orientation_rad: 0.008391335430106879
+    fom_grasp:
+      position_m: 0.00011041641339034326
+      orientation_rad: 0.007027502330907729
+      compliance_m: 0.00011041641339034326
+    rom_grasp:
+      position_m: 0.00011630843407893465
+      orientation_rad: 0.008391335430106879
+      compliance_m: 0.00011630843407893463
+    fom_step_seconds: 0.001767515604583423
+    rom_step_seconds: 0.0014847781516664326
+    speedup: 1.1904240391735705
+    strain_bend_relative_error: 0.0435102274189991
+    strain_extension_relative_error: 0.16805815747721503
+    strain_shear_relative_error: 0.38485218454257814
+    strain_component_relative_error: 0.38485218454257814
   - vertex_id: 4
     parameters: &id005
       EI: 0.01
@@ -196,45 +439,102 @@ candidates:
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.0012211258398214986
-    marker_max_m: 0.010456352175889713
-    tip_position_m: 0.00034977768806573016
-    tip_orientation_rad: 0.1453761670995079
-    strain_relative_error: 0.11717100065064655
-    chain_length_error_m: 8.223627305459225e-05
-    fom_step_seconds: 0.0017528852958336454
-    rom_step_seconds: 0.0015400968037503542
-    speedup: 1.1381656604734982
+    marker_rmse_m: 0.0009056960442772883
+    marker_max_m: 0.013926158311461816
+    centerline_rmse_m: 0.0012948441109984794
+    centerline_max_m: 0.013926158311461816
+    tip_position_m: 5.295242046127393e-05
+    tip_orientation_rad: 0.006626454172957536
+    strain_relative_error: 0.146204267166275
+    strain_rate_relative_error: 0.6836016855053187
+    physical_length_error_m: 0.0006621693925217276
+    chord_length_error_m: 0.0006673147407868507
+    grasp_wrench_relative_error: 0.4352865323667943
+    grasp_position_m: 0.00016569537118649099
+    grasp_orientation_rad: 0.01185109403380317
+    fom_grasp:
+      position_m: 0.00012164888553176848
+      orientation_rad: 0.005224639860684211
+      compliance_m: 0.00012164888553176848
+    rom_grasp:
+      position_m: 0.00016569537118649099
+      orientation_rad: 0.01185109403380317
+      compliance_m: 0.00016569537118649099
+    fom_step_seconds: 0.0017341377933333508
+    rom_step_seconds: 0.0014424250316665166
+    speedup: 1.2022377283135481
+    strain_bend_relative_error: 0.13294392518030765
+    strain_extension_relative_error: 0.4850556560692477
+    strain_shear_relative_error: 0.4839677370571112
+    strain_component_relative_error: 0.4850556560692477
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.0013883389726047583
-    marker_max_m: 0.011494172385130322
-    tip_position_m: 0.0005023381515498193
-    tip_orientation_rad: 0.1483371454820807
-    strain_relative_error: 0.12357694759569231
-    chain_length_error_m: 8.296546115338366e-05
-    fom_step_seconds: 0.0017494047016665111
-    rom_step_seconds: 0.0015425219354165164
-    speedup: 1.1341198212485268
+    marker_rmse_m: 0.015629251648016613
+    marker_max_m: 0.13031948996950432
+    centerline_rmse_m: 0.022370845816687673
+    centerline_max_m: 0.13081347654627157
+    tip_position_m: 0.000210275209892728
+    tip_orientation_rad: 0.010298718830982235
+    strain_relative_error: 0.5017380974978143
+    strain_rate_relative_error: 0.9800749835696342
+    physical_length_error_m: 0.00034488956937595017
+    chord_length_error_m: 0.00034650422995008423
+    grasp_wrench_relative_error: 1.047032449782554
+    grasp_position_m: 0.00020083069195381468
+    grasp_orientation_rad: 0.00597911323629348
+    fom_grasp:
+      position_m: 0.00020083069195381468
+      orientation_rad: 0.005677695639540955
+      compliance_m: 0.00020083069195381468
+    rom_grasp:
+      position_m: 0.0001732865638840328
+      orientation_rad: 0.00597911323629348
+      compliance_m: 0.0001732865638840328
+    fom_step_seconds: 0.0017283305495834611
+    rom_step_seconds: 0.0014316923445835527
+    speedup: 1.2071940987336869
+    strain_bend_relative_error: 0.5031508241331951
+    strain_extension_relative_error: 0.23861926854355678
+    strain_shear_relative_error: 0.6969826458473872
+    strain_component_relative_error: 0.6969826458473872
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.0011958435682120983
-    marker_max_m: 0.010137489798667415
-    tip_position_m: 0.0003378897218919645
-    tip_orientation_rad: 0.14218744770832434
-    strain_relative_error: 0.11551011172512438
-    chain_length_error_m: 8.425972528991466e-05
-    fom_step_seconds: 0.0017526822274999175
-    rom_step_seconds: 0.0015330443004169562
-    speedup: 1.14326913255098
-- n_modes: 4
-  strain_basis_sha256: 6ffd1ee29fdd162b7e689f70679684b30899470b0cea793ab23430745723fa07
+    marker_rmse_m: 0.0003084069607406565
+    marker_max_m: 0.0030860673351809534
+    centerline_rmse_m: 0.00043883553722847795
+    centerline_max_m: 0.0034357065897548276
+    tip_position_m: 2.8935716809045534e-05
+    tip_orientation_rad: 0.003250383776608792
+    strain_relative_error: 0.0556182630648246
+    strain_rate_relative_error: 0.30708607296784257
+    physical_length_error_m: 0.0003929100556505638
+    chord_length_error_m: 0.00039401639277147904
+    grasp_wrench_relative_error: 0.26748642923100324
+    grasp_position_m: 0.0001156269144307799
+    grasp_orientation_rad: 0.00739929682152832
+    fom_grasp:
+      position_m: 0.00010818167435579454
+      orientation_rad: 0.005776834695102188
+      compliance_m: 0.00010818167435579454
+    rom_grasp:
+      position_m: 0.0001156269144307799
+      orientation_rad: 0.00739929682152832
+      compliance_m: 0.0001156269144307799
+    fom_step_seconds: 0.0017305654104166025
+    rom_step_seconds: 0.0014183085420836506
+    speedup: 1.2201614522283089
+    strain_bend_relative_error: 0.04937664460971585
+    strain_extension_relative_error: 0.20868269965226177
+    strain_shear_relative_error: 0.25404896616285527
+    strain_component_relative_error: 0.25404896616285527
+- n_modes: 7
+  strain_basis_sha256: 9f6ac8adc68f6d909100dcf0f2cdc05ddd75e882f0b74a21459a8a13da60f163
   passed: false
   episodes:
   - vertex_id: 0
@@ -242,1338 +542,1990 @@ candidates:
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.0035564884936508767
-    marker_max_m: 0.023475471765437964
-    tip_position_m: 0.001319666796997147
-    tip_orientation_rad: 0.4605552071435852
-    strain_relative_error: 0.2165995113296924
-    chain_length_error_m: 0.00018863406786984172
-    fom_step_seconds: 0.0017742895466669021
-    rom_step_seconds: 0.0016323440529170815
-    speedup: 1.0869580732665745
+    marker_rmse_m: 5.3930098030612863e-05
+    marker_max_m: 0.000772180325448853
+    centerline_rmse_m: 7.393709026721451e-05
+    centerline_max_m: 0.000895399391531325
+    tip_position_m: 8.053746389292237e-06
+    tip_orientation_rad: 0.0005897418691913505
+    strain_relative_error: 0.030783642804000786
+    strain_rate_relative_error: 0.19482408888304498
+    physical_length_error_m: 9.121132586109582e-05
+    chord_length_error_m: 9.31405845003841e-05
+    grasp_wrench_relative_error: 0.07074995067986387
+    grasp_position_m: 0.00012006765868237241
+    grasp_orientation_rad: 0.00436301487283626
+    fom_grasp:
+      position_m: 0.00011383629401657634
+      orientation_rad: 0.0037963297060139675
+      compliance_m: 0.00011383629401657634
+    rom_grasp:
+      position_m: 0.00012006765868237241
+      orientation_rad: 0.00436301487283626
+      compliance_m: 0.00012006765868237241
+    fom_step_seconds: 0.0017078966329161934
+    rom_step_seconds: 0.0015773431474993534
+    speedup: 1.082767966896622
+    strain_bend_relative_error: 0.028755784727139876
+    strain_extension_relative_error: 0.05899431494580912
+    strain_shear_relative_error: 0.8877486702843778
+    strain_component_relative_error: 0.8877486702843778
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.010960837904737947
-    marker_max_m: 0.0751209086446869
-    tip_position_m: 0.001485740341161349
-    tip_orientation_rad: 0.6023096051450701
-    strain_relative_error: 0.464266232385215
-    chain_length_error_m: 0.0002105888617235374
-    fom_step_seconds: 0.0017681257108332223
-    rom_step_seconds: 0.0016432015179164712
-    speedup: 1.0760248767754008
+    marker_rmse_m: 0.00012059136913062881
+    marker_max_m: 0.0030145207848646985
+    centerline_rmse_m: 0.00017274102916648194
+    centerline_max_m: 0.0030955876010652595
+    tip_position_m: 1.288448339119878e-05
+    tip_orientation_rad: 0.00021044102322859335
+    strain_relative_error: 0.018895018581255165
+    strain_rate_relative_error: 0.11438550679924957
+    physical_length_error_m: 3.668004902146471e-05
+    chord_length_error_m: 3.7292730615812175e-05
+    grasp_wrench_relative_error: 0.07554680261521575
+    grasp_position_m: 0.00017054967041619422
+    grasp_orientation_rad: 0.00309478701875855
+    fom_grasp:
+      position_m: 0.00017054967041619422
+      orientation_rad: 0.00309478701875855
+      compliance_m: 0.0001705496704161942
+    rom_grasp:
+      position_m: 0.00016700055353647953
+      orientation_rad: 0.0029700095130403364
+      compliance_m: 0.00016700055353647953
+    fom_step_seconds: 0.0017220454233332324
+    rom_step_seconds: 0.0015793553024999103
+    speedup: 1.0903470679507408
+    strain_bend_relative_error: 0.01617206027693141
+    strain_extension_relative_error: 0.02937716695533255
+    strain_shear_relative_error: 0.9482454783725848
+    strain_component_relative_error: 0.9482454783725848
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.0024278195614090164
-    marker_max_m: 0.02269400065210747
-    tip_position_m: 0.00128908200296243
-    tip_orientation_rad: 0.44596134372736473
-    strain_relative_error: 0.20362653007150822
-    chain_length_error_m: 0.00017773783499719364
-    fom_step_seconds: 0.0017558631454168486
-    rom_step_seconds: 0.0016870855629167636
-    speedup: 1.0407670980132016
+    marker_rmse_m: 3.388587641726424e-05
+    marker_max_m: 0.0004881396388486464
+    centerline_rmse_m: 4.6480948472641825e-05
+    centerline_max_m: 0.000566332718865511
+    tip_position_m: 3.295327145448514e-06
+    tip_orientation_rad: 0.00023640253380345056
+    strain_relative_error: 0.017384359614002958
+    strain_rate_relative_error: 0.14172597650224764
+    physical_length_error_m: 4.084037006513164e-05
+    chord_length_error_m: 4.159531811631645e-05
+    grasp_wrench_relative_error: 0.03110114429891221
+    grasp_position_m: 0.00010707275501242153
+    grasp_orientation_rad: 0.004532060824756947
+    fom_grasp:
+      position_m: 0.00010595713868965304
+      orientation_rad: 0.004370758804763668
+      compliance_m: 0.00010595713868965303
+    rom_grasp:
+      position_m: 0.00010707275501242153
+      orientation_rad: 0.004532060824756947
+      compliance_m: 0.00010707275501242153
+    fom_step_seconds: 0.00172567598083333
+    rom_step_seconds: 0.0015885437212500618
+    speedup: 1.086325769790809
+    strain_bend_relative_error: 0.015101024025253132
+    strain_extension_relative_error: 0.021197021501654655
+    strain_shear_relative_error: 0.8978078272824975
+    strain_component_relative_error: 0.8978078272824975
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.0032304529014793824
-    marker_max_m: 0.020964104322517507
-    tip_position_m: 0.0013108698667145442
-    tip_orientation_rad: 0.4070198408910668
-    strain_relative_error: 0.1979266125093535
-    chain_length_error_m: 0.00019358799229518553
-    fom_step_seconds: 0.0017560899275000945
-    rom_step_seconds: 0.001687973841249762
-    speedup: 1.0403537570226207
+    marker_rmse_m: 5.442072789679988e-05
+    marker_max_m: 0.0008439243127740563
+    centerline_rmse_m: 7.464713138467968e-05
+    centerline_max_m: 0.0009678865199056244
+    tip_position_m: 8.452231259840355e-06
+    tip_orientation_rad: 0.0006038063715834695
+    strain_relative_error: 0.030755975383939014
+    strain_rate_relative_error: 0.19487250336232126
+    physical_length_error_m: 9.250478956857044e-05
+    chord_length_error_m: 9.449757279855753e-05
+    grasp_wrench_relative_error: 0.07325086192858457
+    grasp_position_m: 0.00012291453998143688
+    grasp_orientation_rad: 0.004484476893782373
+    fom_grasp:
+      position_m: 0.00011538976736560608
+      orientation_rad: 0.003898855089641626
+      compliance_m: 0.00011538976736560608
+    rom_grasp:
+      position_m: 0.00012291453998143688
+      orientation_rad: 0.004484476893782373
+      compliance_m: 0.00012291453998143688
+    fom_step_seconds: 0.001732327859582862
+    rom_step_seconds: 0.0015810653145831566
+    speedup: 1.0956712816380931
+    strain_bend_relative_error: 0.028720479412322888
+    strain_extension_relative_error: 0.05932936413690182
+    strain_shear_relative_error: 0.8872612228915497
+    strain_component_relative_error: 0.8872612228915497
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.04861710385497968
-    marker_max_m: 0.24222408249914826
-    tip_position_m: 0.0014968197033631706
-    tip_orientation_rad: 1.1520441659567793
-    strain_relative_error: 0.8740213405521072
-    chain_length_error_m: 0.00021281489412738885
-    fom_step_seconds: 0.001765722600416666
-    rom_step_seconds: 0.0016465040383332053
-    speedup: 1.0724070875672729
+    marker_rmse_m: 0.00012931787641872868
+    marker_max_m: 0.003184249872001864
+    centerline_rmse_m: 0.0001852414942248409
+    centerline_max_m: 0.0032817736994026382
+    tip_position_m: 1.201694856088497e-05
+    tip_orientation_rad: 0.00021010648706639036
+    strain_relative_error: 0.018994883840117823
+    strain_rate_relative_error: 0.10547616503042498
+    physical_length_error_m: 3.6811856802487775e-05
+    chord_length_error_m: 3.743018716750868e-05
+    grasp_wrench_relative_error: 0.08492421616216303
+    grasp_position_m: 0.00014150197634348743
+    grasp_orientation_rad: 0.002842858360432242
+    fom_grasp:
+      position_m: 0.00014150197634348743
+      orientation_rad: 0.002826927039525143
+      compliance_m: 0.0001415019763434874
+    rom_grasp:
+      position_m: 0.00013985988972954833
+      orientation_rad: 0.002842858360432242
+      compliance_m: 0.00013985988972954833
+    fom_step_seconds: 0.0017184685324999312
+    rom_step_seconds: 0.0015834107241668486
+    speedup: 1.0852954993115553
+    strain_bend_relative_error: 0.01628008948226889
+    strain_extension_relative_error: 0.02946450297004587
+    strain_shear_relative_error: 0.9483146864270123
+    strain_component_relative_error: 0.9483146864270123
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.002222878201404323
-    marker_max_m: 0.020275760159534625
-    tip_position_m: 0.0012812473503392848
-    tip_orientation_rad: 0.3942467488493345
-    strain_relative_error: 0.18329427259003797
-    chain_length_error_m: 0.0001811844793084827
-    fom_step_seconds: 0.0017522824620831063
-    rom_step_seconds: 0.0016344304587505576
-    speedup: 1.0721058535721617
+    marker_rmse_m: 3.173578232311069e-05
+    marker_max_m: 0.0004663314087873023
+    centerline_rmse_m: 4.324956751339672e-05
+    centerline_max_m: 0.0005493965459519258
+    tip_position_m: 3.283120786409368e-06
+    tip_orientation_rad: 0.00023754161630922929
+    strain_relative_error: 0.01722622722868471
+    strain_rate_relative_error: 0.1272208484186624
+    physical_length_error_m: 4.0519138358008355e-05
+    chord_length_error_m: 4.1261409503667856e-05
+    grasp_wrench_relative_error: 0.031012471181350837
+    grasp_position_m: 0.00010689872284101359
+    grasp_orientation_rad: 0.004536196920907686
+    fom_grasp:
+      position_m: 0.00010586654350082897
+      orientation_rad: 0.0043773525742309
+      compliance_m: 0.00010586654350082897
+    rom_grasp:
+      position_m: 0.00010689872284101359
+      orientation_rad: 0.004536196920907686
+      compliance_m: 0.0001068987228410136
+    fom_step_seconds: 0.001721639434166112
+    rom_step_seconds: 0.00158453730124999
+    speedup: 1.0865250270902216
+    strain_bend_relative_error: 0.014923159549736977
+    strain_extension_relative_error: 0.021055434498810015
+    strain_shear_relative_error: 0.8973408274311881
+    strain_component_relative_error: 0.8973408274311881
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.000580883630670188
-    marker_max_m: 0.006654678723668323
-    tip_position_m: 0.0004482023152946959
-    tip_orientation_rad: 0.1101940813738786
-    strain_relative_error: 0.06989530477296811
-    chain_length_error_m: 8.160846926275056e-05
-    fom_step_seconds: 0.001774485790416141
-    rom_step_seconds: 0.001702179569999771
-    speedup: 1.0424786090085547
+    marker_rmse_m: 3.8368297246250396e-05
+    marker_max_m: 0.0009343136929023345
+    centerline_rmse_m: 5.4157208865835675e-05
+    centerline_max_m: 0.0009691670881562898
+    tip_position_m: 6.959888454755018e-06
+    tip_orientation_rad: 0.0002021334536182811
+    strain_relative_error: 0.018258874038595357
+    strain_rate_relative_error: 0.10731747779884761
+    physical_length_error_m: 3.227441250364116e-05
+    chord_length_error_m: 3.2504904003416435e-05
+    grasp_wrench_relative_error: 0.055865430995881156
+    grasp_position_m: 0.00012699053883452306
+    grasp_orientation_rad: 0.007015681961051365
+    fom_grasp:
+      position_m: 0.00012458211585692882
+      orientation_rad: 0.007015087169031823
+      compliance_m: 0.00012458211585692882
+    rom_grasp:
+      position_m: 0.00012699053883452306
+      orientation_rad: 0.007015681961051365
+      compliance_m: 0.00012699053883452306
+    fom_step_seconds: 0.0017202267750000525
+    rom_step_seconds: 0.0015869882133332188
+    speedup: 1.0839568690853645
+    strain_bend_relative_error: 0.015355001604012663
+    strain_extension_relative_error: 0.01838725608757128
+    strain_shear_relative_error: 0.3539027627848077
+    strain_component_relative_error: 0.3539027627848077
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.0005932151404004384
-    marker_max_m: 0.00706616586539226
-    tip_position_m: 0.00047486633249351265
-    tip_orientation_rad: 0.11825854263973491
-    strain_relative_error: 0.07154497143756611
-    chain_length_error_m: 8.149657574885172e-05
-    fom_step_seconds: 0.001750303634166812
-    rom_step_seconds: 0.001661740201250268
-    speedup: 1.0532955950935714
+    marker_rmse_m: 8.676806808905998e-05
+    marker_max_m: 0.002443019127730838
+    centerline_rmse_m: 0.0001249559324763802
+    centerline_max_m: 0.0025358070623628997
+    tip_position_m: 1.7618357645667025e-05
+    tip_orientation_rad: 0.00042479029436385055
+    strain_relative_error: 0.014887413463060316
+    strain_rate_relative_error: 0.052336643715299974
+    physical_length_error_m: 1.0912800368911846e-05
+    chord_length_error_m: 1.0967692540275742e-05
+    grasp_wrench_relative_error: 0.06413803360329172
+    grasp_position_m: 0.0002746945278227987
+    grasp_orientation_rad: 0.008289347860904763
+    fom_grasp:
+      position_m: 0.0002746945278227987
+      orientation_rad: 0.008276718605634836
+      compliance_m: 0.0002746945278227987
+    rom_grasp:
+      position_m: 0.0002677365595537532
+      orientation_rad: 0.008289347860904763
+      compliance_m: 0.00026773655955375313
+    fom_step_seconds: 0.0017203897941665976
+    rom_step_seconds: 0.0015825802700002592
+    speedup: 1.0870790106376822
+    strain_bend_relative_error: 0.010917310391721839
+    strain_extension_relative_error: 0.021920565893596818
+    strain_shear_relative_error: 0.34594090352072787
+    strain_component_relative_error: 0.34594090352072787
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.0005915328818935746
-    marker_max_m: 0.00646462919748984
-    tip_position_m: 0.0004348072448888578
-    tip_orientation_rad: 0.10617814110190897
-    strain_relative_error: 0.069360957811067
-    chain_length_error_m: 8.298577596366208e-05
-    fom_step_seconds: 0.0017515989220828487
-    rom_step_seconds: 0.0016524854845829395
-    speedup: 1.0599784012777116
+    marker_rmse_m: 1.567966408998997e-05
+    marker_max_m: 0.0001242521758267966
+    centerline_rmse_m: 2.1224319138820292e-05
+    centerline_max_m: 0.00015613876362647952
+    tip_position_m: 9.523639434155097e-07
+    tip_orientation_rad: 6.602452804874723e-05
+    strain_relative_error: 0.011106736689687337
+    strain_rate_relative_error: 0.04731428623360654
+    physical_length_error_m: 1.177325262258222e-05
+    chord_length_error_m: 1.1837401965753003e-05
+    grasp_wrench_relative_error: 0.008658410215250373
+    grasp_position_m: 0.00011025709849827674
+    grasp_orientation_rad: 0.007060249729393107
+    fom_grasp:
+      position_m: 0.00010999334300605909
+      orientation_rad: 0.007010745066571212
+      compliance_m: 0.00010999334300605909
+    rom_grasp:
+      position_m: 0.00011025709849827674
+      orientation_rad: 0.007060249729393107
+      compliance_m: 0.00011025709849827674
+    fom_step_seconds: 0.0017247994083330316
+    rom_step_seconds: 0.00158629124541676
+    speedup: 1.0873157204368749
+    strain_bend_relative_error: 0.006476127284560585
+    strain_extension_relative_error: 0.016269713169061308
+    strain_shear_relative_error: 0.3440841750742975
+    strain_component_relative_error: 0.3440841750742975
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.000512964735354726
-    marker_max_m: 0.005309842796844114
-    tip_position_m: 0.0003963248423458944
-    tip_orientation_rad: 0.08314192076408337
-    strain_relative_error: 0.062084843763892235
-    chain_length_error_m: 8.14532377745314e-05
-    fom_step_seconds: 0.0017470836691662348
-    rom_step_seconds: 0.001650529727499664
-    speedup: 1.0584987595545081
+    marker_rmse_m: 3.761365442449e-05
+    marker_max_m: 0.000857964202126464
+    centerline_rmse_m: 5.3060573346509216e-05
+    centerline_max_m: 0.0009063737060867207
+    tip_position_m: 5.730910420156294e-06
+    tip_orientation_rad: 0.00020436998811848345
+    strain_relative_error: 0.018211286127041166
+    strain_rate_relative_error: 0.09796776264945727
+    physical_length_error_m: 3.224395817069681e-05
+    chord_length_error_m: 3.2474405009197405e-05
+    grasp_wrench_relative_error: 0.04576154147981275
+    grasp_position_m: 0.00012768292767515027
+    grasp_orientation_rad: 0.007018958209597194
+    fom_grasp:
+      position_m: 0.00012523321211857638
+      orientation_rad: 0.007018510055896178
+      compliance_m: 0.00012523321211857638
+    rom_grasp:
+      position_m: 0.00012768292767515027
+      orientation_rad: 0.007018958209597194
+      compliance_m: 0.00012768292767515027
+    fom_step_seconds: 0.0017514788933332662
+    rom_step_seconds: 0.0015799248833332058
+    speedup: 1.108583649646766
+    strain_bend_relative_error: 0.015296379662639319
+    strain_extension_relative_error: 0.01845966667068815
+    strain_shear_relative_error: 0.3538891163839955
+    strain_component_relative_error: 0.3538891163839955
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.000517566041878743
-    marker_max_m: 0.00562623565154519
-    tip_position_m: 0.00041928115782712314
-    tip_orientation_rad: 0.0925556296937317
-    strain_relative_error: 0.06300164029391338
-    chain_length_error_m: 8.134892594613419e-05
-    fom_step_seconds: 0.0017618200983338284
-    rom_step_seconds: 0.0016490140529163
-    speedup: 1.0684081771274354
+    marker_rmse_m: 9.220616224095599e-05
+    marker_max_m: 0.0025431288928666313
+    centerline_rmse_m: 0.0001327282307918114
+    centerline_max_m: 0.0026353401397484254
+    tip_position_m: 1.5465563246365152e-05
+    tip_orientation_rad: 0.0004388034368308536
+    strain_relative_error: 0.015015353687733832
+    strain_rate_relative_error: 0.051547905744996216
+    physical_length_error_m: 1.0873455563942258e-05
+    chord_length_error_m: 1.0927679865102569e-05
+    grasp_wrench_relative_error: 0.06804611008158891
+    grasp_position_m: 0.0002272804862986642
+    grasp_orientation_rad: 0.008343809274796013
+    fom_grasp:
+      position_m: 0.0002272804862986642
+      orientation_rad: 0.008331472837653262
+      compliance_m: 0.0002272804862986642
+    rom_grasp:
+      position_m: 0.00022466906406729808
+      orientation_rad: 0.008343809274796013
+      compliance_m: 0.00022466906406729808
+    fom_step_seconds: 0.0017346631095832283
+    rom_step_seconds: 0.0015825408162496995
+    speedup: 1.0961253522004113
+    strain_bend_relative_error: 0.011079345431492
+    strain_extension_relative_error: 0.021963125761932302
+    strain_shear_relative_error: 0.34596298257689906
+    strain_component_relative_error: 0.34596298257689906
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 5
-    split: test
+    split: validation
     passed: false
-    marker_rmse_m: 0.0005202043487003106
-    marker_max_m: 0.005154092673165818
-    tip_position_m: 0.00038440087408210543
-    tip_orientation_rad: 0.08006708086773244
-    strain_relative_error: 0.061479863371391094
-    chain_length_error_m: 8.282364343636939e-05
-    fom_step_seconds: 0.001758061822916564
-    rom_step_seconds: 0.0016509957975002483
-    speedup: 1.064849362777557
+    marker_rmse_m: 1.561867082943283e-05
+    marker_max_m: 0.00012411730522691683
+    centerline_rmse_m: 2.114290745014131e-05
+    centerline_max_m: 0.00015577131948885656
+    tip_position_m: 9.597574871956995e-07
+    tip_orientation_rad: 6.597705817409328e-05
+    strain_relative_error: 0.011093144418320275
+    strain_rate_relative_error: 0.04422570675238021
+    physical_length_error_m: 1.1684945451673201e-05
+    chord_length_error_m: 1.1748344099449248e-05
+    grasp_wrench_relative_error: 0.008692192549978826
+    grasp_position_m: 0.00011068112675936838
+    grasp_orientation_rad: 0.007076342533528286
+    fom_grasp:
+      position_m: 0.00011041641339034326
+      orientation_rad: 0.007027502330907729
+      compliance_m: 0.00011041641339034326
+    rom_grasp:
+      position_m: 0.00011068112675936838
+      orientation_rad: 0.007076342533528286
+      compliance_m: 0.00011068112675936836
+    fom_step_seconds: 0.001767515604583423
+    rom_step_seconds: 0.0015815739866669295
+    speedup: 1.1175674483040492
+    strain_bend_relative_error: 0.0064553493364535594
+    strain_extension_relative_error: 0.016268981516378827
+    strain_shear_relative_error: 0.34404588209633863
+    strain_component_relative_error: 0.34404588209633863
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 0
     split: train
     passed: false
-    marker_rmse_m: 0.000860285265724895
-    marker_max_m: 0.009276069906615404
-    tip_position_m: 0.0005495158201258105
-    tip_orientation_rad: 0.1834825961216268
-    strain_relative_error: 0.10032507057122367
-    chain_length_error_m: 8.270867475301813e-05
-    fom_step_seconds: 0.0017528852958336454
-    rom_step_seconds: 0.0016517378554165893
-    speedup: 1.0612369814528138
+    marker_rmse_m: 4.037118294155251e-05
+    marker_max_m: 0.0007160868086510042
+    centerline_rmse_m: 5.641560248413894e-05
+    centerline_max_m: 0.000731928972395606
+    tip_position_m: 4.552877677789343e-06
+    tip_orientation_rad: 0.0003347975498081558
+    strain_relative_error: 0.019148114963027013
+    strain_rate_relative_error: 0.11468704015127541
+    physical_length_error_m: 5.2109316565851493e-05
+    chord_length_error_m: 5.274862363502386e-05
+    grasp_wrench_relative_error: 0.03742687085685359
+    grasp_position_m: 0.00012510780422255724
+    grasp_orientation_rad: 0.005503113119612705
+    fom_grasp:
+      position_m: 0.00012164888553176848
+      orientation_rad: 0.005224639860684211
+      compliance_m: 0.00012164888553176848
+    rom_grasp:
+      position_m: 0.00012510780422255724
+      orientation_rad: 0.005503113119612705
+      compliance_m: 0.00012510780422255724
+    fom_step_seconds: 0.0017341377933333508
+    rom_step_seconds: 0.0015866632987498028
+    speedup: 1.092946307322889
+    strain_bend_relative_error: 0.018661312646395596
+    strain_extension_relative_error: 0.02861527451668603
+    strain_shear_relative_error: 0.17140249483628628
+    strain_component_relative_error: 0.17140249483628628
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.0009154020505946386
-    marker_max_m: 0.010170643092184956
-    tip_position_m: 0.0006047966019269822
-    tip_orientation_rad: 0.1957657922599076
-    strain_relative_error: 0.10569780555548686
-    chain_length_error_m: 8.33317881558937e-05
-    fom_step_seconds: 0.0017494047016665111
-    rom_step_seconds: 0.0016455239179163073
-    speedup: 1.0631293064896594
+    marker_rmse_m: 9.308474873679657e-05
+    marker_max_m: 0.0023227492308995627
+    centerline_rmse_m: 0.0001339061004669433
+    centerline_max_m: 0.0024035492445074673
+    tip_position_m: 1.0355695300400407e-05
+    tip_orientation_rad: 0.0002785710150688373
+    strain_relative_error: 0.012826183521046674
+    strain_rate_relative_error: 0.05839092384163811
+    physical_length_error_m: 1.9347583632312038e-05
+    chord_length_error_m: 1.9528866840534675e-05
+    grasp_wrench_relative_error: 0.05156437429633434
+    grasp_position_m: 0.00020083069195381468
+    grasp_orientation_rad: 0.005729646873343428
+    fom_grasp:
+      position_m: 0.00020083069195381468
+      orientation_rad: 0.005677695639540955
+      compliance_m: 0.00020083069195381468
+    rom_grasp:
+      position_m: 0.00019582398428858927
+      orientation_rad: 0.005729646873343428
+      compliance_m: 0.00019582398428858927
+    fom_step_seconds: 0.0017283305495834611
+    rom_step_seconds: 0.0015835065541667367
+    speedup: 1.0914577808570756
+    strain_bend_relative_error: 0.012643000588713342
+    strain_extension_relative_error: 0.019917844515261737
+    strain_shear_relative_error: 0.08714816489761262
+    strain_component_relative_error: 0.08714816489761262
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 5
-    split: test
-    passed: false
-    marker_rmse_m: 0.000831583101054054
-    marker_max_m: 0.008966664962610445
-    tip_position_m: 0.0005402967049288471
-    tip_orientation_rad: 0.17775591146299224
-    strain_relative_error: 0.09838922291688422
-    chain_length_error_m: 8.470432481488821e-05
-    fom_step_seconds: 0.0017526822274999175
-    rom_step_seconds: 0.0016428584625001956
-    speedup: 1.0668491945633503
-- n_modes: 6
-  strain_basis_sha256: 11df6983ff541e05a2de2c65b0fe5a7c091e8d65b55323e05371d1fbf41c51b7
-  passed: false
-  episodes:
-  - vertex_id: 0
-    parameters: *id001
-    trajectory_id: 0
-    split: train
-    passed: false
-    marker_rmse_m: 0.000761507797939248
-    marker_max_m: 0.005898889674926559
-    tip_position_m: 0.0001404573850655117
-    tip_orientation_rad: 0.040663868729317786
-    strain_relative_error: 0.053238515973293064
-    chain_length_error_m: 0.00018781957531299742
-    fom_step_seconds: 0.0017742895466669021
-    rom_step_seconds: 0.0018455902466666884
-    speedup: 0.9613669934978459
-  - vertex_id: 0
-    parameters: *id001
-    trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.002848395304843131
-    marker_max_m: 0.024899976143664675
-    tip_position_m: 0.00039712377563150996
-    tip_orientation_rad: 0.16063619290612235
-    strain_relative_error: 0.1293350639551613
-    chain_length_error_m: 0.0002105888617235374
-    fom_step_seconds: 0.0017681257108332223
-    rom_step_seconds: 0.0018419925533332087
-    speedup: 0.9598984032990148
-  - vertex_id: 0
-    parameters: *id001
-    trajectory_id: 5
-    split: test
-    passed: false
-    marker_rmse_m: 0.0005229288930863625
-    marker_max_m: 0.003774605123444578
-    tip_position_m: 0.00013934329261972866
-    tip_orientation_rad: 0.03471126935986801
-    strain_relative_error: 0.05181822457568292
-    chain_length_error_m: 0.00017764443751899783
-    fom_step_seconds: 0.0017558631454168486
-    rom_step_seconds: 0.0018224897320836438
-    speedup: 0.9634419961364494
-  - vertex_id: 1
-    parameters: *id002
-    trajectory_id: 0
-    split: train
-    passed: false
-    marker_rmse_m: 0.000799346790710081
-    marker_max_m: 0.006310249312681884
-    tip_position_m: 0.00014690260393416887
-    tip_orientation_rad: 0.04637896597186599
-    strain_relative_error: 0.04814869862558881
-    chain_length_error_m: 0.0001931282666234324
-    fom_step_seconds: 0.0017560899275000945
-    rom_step_seconds: 0.001827441119166906
-    speedup: 0.9609556822824808
-  - vertex_id: 1
-    parameters: *id002
-    trajectory_id: 4
-    split: validation
-    passed: false
-    marker_rmse_m: 0.05538974432222157
-    marker_max_m: 0.24601291249971133
-    tip_position_m: 0.0019398822788263743
-    tip_orientation_rad: 1.0118965826782147
-    strain_relative_error: 0.9057141070016893
-    chain_length_error_m: 0.00021281489412738885
-    fom_step_seconds: 0.001765722600416666
-    rom_step_seconds: 0.0018320513670831435
-    speedup: 0.9637953564740483
-  - vertex_id: 1
-    parameters: *id002
-    trajectory_id: 5
-    split: test
-    passed: false
-    marker_rmse_m: 0.0005027698254658406
-    marker_max_m: 0.0038876252293843414
-    tip_position_m: 0.00014515253379835503
-    tip_orientation_rad: 0.029387792693091323
-    strain_relative_error: 0.0455594213630773
-    chain_length_error_m: 0.0001813936076352496
-    fom_step_seconds: 0.0017522824620831063
-    rom_step_seconds: 0.001835302659166397
-    speedup: 0.9547648467305121
-  - vertex_id: 2
-    parameters: *id003
-    trajectory_id: 0
-    split: train
-    passed: true
-    marker_rmse_m: 5.1764288415570324e-05
-    marker_max_m: 0.0006128075569041581
-    tip_position_m: 4.132532284780395e-05
-    tip_orientation_rad: 0.004900886672539202
-    strain_relative_error: 0.014951199873923722
-    chain_length_error_m: 8.158085974818707e-05
-    fom_step_seconds: 0.001774485790416141
-    rom_step_seconds: 0.0018260402791671973
-    speedup: 0.9717670582959054
-  - vertex_id: 2
-    parameters: *id003
-    trajectory_id: 4
-    split: validation
-    passed: true
-    marker_rmse_m: 5.682222499682213e-05
-    marker_max_m: 0.0007667491282732599
-    tip_position_m: 4.788891000100334e-05
-    tip_orientation_rad: 0.006647885493468332
-    strain_relative_error: 0.016516439391132006
-    chain_length_error_m: 8.149657574885172e-05
-    fom_step_seconds: 0.001750303634166812
-    rom_step_seconds: 0.001822956303750137
-    speedup: 0.9601456878402046
-  - vertex_id: 2
-    parameters: *id003
-    trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 5.634843918604197e-05
-    marker_max_m: 0.0006689295262478635
-    tip_position_m: 4.624287896271191e-05
-    tip_orientation_rad: 0.006049401116843522
-    strain_relative_error: 0.015173195977192598
-    chain_length_error_m: 8.297329945761156e-05
-    fom_step_seconds: 0.0017515989220828487
-    rom_step_seconds: 0.0018249668933329607
-    speedup: 0.9597976426212756
-  - vertex_id: 3
-    parameters: *id004
-    trajectory_id: 0
-    split: train
-    passed: true
-    marker_rmse_m: 4.822608763368887e-05
-    marker_max_m: 0.0005761548580444215
-    tip_position_m: 3.7087737571752784e-05
-    tip_orientation_rad: 0.004295354139627389
-    strain_relative_error: 0.013576197836736551
-    chain_length_error_m: 8.141808721295885e-05
-    fom_step_seconds: 0.0017470836691662348
-    rom_step_seconds: 0.0018337421129164492
-    speedup: 0.9527422950371196
-  - vertex_id: 3
-    parameters: *id004
-    trajectory_id: 4
-    split: validation
-    passed: true
-    marker_rmse_m: 5.236824550711698e-05
-    marker_max_m: 0.0007207528231888466
-    tip_position_m: 4.377847768747279e-05
-    tip_orientation_rad: 0.005745312455480914
-    strain_relative_error: 0.014918714971915357
-    chain_length_error_m: 8.134892594613419e-05
-    fom_step_seconds: 0.0017618200983338284
-    rom_step_seconds: 0.001842483920417332
-    speedup: 0.9562200672745992
-  - vertex_id: 3
-    parameters: *id004
-    trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 5.252545059498889e-05
-    marker_max_m: 0.000633736953798384
-    tip_position_m: 4.285984539411105e-05
-    tip_orientation_rad: 0.005176352649372464
-    strain_relative_error: 0.013838094584935779
-    chain_length_error_m: 8.27927651967375e-05
-    fom_step_seconds: 0.001758061822916564
-    rom_step_seconds: 0.0018368282254164114
-    speedup: 0.9571182534055459
-  - vertex_id: 4
-    parameters: *id005
-    trajectory_id: 0
-    split: train
-    passed: true
-    marker_rmse_m: 8.431187882700872e-05
-    marker_max_m: 0.0008006085268117141
-    tip_position_m: 6.125517541931184e-05
-    tip_orientation_rad: 0.011370810383988406
-    strain_relative_error: 0.021901909655581524
-    chain_length_error_m: 8.230505404105415e-05
-    fom_step_seconds: 0.0017528852958336454
-    rom_step_seconds: 0.001836238333332858
-    speedup: 0.9546066346693007
-  - vertex_id: 4
-    parameters: *id005
-    trajectory_id: 4
-    split: validation
-    passed: true
-    marker_rmse_m: 9.241797149289556e-05
-    marker_max_m: 0.0009633313196431472
-    tip_position_m: 6.789774455981199e-05
-    tip_orientation_rad: 0.016337928729639052
-    strain_relative_error: 0.02485328478816909
-    chain_length_error_m: 8.304472086129167e-05
-    fom_step_seconds: 0.0017494047016665111
-    rom_step_seconds: 0.0018480019449998509
-    speedup: 0.9466465695016637
-  - vertex_id: 4
-    parameters: *id005
-    trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 8.808180122846864e-05
-    marker_max_m: 0.000855570419431425
-    tip_position_m: 6.021238118127396e-05
-    tip_orientation_rad: 0.011353541238732884
-    strain_relative_error: 0.022690102000228116
-    chain_length_error_m: 8.434244038180161e-05
-    fom_step_seconds: 0.0017526822274999175
-    rom_step_seconds: 0.0018294754324999
-    speedup: 0.9580244677595655
-- n_modes: 8
-  strain_basis_sha256: 07a52372748375e362e6d3fd63f280746008f55390f962db1b27eeb3a4017871
-  passed: false
-  episodes:
-  - vertex_id: 0
-    parameters: *id001
-    trajectory_id: 0
-    split: train
-    passed: false
-    marker_rmse_m: 0.00026535045680124546
-    marker_max_m: 0.001765523933759564
-    tip_position_m: 0.0001235198893319154
-    tip_orientation_rad: 0.02785700424546637
-    strain_relative_error: 0.026558409500788575
-    chain_length_error_m: 0.00018618009029092164
-    fom_step_seconds: 0.0017742895466669021
-    rom_step_seconds: 0.00207500356249966
-    speedup: 0.855077831543334
-  - vertex_id: 0
-    parameters: *id001
-    trajectory_id: 4
-    split: validation
-    passed: false
-    marker_rmse_m: 0.0008894548798762742
-    marker_max_m: 0.007820062624193517
-    tip_position_m: 0.00014107363082864523
-    tip_orientation_rad: 0.05179015429395527
-    strain_relative_error: 0.04765449613954079
-    chain_length_error_m: 0.0002105888617235374
-    fom_step_seconds: 0.0017681257108332223
-    rom_step_seconds: 0.0020602316020836044
-    speedup: 0.8582169640758047
-  - vertex_id: 0
-    parameters: *id001
-    trajectory_id: 5
-    split: test
-    passed: false
-    marker_rmse_m: 0.00018764685451906613
-    marker_max_m: 0.001380369442410244
-    tip_position_m: 0.00011793284493189003
-    tip_orientation_rad: 0.026909205842171765
-    strain_relative_error: 0.0260098049414374
-    chain_length_error_m: 0.00017697177938624797
-    fom_step_seconds: 0.0017558631454168486
-    rom_step_seconds: 0.002122458697917106
-    speedup: 0.8272778863211712
-  - vertex_id: 1
-    parameters: *id002
-    trajectory_id: 0
-    split: train
-    passed: false
-    marker_rmse_m: 0.00023870733111745887
-    marker_max_m: 0.0017038252846105118
-    tip_position_m: 0.00011086261221888721
-    tip_orientation_rad: 0.023642345056686522
-    strain_relative_error: 0.022147009022585363
-    chain_length_error_m: 0.00019154091981432586
-    fom_step_seconds: 0.0017560899275000945
-    rom_step_seconds: 0.0020858557258331225
-    speedup: 0.8419038314832084
-  - vertex_id: 1
-    parameters: *id002
-    trajectory_id: 4
-    split: validation
-    passed: false
-    marker_rmse_m: 0.005938368745485824
-    marker_max_m: 0.06658257658198372
-    tip_position_m: 0.0006381571240540027
-    tip_orientation_rad: 0.5145954062273701
-    strain_relative_error: 0.207174897843485
-    chain_length_error_m: 0.00021371982813256363
-    fom_step_seconds: 0.001765722600416666
-    rom_step_seconds: 0.002094632296250438
-    speedup: 0.8429749715868761
-  - vertex_id: 1
-    parameters: *id002
-    trajectory_id: 5
-    split: test
-    passed: false
-    marker_rmse_m: 0.00015756292940602486
-    marker_max_m: 0.001131179418610223
-    tip_position_m: 0.00010599503187559956
-    tip_orientation_rad: 0.022918248603233438
-    strain_relative_error: 0.02165572537531793
-    chain_length_error_m: 0.0001805021111170868
-    fom_step_seconds: 0.0017522824620831063
-    rom_step_seconds: 0.0020829795154168095
-    speedup: 0.8412384515132738
-  - vertex_id: 2
-    parameters: *id003
-    trajectory_id: 0
-    split: train
-    passed: true
-    marker_rmse_m: 2.3930408838057694e-05
-    marker_max_m: 0.00024349165671850431
-    tip_position_m: 2.3246721088511456e-05
-    tip_orientation_rad: 0.002537067812114271
-    strain_relative_error: 0.007298612705381574
-    chain_length_error_m: 8.158085974818707e-05
-    fom_step_seconds: 0.001774485790416141
-    rom_step_seconds: 0.0021008900241668016
-    speedup: 0.8446352593443771
-  - vertex_id: 2
-    parameters: *id003
-    trajectory_id: 4
-    split: validation
-    passed: true
-    marker_rmse_m: 3.12610487579787e-05
-    marker_max_m: 0.0003262220229949016
-    tip_position_m: 2.604256798590739e-05
-    tip_orientation_rad: 0.00328910238290976
-    strain_relative_error: 0.007993170776401892
-    chain_length_error_m: 8.149791466149914e-05
-    fom_step_seconds: 0.001750303634166812
-    rom_step_seconds: 0.0021014348704170515
-    speedup: 0.8329088180684117
-  - vertex_id: 2
-    parameters: *id003
-    trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 2.2187374228937426e-05
-    marker_max_m: 0.00022520773629122737
-    tip_position_m: 2.482942096923566e-05
-    tip_orientation_rad: 0.002807009605118057
-    strain_relative_error: 0.006890790771484016
-    chain_length_error_m: 8.297795524647711e-05
-    fom_step_seconds: 0.0017515989220828487
-    rom_step_seconds: 0.002103835322083493
-    speedup: 0.8325741581086233
-  - vertex_id: 3
-    parameters: *id004
-    trajectory_id: 0
-    split: train
-    passed: true
-    marker_rmse_m: 1.8917673215439733e-05
-    marker_max_m: 0.00019266395005387778
-    tip_position_m: 1.8956447502839875e-05
-    tip_orientation_rad: 0.0018491147215242447
-    strain_relative_error: 0.006354651404391173
-    chain_length_error_m: 8.141808721295885e-05
-    fom_step_seconds: 0.0017470836691662348
-    rom_step_seconds: 0.002080384506249781
-    speedup: 0.8397888293811737
-  - vertex_id: 3
-    parameters: *id004
-    trajectory_id: 4
-    split: validation
-    passed: true
-    marker_rmse_m: 2.4220659891675525e-05
-    marker_max_m: 0.00023996346428987748
-    tip_position_m: 2.2144082835819896e-05
-    tip_orientation_rad: 0.00240133444673767
-    strain_relative_error: 0.006929608399716048
-    chain_length_error_m: 8.135184956703512e-05
-    fom_step_seconds: 0.0017618200983338284
-    rom_step_seconds: 0.002072719143333567
-    speedup: 0.8500042584159676
-  - vertex_id: 3
-    parameters: *id004
-    trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 1.763681954855926e-05
-    marker_max_m: 0.00017809810913977688
-    tip_position_m: 2.0963780720871817e-05
-    tip_orientation_rad: 0.0022182784103746737
-    strain_relative_error: 0.005992014471348604
-    chain_length_error_m: 8.279827138368834e-05
-    fom_step_seconds: 0.001758061822916564
-    rom_step_seconds: 0.0020806884516665985
-    speedup: 0.8449423658349161
-  - vertex_id: 4
-    parameters: *id005
-    trajectory_id: 0
-    split: train
-    passed: true
-    marker_rmse_m: 4.713490186444323e-05
-    marker_max_m: 0.0005264153642565762
-    tip_position_m: 2.5158826786936574e-05
-    tip_orientation_rad: 0.004806092923355752
-    strain_relative_error: 0.010675182994120694
-    chain_length_error_m: 8.224691996450151e-05
-    fom_step_seconds: 0.0017528852958336454
-    rom_step_seconds: 0.0020720453445831786
-    speedup: 0.8459685983301988
-  - vertex_id: 4
-    parameters: *id005
-    trajectory_id: 4
-    split: validation
-    passed: true
-    marker_rmse_m: 6.360472406748161e-05
-    marker_max_m: 0.0006748423035357922
-    tip_position_m: 3.3304237700548235e-05
-    tip_orientation_rad: 0.005739629316943184
-    strain_relative_error: 0.012301075944381333
-    chain_length_error_m: 8.297358140541e-05
-    fom_step_seconds: 0.0017494047016665111
-    rom_step_seconds: 0.0021123374941673014
-    speedup: 0.8281842776057615
-  - vertex_id: 4
-    parameters: *id005
-    trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 4.432937520544434e-05
-    marker_max_m: 0.0004942303800905288
-    tip_position_m: 2.992918867944677e-05
-    tip_orientation_rad: 0.004549128449632134
-    strain_relative_error: 0.010519979460318516
-    chain_length_error_m: 8.427535361943406e-05
-    fom_step_seconds: 0.0017526822274999175
-    rom_step_seconds: 0.002078115690000383
-    speedup: 0.8433997375283734
+    marker_rmse_m: 1.9585415670576667e-05
+    marker_max_m: 0.00020649906006423108
+    centerline_rmse_m: 2.6219154233253516e-05
+    centerline_max_m: 0.00025323658194572365
+    tip_position_m: 1.6140980209973743e-06
+    tip_orientation_rad: 0.00011529309122692452
+    strain_relative_error: 0.008753962289014462
+    strain_rate_relative_error: 0.06308394113969643
+    physical_length_error_m: 2.0441732583975636e-05
+    chord_length_error_m: 2.0637165152437298e-05
+    grasp_wrench_relative_error: 0.0149204215342092
+    grasp_position_m: 0.00010860441486974814
+    grasp_orientation_rad: 0.005849790100210154
+    fom_grasp:
+      position_m: 0.00010818167435579454
+      orientation_rad: 0.005776834695102188
+      compliance_m: 0.00010818167435579454
+    rom_grasp:
+      position_m: 0.00010860441486974814
+      orientation_rad: 0.005849790100210154
+      compliance_m: 0.00010860441486974814
+    fom_step_seconds: 0.0017305654104166025
+    rom_step_seconds: 0.0015858630654171672
+    speedup: 1.0912451699991959
+    strain_bend_relative_error: 0.008481212395827012
+    strain_extension_relative_error: 0.014712012052965913
+    strain_shear_relative_error: 0.09040349841052928
+    strain_component_relative_error: 0.09040349841052928
 - n_modes: 9
-  strain_basis_sha256: 7d5ad89904f8dece2d9dcc5f9b261d0628add97901e0a5ffbbf0c7c0ee6f3e97
+  strain_basis_sha256: 6edcb9e301a6b65198ba22ab0f8c454496d878e59e4fd8b0a12a09fcc01fe2fe
   passed: false
   episodes:
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 6.441443111528927e-05
-    marker_max_m: 0.00047506788994622655
-    tip_position_m: 4.835057460177433e-05
-    tip_orientation_rad: 0.00925718961973464
-    strain_relative_error: 0.014769507220614453
-    chain_length_error_m: 0.00018619169813649528
-    fom_step_seconds: 0.0017742895466669021
-    rom_step_seconds: 0.002203261504166676
-    speedup: 0.8053013876525651
+    passed: false
+    marker_rmse_m: 7.590949128681679e-06
+    marker_max_m: 0.00012222142304530012
+    centerline_rmse_m: 1.1541020829183576e-05
+    centerline_max_m: 0.00015656617446265474
+    tip_position_m: 5.700235902445349e-07
+    tip_orientation_rad: 1.4220580279660707e-05
+    strain_relative_error: 0.006405350747421393
+    strain_rate_relative_error: 0.07372746969945294
+    physical_length_error_m: 1.911555394196185e-06
+    chord_length_error_m: 1.9627844586311838e-06
+    grasp_wrench_relative_error: 0.005007377034498323
+    grasp_position_m: 0.00011400437671791529
+    grasp_orientation_rad: 0.0038052347719484147
+    fom_grasp:
+      position_m: 0.00011383629401657634
+      orientation_rad: 0.0037963297060139675
+      compliance_m: 0.00011383629401657634
+    rom_grasp:
+      position_m: 0.00011400437671791529
+      orientation_rad: 0.0038052347719484147
+      compliance_m: 0.00011400437671791529
+    fom_step_seconds: 0.0017078966329161934
+    rom_step_seconds: 0.001776415845417129
+    speedup: 0.9614283937639352
+    strain_bend_relative_error: 0.005069471491528131
+    strain_extension_relative_error: 0.0062862740635164045
+    strain_shear_relative_error: 0.3669858024249043
+    strain_component_relative_error: 0.3669858024249043
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 0.00011038019087712577
-    marker_max_m: 0.0009483516338215027
-    tip_position_m: 5.622839614289101e-05
-    tip_orientation_rad: 0.015898432324270153
-    strain_relative_error: 0.020890952311306527
-    chain_length_error_m: 0.0002105888617235374
-    fom_step_seconds: 0.0017681257108332223
-    rom_step_seconds: 0.0021964605270833695
-    speedup: 0.8049886119196855
+    passed: false
+    marker_rmse_m: 0.0001292115649563296
+    marker_max_m: 0.0033916603473660837
+    centerline_rmse_m: 0.00018546692880930244
+    centerline_max_m: 0.003506175263219262
+    tip_position_m: 1.4539698802722074e-05
+    tip_orientation_rad: 0.0002320012336498563
+    strain_relative_error: 0.014048695418615064
+    strain_rate_relative_error: 0.07300931488038594
+    physical_length_error_m: 3.824527175511072e-06
+    chord_length_error_m: 4.973053719381504e-06
+    grasp_wrench_relative_error: 0.08525198385222389
+    grasp_position_m: 0.00017054967041619422
+    grasp_orientation_rad: 0.00309478701875855
+    fom_grasp:
+      position_m: 0.00017054967041619422
+      orientation_rad: 0.00309478701875855
+      compliance_m: 0.0001705496704161942
+    rom_grasp:
+      position_m: 0.00016643100828097086
+      orientation_rad: 0.0029520148491931453
+      compliance_m: 0.00016643100828097086
+    fom_step_seconds: 0.0017220454233332324
+    rom_step_seconds: 0.001771546124583286
+    speedup: 0.9720579100012439
+    strain_bend_relative_error: 0.011161183383219087
+    strain_extension_relative_error: 0.013418805992577321
+    strain_shear_relative_error: 0.8403172088278444
+    strain_component_relative_error: 0.8403172088278444
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 4.770109241189656e-05
-    marker_max_m: 0.0004407394362780502
-    tip_position_m: 4.6488690464276316e-05
-    tip_orientation_rad: 0.008816481206975245
-    strain_relative_error: 0.014583806925097104
-    chain_length_error_m: 0.00017704579253985386
-    fom_step_seconds: 0.0017558631454168486
-    rom_step_seconds: 0.00219485231999973
-    speedup: 0.799991475242883
+    split: validation
+    passed: false
+    marker_rmse_m: 1.181848805253355e-05
+    marker_max_m: 0.0004433266401941375
+    centerline_rmse_m: 1.7723945881858183e-05
+    centerline_max_m: 0.0004433266401941375
+    tip_position_m: 1.4064145188602114e-06
+    tip_orientation_rad: 2.018988018987913e-05
+    strain_relative_error: 0.007942840967331156
+    strain_rate_relative_error: 0.08558984033531622
+    physical_length_error_m: 3.6095414632786316e-06
+    chord_length_error_m: 3.7528879279769e-06
+    grasp_wrench_relative_error: 0.013273334697153479
+    grasp_position_m: 0.00010616877004951129
+    grasp_orientation_rad: 0.0043874401585420825
+    fom_grasp:
+      position_m: 0.00010595713868965304
+      orientation_rad: 0.004370758804763668
+      compliance_m: 0.00010595713868965303
+    rom_grasp:
+      position_m: 0.00010616877004951129
+      orientation_rad: 0.0043874401585420825
+      compliance_m: 0.00010616877004951127
+    fom_step_seconds: 0.00172567598083333
+    rom_step_seconds: 0.0017745212775002984
+    speedup: 0.9724740991915437
+    strain_bend_relative_error: 0.005379573964779255
+    strain_extension_relative_error: 0.008143233450923892
+    strain_shear_relative_error: 0.6171472590986821
+    strain_component_relative_error: 0.6171472590986821
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 5.4079862589742413e-05
-    marker_max_m: 0.0003680472030813237
-    tip_position_m: 4.012618762480167e-05
-    tip_orientation_rad: 0.007000732105883572
-    strain_relative_error: 0.012026666310967441
-    chain_length_error_m: 0.00019154091981432586
-    fom_step_seconds: 0.0017560899275000945
-    rom_step_seconds: 0.002197336113332919
-    speedup: 0.7991904000687713
+    passed: false
+    marker_rmse_m: 6.925204446896561e-06
+    marker_max_m: 0.00010893822036128046
+    centerline_rmse_m: 1.0591468201252852e-05
+    centerline_max_m: 0.00014043596774122175
+    tip_position_m: 4.75569252923648e-07
+    tip_orientation_rad: 1.5126843896478673e-05
+    strain_relative_error: 0.0062527053649956135
+    strain_rate_relative_error: 0.06605114132362394
+    physical_length_error_m: 1.884344556724038e-06
+    chord_length_error_m: 1.934522629865043e-06
+    grasp_wrench_relative_error: 0.004121399712521763
+    grasp_position_m: 0.00011555547217983084
+    grasp_orientation_rad: 0.003907117008775368
+    fom_grasp:
+      position_m: 0.00011538976736560608
+      orientation_rad: 0.003898855089641626
+      compliance_m: 0.00011538976736560608
+    rom_grasp:
+      position_m: 0.00011555547217983084
+      orientation_rad: 0.003907117008775368
+      compliance_m: 0.00011555547217983085
+    fom_step_seconds: 0.001732327859582862
+    rom_step_seconds: 0.0017798835295836095
+    speedup: 0.9732815831989452
+    strain_bend_relative_error: 0.004888895207292869
+    strain_extension_relative_error: 0.0062862612370728245
+    strain_shear_relative_error: 0.3652261297287076
+    strain_component_relative_error: 0.3652261297287076
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.0017236665087348594
-    marker_max_m: 0.017364279352769824
-    tip_position_m: 0.00018205098753311966
-    tip_orientation_rad: 0.137432685509466
-    strain_relative_error: 0.06339617695158258
-    chain_length_error_m: 0.0002132637208073218
-    fom_step_seconds: 0.001765722600416666
-    rom_step_seconds: 0.002242925344999852
-    speedup: 0.7872409147959326
+    marker_rmse_m: 0.0001388717560998603
+    marker_max_m: 0.0035520236798279254
+    centerline_rmse_m: 0.00019927420895830497
+    centerline_max_m: 0.0036857522528195414
+    tip_position_m: 1.3435545063744776e-05
+    tip_orientation_rad: 0.0002369352463321034
+    strain_relative_error: 0.014250718027572955
+    strain_rate_relative_error: 0.07050231032131347
+    physical_length_error_m: 3.841142035776457e-06
+    chord_length_error_m: 5.027859719008987e-06
+    grasp_wrench_relative_error: 0.09494949147136672
+    grasp_position_m: 0.00014150197634348743
+    grasp_orientation_rad: 0.0028290082395923265
+    fom_grasp:
+      position_m: 0.00014150197634348743
+      orientation_rad: 0.002826927039525143
+      compliance_m: 0.0001415019763434874
+    rom_grasp:
+      position_m: 0.0001395006616890921
+      orientation_rad: 0.0028290082395923265
+      compliance_m: 0.0001395006616890921
+    fom_step_seconds: 0.0017184685324999312
+    rom_step_seconds: 0.0017770958912501555
+    speedup: 0.9670094568115956
+    strain_bend_relative_error: 0.011392858833236489
+    strain_extension_relative_error: 0.013468893473038316
+    strain_shear_relative_error: 0.8420869701831625
+    strain_component_relative_error: 0.8420869701831625
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 3.7617149737861524e-05
-    marker_max_m: 0.0003120210975952092
-    tip_position_m: 3.882438266800982e-05
-    tip_orientation_rad: 0.006736030861257227
-    strain_relative_error: 0.011949289890694848
-    chain_length_error_m: 0.00018061295386706533
-    fom_step_seconds: 0.0017522824620831063
-    rom_step_seconds: 0.0021930353704169648
-    speedup: 0.7990215231913668
+    split: validation
+    passed: false
+    marker_rmse_m: 1.0892608645459877e-05
+    marker_max_m: 0.0003849466408169069
+    centerline_rmse_m: 1.6368199872607495e-05
+    centerline_max_m: 0.0003849466408169069
+    tip_position_m: 1.107484197767739e-06
+    tip_orientation_rad: 2.035400439231015e-05
+    strain_relative_error: 0.00780632681389762
+    strain_rate_relative_error: 0.07729893653025224
+    physical_length_error_m: 3.639997734894429e-06
+    chord_length_error_m: 3.778150310163042e-06
+    grasp_wrench_relative_error: 0.010461062937524085
+    grasp_position_m: 0.00010608124009736968
+    grasp_orientation_rad: 0.004394366275749738
+    fom_grasp:
+      position_m: 0.00010586654350082897
+      orientation_rad: 0.0043773525742309
+      compliance_m: 0.00010586654350082897
+    rom_grasp:
+      position_m: 0.00010608124009736968
+      orientation_rad: 0.004394366275749738
+      compliance_m: 0.00010608124009736968
+    fom_step_seconds: 0.001721639434166112
+    rom_step_seconds: 0.0017746096220836686
+    speedup: 0.9701510758995202
+    strain_bend_relative_error: 0.005182694378248125
+    strain_extension_relative_error: 0.008130400604750067
+    strain_shear_relative_error: 0.6164785378784643
+    strain_component_relative_error: 0.6164785378784643
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 5.231102038294351e-06
-    marker_max_m: 5.1077375019928244e-05
-    tip_position_m: 1.785656777187204e-05
-    tip_orientation_rad: 0.0017707639060641558
-    strain_relative_error: 0.004760471408307958
-    chain_length_error_m: 8.158085974818707e-05
-    fom_step_seconds: 0.001774485790416141
-    rom_step_seconds: 0.0022084029529166097
-    speedup: 0.8035154037774674
+    passed: false
+    marker_rmse_m: 5.445921766934696e-06
+    marker_max_m: 0.00011444792878323767
+    centerline_rmse_m: 8.29186507902074e-06
+    centerline_max_m: 0.00011744908124481951
+    tip_position_m: 7.07209801254981e-07
+    tip_orientation_rad: 4.94664689084949e-06
+    strain_relative_error: 0.006286620163379992
+    strain_rate_relative_error: 0.035484279845136996
+    physical_length_error_m: 2.0796631607922222e-06
+    chord_length_error_m: 2.102233946477128e-06
+    grasp_wrench_relative_error: 0.005676611434907137
+    grasp_position_m: 0.00012467448824345445
+    grasp_orientation_rad: 0.007015087169031823
+    fom_grasp:
+      position_m: 0.00012458211585692882
+      orientation_rad: 0.007015087169031823
+      compliance_m: 0.00012458211585692882
+    rom_grasp:
+      position_m: 0.00012467448824345445
+      orientation_rad: 0.00701487928814524
+      compliance_m: 0.00012467448824345445
+    fom_step_seconds: 0.0017202267750000525
+    rom_step_seconds: 0.0017711021825001201
+    speedup: 0.971274719210017
+    strain_bend_relative_error: 0.003693093073238645
+    strain_extension_relative_error: 0.011459290968374064
+    strain_shear_relative_error: 0.17473492230297813
+    strain_component_relative_error: 0.17473492230297813
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 5.825113236734611e-06
-    marker_max_m: 5.3314067936368396e-05
-    tip_position_m: 1.714678334308339e-05
-    tip_orientation_rad: 0.0017628917001159775
-    strain_relative_error: 0.004973029562571912
-    chain_length_error_m: 8.14995652114181e-05
-    fom_step_seconds: 0.001750303634166812
-    rom_step_seconds: 0.0021953755375003917
-    speedup: 0.7972684418993167
+    passed: false
+    marker_rmse_m: 8.79339807788621e-05
+    marker_max_m: 0.002579102672056324
+    centerline_rmse_m: 0.0001264277330647965
+    centerline_max_m: 0.0026854725454033557
+    tip_position_m: 1.8677638328962612e-05
+    tip_orientation_rad: 0.0004515258535043995
+    strain_relative_error: 0.013154606980148741
+    strain_rate_relative_error: 0.04853829397882753
+    physical_length_error_m: 5.926785670018475e-06
+    chord_length_error_m: 7.4662751897713875e-06
+    grasp_wrench_relative_error: 0.0679942512311753
+    grasp_position_m: 0.0002746945278227987
+    grasp_orientation_rad: 0.008281947644989822
+    fom_grasp:
+      position_m: 0.0002746945278227987
+      orientation_rad: 0.008276718605634836
+      compliance_m: 0.0002746945278227987
+    rom_grasp:
+      position_m: 0.0002671573042797791
+      orientation_rad: 0.008281947644989822
+      compliance_m: 0.00026715730427977907
+    fom_step_seconds: 0.0017203897941665976
+    rom_step_seconds: 0.001766950616666539
+    speedup: 0.9736490527461479
+    strain_bend_relative_error: 0.009527096945544425
+    strain_extension_relative_error: 0.021371054407176543
+    strain_shear_relative_error: 0.3084570106393474
+    strain_component_relative_error: 0.3084570106393474
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 4.603853888190488e-06
-    marker_max_m: 5.3212413548235076e-05
-    tip_position_m: 1.5961885636301405e-05
-    tip_orientation_rad: 0.0012622859762923967
-    strain_relative_error: 0.004358457566994386
-    chain_length_error_m: 8.297903670118068e-05
-    fom_step_seconds: 0.0017515989220828487
-    rom_step_seconds: 0.002188659347499803
-    speedup: 0.800306783275238
+    split: validation
+    passed: false
+    marker_rmse_m: 7.077501919541017e-06
+    marker_max_m: 8.295080026849676e-05
+    centerline_rmse_m: 1.0480648951297948e-05
+    centerline_max_m: 9.358722687709774e-05
+    tip_position_m: 7.912892841214088e-08
+    tip_orientation_rad: 1.614933925733443e-05
+    strain_relative_error: 0.007497482314742167
+    strain_rate_relative_error: 0.03702330806858844
+    physical_length_error_m: 1.7455149055045638e-06
+    chord_length_error_m: 1.7558424598718148e-06
+    grasp_wrench_relative_error: 0.0007193846181086056
+    grasp_position_m: 0.00010999334300605909
+    grasp_orientation_rad: 0.007015066486180381
+    fom_grasp:
+      position_m: 0.00010999334300605909
+      orientation_rad: 0.007010745066571212
+      compliance_m: 0.00010999334300605909
+    rom_grasp:
+      position_m: 0.0001099640092602224
+      orientation_rad: 0.007015066486180381
+      compliance_m: 0.0001099640092602224
+    fom_step_seconds: 0.0017247994083330316
+    rom_step_seconds: 0.0017691702087495288
+    speedup: 0.97491999345396
+    strain_bend_relative_error: 0.0036785078778323794
+    strain_extension_relative_error: 0.015614659076071015
+    strain_shear_relative_error: 0.24283362339275086
+    strain_component_relative_error: 0.24283362339275086
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 4.1886604973179215e-06
-    marker_max_m: 4.558821841173021e-05
-    tip_position_m: 1.4479396601525556e-05
-    tip_orientation_rad: 0.0013398184446479057
-    strain_relative_error: 0.003998541985916667
-    chain_length_error_m: 8.141808721295885e-05
-    fom_step_seconds: 0.0017470836691662348
-    rom_step_seconds: 0.002183531447500021
-    speedup: 0.8001183913181164
+    passed: false
+    marker_rmse_m: 5.2392841348176555e-06
+    marker_max_m: 9.994420750586029e-05
+    centerline_rmse_m: 8.003121858374465e-06
+    centerline_max_m: 0.00010479074159095456
+    tip_position_m: 5.244518261474988e-07
+    tip_orientation_rad: 4.344193257878346e-06
+    strain_relative_error: 0.00625921362239922
+    strain_rate_relative_error: 0.0315698806381335
+    physical_length_error_m: 1.5232926109387535e-06
+    chord_length_error_m: 1.5428976042342057e-06
+    grasp_wrench_relative_error: 0.004187768313152723
+    grasp_position_m: 0.00012532657838540873
+    grasp_orientation_rad: 0.007018510055896178
+    fom_grasp:
+      position_m: 0.00012523321211857638
+      orientation_rad: 0.007018510055896178
+      compliance_m: 0.00012523321211857638
+    rom_grasp:
+      position_m: 0.00012532657838540873
+      orientation_rad: 0.007018430655777823
+      compliance_m: 0.00012532657838540873
+    fom_step_seconds: 0.0017514788933332662
+    rom_step_seconds: 0.0017870361829166843
+    speedup: 0.9801026470961636
+    strain_bend_relative_error: 0.0036568822012219937
+    strain_extension_relative_error: 0.011473906819318265
+    strain_shear_relative_error: 0.17443126934316044
+    strain_component_relative_error: 0.17443126934316044
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 4.6542363884361e-06
-    marker_max_m: 4.5227176921655995e-05
-    tip_position_m: 1.3973169226688973e-05
-    tip_orientation_rad: 0.0012915043148165619
-    strain_relative_error: 0.004185041009188502
-    chain_length_error_m: 8.135241890716571e-05
-    fom_step_seconds: 0.0017618200983338284
-    rom_step_seconds: 0.002191328383749654
-    speedup: 0.8039963847495645
+    passed: false
+    marker_rmse_m: 9.2990440941473e-05
+    marker_max_m: 0.0026297248336958623
+    centerline_rmse_m: 0.0001336578823646478
+    centerline_max_m: 0.002762844227376524
+    tip_position_m: 1.6324478393573624e-05
+    tip_orientation_rad: 0.00046360252471248833
+    strain_relative_error: 0.01328559699823519
+    strain_rate_relative_error: 0.04764706154048461
+    physical_length_error_m: 6.210684363905372e-06
+    chord_length_error_m: 7.657236108848942e-06
+    grasp_wrench_relative_error: 0.07182520688559402
+    grasp_position_m: 0.0002272804862986642
+    grasp_orientation_rad: 0.00833672915331865
+    fom_grasp:
+      position_m: 0.0002272804862986642
+      orientation_rad: 0.008331472837653262
+      compliance_m: 0.0002272804862986642
+    rom_grasp:
+      position_m: 0.0002244332292462729
+      orientation_rad: 0.00833672915331865
+      compliance_m: 0.00022443322924627294
+    fom_step_seconds: 0.0017346631095832283
+    rom_step_seconds: 0.0018395558187497348
+    speedup: 0.9429793278913399
+    strain_bend_relative_error: 0.009686677006991953
+    strain_extension_relative_error: 0.021417409036322308
+    strain_shear_relative_error: 0.3088434546769845
+    strain_component_relative_error: 0.3088434546769845
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 3.7090077445534968e-06
-    marker_max_m: 4.6582435890226646e-05
-    tip_position_m: 1.281944056260582e-05
-    tip_orientation_rad: 0.0009495108861225331
-    strain_relative_error: 0.0036604757368995117
-    chain_length_error_m: 8.2798655775429e-05
-    fom_step_seconds: 0.001758061822916564
-    rom_step_seconds: 0.0022090673050001895
-    speedup: 0.795838958341024
+    split: validation
+    passed: false
+    marker_rmse_m: 7.061229654625224e-06
+    marker_max_m: 8.406017743234638e-05
+    centerline_rmse_m: 1.0457654479967873e-05
+    centerline_max_m: 9.610604316569986e-05
+    tip_position_m: 7.561098390628698e-08
+    tip_orientation_rad: 1.704942911657799e-05
+    strain_relative_error: 0.007494954677706088
+    strain_rate_relative_error: 0.03330908677893633
+    physical_length_error_m: 1.7807056771346197e-06
+    chord_length_error_m: 1.7913290798476922e-06
+    grasp_wrench_relative_error: 0.0006847928337602469
+    grasp_position_m: 0.00011041641339034326
+    grasp_orientation_rad: 0.007031759841740355
+    fom_grasp:
+      position_m: 0.00011041641339034326
+      orientation_rad: 0.007027502330907729
+      compliance_m: 0.00011041641339034326
+    rom_grasp:
+      position_m: 0.00011038638216716034
+      orientation_rad: 0.007031759841740355
+      compliance_m: 0.00011038638216716034
+    fom_step_seconds: 0.001767515604583423
+    rom_step_seconds: 0.0017750084779171024
+    speedup: 0.9957786830728426
+    strain_bend_relative_error: 0.003679062781737779
+    strain_extension_relative_error: 0.015620966619151374
+    strain_shear_relative_error: 0.24272483417510507
+    strain_component_relative_error: 0.24272483417510507
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 7.252246131339577e-06
-    marker_max_m: 6.428190662999382e-05
-    tip_position_m: 1.8466226209798915e-05
-    tip_orientation_rad: 0.0017608521316274642
-    strain_relative_error: 0.0063059364137064144
-    chain_length_error_m: 8.223890387448751e-05
-    fom_step_seconds: 0.0017528852958336454
-    rom_step_seconds: 0.002207962090833462
-    speedup: 0.7938928404209902
+    passed: false
+    marker_rmse_m: 5.043812197696047e-06
+    marker_max_m: 0.00010034327499370233
+    centerline_rmse_m: 7.779931257784499e-06
+    centerline_max_m: 0.0001095600665187064
+    tip_position_m: 3.242489672945996e-07
+    tip_orientation_rad: 4.860794412529125e-06
+    strain_relative_error: 0.004396391218196793
+    strain_rate_relative_error: 0.03780240349711406
+    physical_length_error_m: 2.4768809818720428e-06
+    chord_length_error_m: 2.4765847375096683e-06
+    grasp_wrench_relative_error: 0.002665434630695139
+    grasp_position_m: 0.00012169113318981085
+    grasp_orientation_rad: 0.005224639860684211
+    fom_grasp:
+      position_m: 0.00012164888553176848
+      orientation_rad: 0.005224639860684211
+      compliance_m: 0.00012164888553176848
+    rom_grasp:
+      position_m: 0.00012169113318981085
+      orientation_rad: 0.00522281149143669
+      compliance_m: 0.00012169113318981086
+    fom_step_seconds: 0.0017341377933333508
+    rom_step_seconds: 0.00177917898083327
+    speedup: 0.9746842852882488
+    strain_bend_relative_error: 0.003834908934042509
+    strain_extension_relative_error: 0.009096392395176539
+    strain_shear_relative_error: 0.09796024450071088
+    strain_component_relative_error: 0.09796024450071088
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 9.057147324886906e-06
-    marker_max_m: 7.737947516628641e-05
-    tip_position_m: 1.9273508079325804e-05
-    tip_orientation_rad: 0.002371542576866234
-    strain_relative_error: 0.0070311033331417186
-    chain_length_error_m: 8.297574150217812e-05
-    fom_step_seconds: 0.0017494047016665111
-    rom_step_seconds: 0.0021907725566666157
-    speedup: 0.7985332372103151
+    passed: false
+    marker_rmse_m: 8.57442711264087e-05
+    marker_max_m: 0.002326127170215687
+    centerline_rmse_m: 0.00012346454142067045
+    centerline_max_m: 0.002431650238947564
+    tip_position_m: 1.0489586617382517e-05
+    tip_orientation_rad: 0.0002843376233974507
+    strain_relative_error: 0.010282136425200488
+    strain_rate_relative_error: 0.046651860626701284
+    physical_length_error_m: 3.816782905063931e-06
+    chord_length_error_m: 4.9571410495330426e-06
+    grasp_wrench_relative_error: 0.05223106584777503
+    grasp_position_m: 0.00020083069195381468
+    grasp_orientation_rad: 0.005729157791165461
+    fom_grasp:
+      position_m: 0.00020083069195381468
+      orientation_rad: 0.005677695639540955
+      compliance_m: 0.00020083069195381468
+    rom_grasp:
+      position_m: 0.00019567542686118363
+      orientation_rad: 0.005729157791165461
+      compliance_m: 0.0001956754268611836
+    fom_step_seconds: 0.0017283305495834611
+    rom_step_seconds: 0.0017664865274999405
+    speedup: 0.9784000742023884
+    strain_bend_relative_error: 0.010118082398825109
+    strain_extension_relative_error: 0.017133387402896327
+    strain_shear_relative_error: 0.07077067286327228
+    strain_component_relative_error: 0.07077067286327228
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 6.994470735001435e-06
-    marker_max_m: 7.486762218152932e-05
-    tip_position_m: 1.9806418671436e-05
-    tip_orientation_rad: 0.0018748576948760761
-    strain_relative_error: 0.006193040766109548
-    chain_length_error_m: 8.427395057508669e-05
-    fom_step_seconds: 0.0017526822274999175
-    rom_step_seconds: 0.0022098326466668066
-    speedup: 0.7931289412995005
-- n_modes: 12
-  strain_basis_sha256: 1488469243953b1077f44425c37a9e5683adb7f213d7a7b85108f55d320489af
+    split: validation
+    passed: false
+    marker_rmse_m: 6.6665595197367485e-06
+    marker_max_m: 9.643646955882159e-05
+    centerline_rmse_m: 9.829320864060189e-06
+    centerline_max_m: 0.00010216998863347491
+    tip_position_m: 2.2132487445862533e-07
+    tip_orientation_rad: 1.1223769856944611e-05
+    strain_relative_error: 0.00382335135953877
+    strain_rate_relative_error: 0.04508634447867226
+    physical_length_error_m: 1.5505845493146708e-06
+    chord_length_error_m: 1.5631241353508685e-06
+    grasp_wrench_relative_error: 0.002045837778334986
+    grasp_position_m: 0.00010818167435579454
+    grasp_orientation_rad: 0.005776834695102188
+    fom_grasp:
+      position_m: 0.00010818167435579454
+      orientation_rad: 0.005776834695102188
+      compliance_m: 0.00010818167435579454
+    rom_grasp:
+      position_m: 0.00010816137575643848
+      orientation_rad: 0.005775847339886024
+      compliance_m: 0.00010816137575643848
+    fom_step_seconds: 0.0017305654104166025
+    rom_step_seconds: 0.0017724689312497805
+    speedup: 0.9763586711764637
+    strain_bend_relative_error: 0.0034274907350097293
+    strain_extension_relative_error: 0.011966775476890745
+    strain_shear_relative_error: 0.05251660886310941
+    strain_component_relative_error: 0.05251660886310941
+- n_modes: 11
+  strain_basis_sha256: b2cdaae2dd3b1163cc52d94c9e5d660bc17aea1dfaca38c2fc4d00d89cecbc26
   passed: false
   episodes:
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 9.854873178824228e-06
-    marker_max_m: 9.020491847571532e-05
-    tip_position_m: 1.5171406653401825e-05
-    tip_orientation_rad: 0.003244003917485294
-    strain_relative_error: 0.005887748882216889
-    chain_length_error_m: 0.00018618009029092164
-    fom_step_seconds: 0.0017742895466669021
-    rom_step_seconds: 0.0025555599100001323
-    speedup: 0.6942860309100757
+    passed: false
+    marker_rmse_m: 3.4380884411364566e-06
+    marker_max_m: 5.200889232842509e-05
+    centerline_rmse_m: 5.131688696062298e-06
+    centerline_max_m: 5.8262144385859455e-05
+    tip_position_m: 1.9645516700092257e-07
+    tip_orientation_rad: 6.0477423327452555e-06
+    strain_relative_error: 0.00456306073830871
+    strain_rate_relative_error: 0.046019108111563956
+    physical_length_error_m: 1.990466324430784e-06
+    chord_length_error_m: 2.0577705979185623e-06
+    grasp_wrench_relative_error: 0.0017257619916406426
+    grasp_position_m: 0.00011401273046469645
+    grasp_orientation_rad: 0.0037963297060139675
+    fom_grasp:
+      position_m: 0.00011383629401657634
+      orientation_rad: 0.0037963297060139675
+      compliance_m: 0.00011383629401657634
+    rom_grasp:
+      position_m: 0.00011401273046469645
+      orientation_rad: 0.0037948955961599634
+      compliance_m: 0.00011401273046469645
+    fom_step_seconds: 0.0017078966329161934
+    rom_step_seconds: 0.0019554284983329734
+    speedup: 0.873412980516647
+    strain_bend_relative_error: 0.0027390238198049875
+    strain_extension_relative_error: 0.0063832584906159135
+    strain_shear_relative_error: 0.3387116987716445
+    strain_component_relative_error: 0.3387116987716445
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 0.00031886228487692744
-    marker_max_m: 0.0028489595561600853
-    tip_position_m: 5.228215931554306e-05
-    tip_orientation_rad: 0.019457092086132236
-    strain_relative_error: 0.01588121652651324
-    chain_length_error_m: 0.00021063835477419524
-    fom_step_seconds: 0.0017681257108332223
-    rom_step_seconds: 0.0025527631658330088
-    speedup: 0.6926320994044325
+    passed: false
+    marker_rmse_m: 1.3531518403459138e-05
+    marker_max_m: 0.00032713849129426323
+    centerline_rmse_m: 1.965715748477982e-05
+    centerline_max_m: 0.00033863716705415374
+    tip_position_m: 1.5040497265507924e-06
+    tip_orientation_rad: 2.1522270756520965e-05
+    strain_relative_error: 0.00481577454258085
+    strain_rate_relative_error: 0.03330858493224332
+    physical_length_error_m: 4.807217190982982e-07
+    chord_length_error_m: 4.760280739590783e-07
+    grasp_wrench_relative_error: 0.008818834586168039
+    grasp_position_m: 0.00017054967041619422
+    grasp_orientation_rad: 0.00309478701875855
+    fom_grasp:
+      position_m: 0.00017054967041619422
+      orientation_rad: 0.00309478701875855
+      compliance_m: 0.0001705496704161942
+    rom_grasp:
+      position_m: 0.00017027599611576993
+      orientation_rad: 0.0030832854791376747
+      compliance_m: 0.00017027599611576993
+    fom_step_seconds: 0.0017220454233332324
+    rom_step_seconds: 0.001950793094583029
+    speedup: 0.8827411928589535
+    strain_bend_relative_error: 0.0031652993130886755
+    strain_extension_relative_error: 0.012254514619660642
+    strain_shear_relative_error: 0.34796020518022885
+    strain_component_relative_error: 0.34796020518022885
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 8.249018163761592e-06
-    marker_max_m: 8.659520862231599e-05
-    tip_position_m: 1.4501728810771967e-05
-    tip_orientation_rad: 0.0030997102524396897
-    strain_relative_error: 0.006077493929537311
-    chain_length_error_m: 0.00017697177938624797
-    fom_step_seconds: 0.0017558631454168486
-    rom_step_seconds: 0.002542680467916701
-    speedup: 0.6905559576093662
+    split: validation
+    passed: false
+    marker_rmse_m: 4.305534384701679e-06
+    marker_max_m: 7.073945174811243e-05
+    centerline_rmse_m: 6.058642791862709e-06
+    centerline_max_m: 8.0744951361453e-05
+    tip_position_m: 1.27469030672135e-07
+    tip_orientation_rad: 4.528286119010762e-06
+    strain_relative_error: 0.0033741893062453824
+    strain_rate_relative_error: 0.04164376290824583
+    physical_length_error_m: 3.401242396616766e-07
+    chord_length_error_m: 3.5235622608542627e-07
+    grasp_wrench_relative_error: 0.0012030179687798537
+    grasp_position_m: 0.00010596187243716143
+    grasp_orientation_rad: 0.004370927314812746
+    fom_grasp:
+      position_m: 0.00010595713868965304
+      orientation_rad: 0.004370758804763668
+      compliance_m: 0.00010595713868965303
+    rom_grasp:
+      position_m: 0.00010596187243716143
+      orientation_rad: 0.004370927314812746
+      compliance_m: 0.00010596187243716143
+    fom_step_seconds: 0.00172567598083333
+    rom_step_seconds: 0.0019572668808336855
+    speedup: 0.8816763813518824
+    strain_bend_relative_error: 0.002412475124039417
+    strain_extension_relative_error: 0.007096745783087244
+    strain_shear_relative_error: 0.23705891705401408
+    strain_component_relative_error: 0.23705891705401408
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 8.32029968008859e-06
-    marker_max_m: 7.343054381588919e-05
-    tip_position_m: 1.120723668224056e-05
-    tip_orientation_rad: 0.002263585237590092
-    strain_relative_error: 0.004971754581721186
-    chain_length_error_m: 0.00019154091981432586
-    fom_step_seconds: 0.0017560899275000945
-    rom_step_seconds: 0.0025966164074998233
-    speedup: 0.6762993264727007
+    passed: false
+    marker_rmse_m: 3.3602619064123262e-06
+    marker_max_m: 5.1302062125341205e-05
+    centerline_rmse_m: 5.0340582990342975e-06
+    centerline_max_m: 5.7388922409028045e-05
+    tip_position_m: 1.8122603166057904e-07
+    tip_orientation_rad: 5.6915413837839065e-06
+    strain_relative_error: 0.004537619996795356
+    strain_rate_relative_error: 0.04332293376735516
+    physical_length_error_m: 1.9835019986480518e-06
+    chord_length_error_m: 2.050307094436654e-06
+    grasp_wrench_relative_error: 0.001570549126290713
+    grasp_position_m: 0.00011556389654703745
+    grasp_orientation_rad: 0.003898855089641626
+    fom_grasp:
+      position_m: 0.00011538976736560608
+      orientation_rad: 0.003898855089641626
+      compliance_m: 0.00011538976736560608
+    rom_grasp:
+      position_m: 0.00011556389654703745
+      orientation_rad: 0.0038967113571726194
+      compliance_m: 0.00011556389654703743
+    fom_step_seconds: 0.001732327859582862
+    rom_step_seconds: 0.0019514794391670876
+    speedup: 0.8876997752649847
+    strain_bend_relative_error: 0.0027205855500050894
+    strain_extension_relative_error: 0.006381233505507678
+    strain_shear_relative_error: 0.3371027598505622
+    strain_component_relative_error: 0.3371027598505622
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 4
     split: validation
     passed: false
-    marker_rmse_m: 0.0011039029553263384
-    marker_max_m: 0.010247434261790813
-    tip_position_m: 0.00011614001807383945
-    tip_orientation_rad: 0.08456374707694922
-    strain_relative_error: 0.040618606676193034
-    chain_length_error_m: 0.00021283708892638753
-    fom_step_seconds: 0.001765722600416666
-    rom_step_seconds: 0.002556052400000226
-    speedup: 0.6908006269419632
+    marker_rmse_m: 1.4595925378573817e-05
+    marker_max_m: 0.00034458139062762356
+    centerline_rmse_m: 2.117131941261368e-05
+    centerline_max_m: 0.00035814619500302235
+    tip_position_m: 1.3852117784802972e-06
+    tip_orientation_rad: 2.2150624983305044e-05
+    strain_relative_error: 0.004825464796972718
+    strain_rate_relative_error: 0.028845150179501903
+    physical_length_error_m: 4.96769911872974e-07
+    chord_length_error_m: 4.834988526214445e-07
+    grasp_wrench_relative_error: 0.009789340697555684
+    grasp_position_m: 0.00014150197634348743
+    grasp_orientation_rad: 0.0028278598498603135
+    fom_grasp:
+      position_m: 0.00014150197634348743
+      orientation_rad: 0.002826927039525143
+      compliance_m: 0.0001415019763434874
+    rom_grasp:
+      position_m: 0.00014143840273492356
+      orientation_rad: 0.0028278598498603135
+      compliance_m: 0.00014143840273492356
+    fom_step_seconds: 0.0017184685324999312
+    rom_step_seconds: 0.0019539080362505957
+    speedup: 0.8795032829679869
+    strain_bend_relative_error: 0.0031594002640646887
+    strain_extension_relative_error: 0.0122878889683033
+    strain_shear_relative_error: 0.3492469771039705
+    strain_component_relative_error: 0.3492469771039705
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 6.460879572969041e-06
-    marker_max_m: 5.63224434670631e-05
-    tip_position_m: 1.0698647380070758e-05
-    tip_orientation_rad: 0.002165073460248261
-    strain_relative_error: 0.005083465095176981
-    chain_length_error_m: 0.0001805021111170868
-    fom_step_seconds: 0.0017522824620831063
-    rom_step_seconds: 0.002559261591666958
-    speedup: 0.6846828271828863
+    split: validation
+    passed: false
+    marker_rmse_m: 4.255729902797628e-06
+    marker_max_m: 6.684526787274458e-05
+    centerline_rmse_m: 5.990049051661228e-06
+    centerline_max_m: 7.66023359753687e-05
+    tip_position_m: 9.988162327234205e-08
+    tip_orientation_rad: 3.833162610313274e-06
+    strain_relative_error: 0.003337580330174347
+    strain_rate_relative_error: 0.03634875470435775
+    physical_length_error_m: 3.4893904177213386e-07
+    chord_length_error_m: 3.39367691837289e-07
+    grasp_wrench_relative_error: 0.0009434629263566339
+    grasp_position_m: 0.00010587537986768861
+    grasp_orientation_rad: 0.004377544976979987
+    fom_grasp:
+      position_m: 0.00010586654350082897
+      orientation_rad: 0.0043773525742309
+      compliance_m: 0.00010586654350082897
+    rom_grasp:
+      position_m: 0.00010587537986768861
+      orientation_rad: 0.004377544976979987
+      compliance_m: 0.00010587537986768861
+    fom_step_seconds: 0.001721639434166112
+    rom_step_seconds: 0.0019516395954163575
+    speedup: 0.8821502895358209
+    strain_bend_relative_error: 0.0023820989163107257
+    strain_extension_relative_error: 0.00708335797408283
+    strain_shear_relative_error: 0.23476424841378932
+    strain_component_relative_error: 0.23476424841378932
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 1.4117007418398264e-06
-    marker_max_m: 1.6280714695992607e-05
-    tip_position_m: 5.175944815424235e-06
-    tip_orientation_rad: 0.0003600955188953078
-    strain_relative_error: 0.0019479921778680228
-    chain_length_error_m: 8.158085974818707e-05
-    fom_step_seconds: 0.001774485790416141
-    rom_step_seconds: 0.0025561300925005526
-    speedup: 0.6942079339476175
+    passed: false
+    marker_rmse_m: 2.3025486841787434e-06
+    marker_max_m: 5.077590690478527e-05
+    centerline_rmse_m: 3.4874671054264896e-06
+    centerline_max_m: 5.550387254796952e-05
+    tip_position_m: 3.2606161919349593e-07
+    tip_orientation_rad: 6.2363095370467775e-06
+    strain_relative_error: 0.0049951605599137415
+    strain_rate_relative_error: 0.02266753105809236
+    physical_length_error_m: 8.588844632173576e-07
+    chord_length_error_m: 8.69863151953254e-07
+    grasp_wrench_relative_error: 0.0026172219410245967
+    grasp_position_m: 0.00012463576843924144
+    grasp_orientation_rad: 0.007015320568672649
+    fom_grasp:
+      position_m: 0.00012458211585692882
+      orientation_rad: 0.007015087169031823
+      compliance_m: 0.00012458211585692882
+    rom_grasp:
+      position_m: 0.00012463576843924144
+      orientation_rad: 0.007015320568672649
+      compliance_m: 0.00012463576843924144
+    fom_step_seconds: 0.0017202267750000525
+    rom_step_seconds: 0.0019514996433334395
+    speedup: 0.8814896691765006
+    strain_bend_relative_error: 0.002000145725618866
+    strain_extension_relative_error: 0.011375318603389459
+    strain_shear_relative_error: 0.15437708602980954
+    strain_component_relative_error: 0.15437708602980954
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 1.529007116985335e-06
-    marker_max_m: 1.612213471309436e-05
-    tip_position_m: 4.807959892610657e-06
-    tip_orientation_rad: 0.00036759835366801963
-    strain_relative_error: 0.00203330716637139
-    chain_length_error_m: 8.149657574885172e-05
-    fom_step_seconds: 0.001750303634166812
-    rom_step_seconds: 0.0025620255770832045
-    speedup: 0.6831718035225411
+    passed: false
+    marker_rmse_m: 8.040366991774609e-06
+    marker_max_m: 0.0001644479163179576
+    centerline_rmse_m: 1.1357888825197821e-05
+    centerline_max_m: 0.0001892099729795503
+    tip_position_m: 1.2271678829192711e-06
+    tip_orientation_rad: 2.6740207458643134e-05
+    strain_relative_error: 0.005123772726954263
+    strain_rate_relative_error: 0.014388931222409612
+    physical_length_error_m: 4.3806920757560874e-07
+    chord_length_error_m: 4.473663328674604e-07
+    grasp_wrench_relative_error: 0.004467391841964722
+    grasp_position_m: 0.0002746945278227987
+    grasp_orientation_rad: 0.008276895130970248
+    fom_grasp:
+      position_m: 0.0002746945278227987
+      orientation_rad: 0.008276718605634836
+      compliance_m: 0.0002746945278227987
+    rom_grasp:
+      position_m: 0.000274307668740892
+      orientation_rad: 0.008276895130970248
+      compliance_m: 0.000274307668740892
+    fom_step_seconds: 0.0017203897941665976
+    rom_step_seconds: 0.001957131064167091
+    speedup: 0.8790365784208505
+    strain_bend_relative_error: 0.0031019691534720896
+    strain_extension_relative_error: 0.021952103217735715
+    strain_shear_relative_error: 0.11898940845024927
+    strain_component_relative_error: 0.11898940845024927
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 1.239190464196377e-06
-    marker_max_m: 1.226523985206804e-05
-    tip_position_m: 3.926491097384807e-06
-    tip_orientation_rad: 0.0002786092677103345
-    strain_relative_error: 0.0017317621773293294
-    chain_length_error_m: 8.297329945761156e-05
-    fom_step_seconds: 0.0017515989220828487
-    rom_step_seconds: 0.0025546234595829748
-    speedup: 0.6856583562294483
+    split: validation
+    passed: false
+    marker_rmse_m: 4.209781761362499e-06
+    marker_max_m: 2.112512074379493e-05
+    centerline_rmse_m: 5.595725605252644e-06
+    centerline_max_m: 2.3658730186362884e-05
+    tip_position_m: 2.9310083312511968e-08
+    tip_orientation_rad: 3.081191186566734e-06
+    strain_relative_error: 0.004091000896929412
+    strain_rate_relative_error: 0.015504780589861614
+    physical_length_error_m: 4.0713684190674115e-07
+    chord_length_error_m: 3.975544961010158e-07
+    grasp_wrench_relative_error: 0.00026647893655414436
+    grasp_position_m: 0.00011001082144727965
+    grasp_orientation_rad: 0.007013329694338873
+    fom_grasp:
+      position_m: 0.00010999334300605909
+      orientation_rad: 0.007010745066571212
+      compliance_m: 0.00010999334300605909
+    rom_grasp:
+      position_m: 0.00011001082144727965
+      orientation_rad: 0.007013329694338873
+      compliance_m: 0.00011001082144727965
+    fom_step_seconds: 0.0017247994083330316
+    rom_step_seconds: 0.001959077228333778
+    speedup: 0.8804141987807172
+    strain_bend_relative_error: 0.002305809005280092
+    strain_extension_relative_error: 0.016311272423446408
+    strain_shear_relative_error: 0.10180551378652324
+    strain_component_relative_error: 0.10180551378652324
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 1.0698202796137716e-06
-    marker_max_m: 1.3479189369296324e-05
-    tip_position_m: 4.092163795008868e-06
-    tip_orientation_rad: 0.00029288605921763136
-    strain_relative_error: 0.001629897522926251
-    chain_length_error_m: 8.141808721295885e-05
-    fom_step_seconds: 0.0017470836691662348
-    rom_step_seconds: 0.0025662003583336933
-    speedup: 0.6808056368212285
+    passed: false
+    marker_rmse_m: 2.266297748402045e-06
+    marker_max_m: 4.898654957675557e-05
+    centerline_rmse_m: 3.4380363730747524e-06
+    centerline_max_m: 5.3143989001976936e-05
+    tip_position_m: 2.678945465685166e-07
+    tip_orientation_rad: 6.3443957791442775e-06
+    strain_relative_error: 0.004989616351816311
+    strain_rate_relative_error: 0.02157656963488859
+    physical_length_error_m: 7.730710738229618e-07
+    chord_length_error_m: 7.415540576038993e-07
+    grasp_wrench_relative_error: 0.0021391483023766975
+    grasp_position_m: 0.00012528640488402868
+    grasp_orientation_rad: 0.007018698346995765
+    fom_grasp:
+      position_m: 0.00012523321211857638
+      orientation_rad: 0.007018510055896178
+      compliance_m: 0.00012523321211857638
+    rom_grasp:
+      position_m: 0.00012528640488402868
+      orientation_rad: 0.007018698346995765
+      compliance_m: 0.00012528640488402868
+    fom_step_seconds: 0.0017514788933332662
+    rom_step_seconds: 0.001953754223333514
+    speedup: 0.8964683850279164
+    strain_bend_relative_error: 0.0019915923743309785
+    strain_extension_relative_error: 0.011393008727403942
+    strain_shear_relative_error: 0.15428421824291652
+    strain_component_relative_error: 0.15428421824291652
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 1.1528342501934097e-06
-    marker_max_m: 1.4270877363089192e-05
-    tip_position_m: 3.8118357790447805e-06
-    tip_orientation_rad: 0.00027427087191782794
-    strain_relative_error: 0.001717106150705225
-    chain_length_error_m: 8.134892594613419e-05
-    fom_step_seconds: 0.0017618200983338284
-    rom_step_seconds: 0.0025411442866667736
-    speedup: 0.6933176158386555
+    passed: false
+    marker_rmse_m: 8.203289047202474e-06
+    marker_max_m: 0.00016906931104671753
+    centerline_rmse_m: 1.1610830507720627e-05
+    centerline_max_m: 0.0001906749045732319
+    tip_position_m: 1.0191021809794644e-06
+    tip_orientation_rad: 2.7074880921741767e-05
+    strain_relative_error: 0.005138650024478948
+    strain_rate_relative_error: 0.013818076970175824
+    physical_length_error_m: 4.403764609639538e-07
+    chord_length_error_m: 4.5288055838810237e-07
+    grasp_wrench_relative_error: 0.004483892433474638
+    grasp_position_m: 0.0002272804862986642
+    grasp_orientation_rad: 0.00833163410801591
+    fom_grasp:
+      position_m: 0.0002272804862986642
+      orientation_rad: 0.008331472837653262
+      compliance_m: 0.0002272804862986642
+    rom_grasp:
+      position_m: 0.0002271912678928308
+      orientation_rad: 0.00833163410801591
+      compliance_m: 0.00022719126789283082
+    fom_step_seconds: 0.0017346631095832283
+    rom_step_seconds: 0.0019542751258336466
+    speedup: 0.8876248214249071
+    strain_bend_relative_error: 0.003104036315724654
+    strain_extension_relative_error: 0.022016642201742116
+    strain_shear_relative_error: 0.11940351136008541
+    strain_component_relative_error: 0.11940351136008541
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 9.485605872101612e-07
-    marker_max_m: 1.1453739806231631e-05
-    tip_position_m: 3.2269072874926473e-06
-    tip_orientation_rad: 0.00022427202252599224
-    strain_relative_error: 0.0014688970812648224
-    chain_length_error_m: 8.27927651967375e-05
-    fom_step_seconds: 0.001758061822916564
-    rom_step_seconds: 0.0025391629212504086
-    speedup: 0.6923785032473647
+    split: validation
+    passed: false
+    marker_rmse_m: 4.208979105176809e-06
+    marker_max_m: 2.1125120583427265e-05
+    centerline_rmse_m: 5.594261610550923e-06
+    centerline_max_m: 2.3658729644056664e-05
+    tip_position_m: 2.9184780427731653e-08
+    tip_orientation_rad: 3.1071690366219704e-06
+    strain_relative_error: 0.004089034982346235
+    strain_rate_relative_error: 0.014308156919756074
+    physical_length_error_m: 4.02757787343333e-07
+    chord_length_error_m: 3.931532297496432e-07
+    grasp_wrench_relative_error: 0.00026432295228920994
+    grasp_position_m: 0.00011043408169200385
+    grasp_orientation_rad: 0.007030091836292373
+    fom_grasp:
+      position_m: 0.00011041641339034326
+      orientation_rad: 0.007027502330907729
+      compliance_m: 0.00011041641339034326
+    rom_grasp:
+      position_m: 0.00011043408169200385
+      orientation_rad: 0.007030091836292373
+      compliance_m: 0.00011043408169200385
+    fom_step_seconds: 0.001767515604583423
+    rom_step_seconds: 0.0019533174745834003
+    speedup: 0.9048788164660203
+    strain_bend_relative_error: 0.0023050177757126433
+    strain_extension_relative_error: 0.016316369293613058
+    strain_shear_relative_error: 0.10171357513475698
+    strain_component_relative_error: 0.10171357513475698
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 1.7751090681206597e-06
-    marker_max_m: 1.5451084090137002e-05
-    tip_position_m: 6.148960418517143e-06
-    tip_orientation_rad: 0.0005330462942969187
-    strain_relative_error: 0.0027378583733178525
-    chain_length_error_m: 8.223627305459225e-05
-    fom_step_seconds: 0.0017528852958336454
-    rom_step_seconds: 0.00255513239166703
-    speedup: 0.6860252335848714
+    passed: false
+    marker_rmse_m: 2.0878461257943726e-06
+    marker_max_m: 4.053996683494264e-05
+    centerline_rmse_m: 3.191622165521796e-06
+    centerline_max_m: 4.2956631684902926e-05
+    tip_position_m: 1.0902754734068151e-07
+    tip_orientation_rad: 1.9456146650254857e-06
+    strain_relative_error: 0.002732088974201936
+    strain_rate_relative_error: 0.020059886860552385
+    physical_length_error_m: 9.285621511700981e-07
+    chord_length_error_m: 9.283095383505469e-07
+    grasp_wrench_relative_error: 0.0008962427678886247
+    grasp_position_m: 0.00012168110027570095
+    grasp_orientation_rad: 0.005224639860684211
+    fom_grasp:
+      position_m: 0.00012164888553176848
+      orientation_rad: 0.005224639860684211
+      compliance_m: 0.00012164888553176848
+    rom_grasp:
+      position_m: 0.00012168110027570095
+      orientation_rad: 0.005223834581103441
+      compliance_m: 0.00012168110027570095
+    fom_step_seconds: 0.0017341377933333508
+    rom_step_seconds: 0.0019522581970833623
+    speedup: 0.8882727683889973
+    strain_bend_relative_error: 0.0019425929853585141
+    strain_extension_relative_error: 0.009047020174029027
+    strain_shear_relative_error: 0.08105213042199295
+    strain_component_relative_error: 0.08105213042199295
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 4
     split: validation
-    passed: true
-    marker_rmse_m: 2.140944471854657e-06
-    marker_max_m: 1.9420982261364765e-05
-    tip_position_m: 6.5645320765051386e-06
-    tip_orientation_rad: 0.0005863535962504365
-    strain_relative_error: 0.0030197214049098625
-    chain_length_error_m: 8.296661948636874e-05
-    fom_step_seconds: 0.0017494047016665111
-    rom_step_seconds: 0.0025751634108337387
-    speedup: 0.6793373555661546
+    passed: false
+    marker_rmse_m: 6.437109765448439e-06
+    marker_max_m: 9.740155654110027e-05
+    centerline_rmse_m: 9.399720691867767e-06
+    centerline_max_m: 0.00010900079445677289
+    tip_position_m: 4.3996092402532337e-07
+    tip_orientation_rad: 1.0253081777414865e-05
+    strain_relative_error: 0.0035861273683353875
+    strain_rate_relative_error: 0.013675807135966844
+    physical_length_error_m: 1.5016861032446371e-07
+    chord_length_error_m: 1.9814643281712563e-07
+    grasp_wrench_relative_error: 0.0021907069337131616
+    grasp_position_m: 0.00020083069195381468
+    grasp_orientation_rad: 0.005680195179292661
+    fom_grasp:
+      position_m: 0.00020083069195381468
+      orientation_rad: 0.005677695639540955
+      compliance_m: 0.00020083069195381468
+    rom_grasp:
+      position_m: 0.00020067481775827434
+      orientation_rad: 0.005680195179292661
+      compliance_m: 0.00020067481775827434
+    fom_step_seconds: 0.0017283305495834611
+    rom_step_seconds: 0.0019609711937497803
+    speedup: 0.8813645784763098
+    strain_bend_relative_error: 0.003007784454294473
+    strain_extension_relative_error: 0.01728757171054083
+    strain_shear_relative_error: 0.06444430806833042
+    strain_component_relative_error: 0.06444430806833042
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 5
-    split: test
-    passed: true
-    marker_rmse_m: 1.699595289125408e-06
-    marker_max_m: 1.6406964193974715e-05
-    tip_position_m: 4.543459062411569e-06
-    tip_orientation_rad: 0.0003847363200610764
-    strain_relative_error: 0.0025645772365136456
-    chain_length_error_m: 8.426134011418895e-05
-    fom_step_seconds: 0.0017526822274999175
-    rom_step_seconds: 0.0025913124641670036
-    speedup: 0.6763685397790614
-- n_modes: 16
-  strain_basis_sha256: beb83b3c9b72d25bfbe7e83dc4361097e24e852fa623015deb8f320072b9e452
-  passed: true
+    split: validation
+    passed: false
+    marker_rmse_m: 3.942229060514323e-06
+    marker_max_m: 1.8750393947289315e-05
+    centerline_rmse_m: 5.3821898682497e-06
+    centerline_max_m: 2.2164047007424422e-05
+    tip_position_m: 1.1769652491026937e-08
+    tip_orientation_rad: 9.386548845782141e-07
+    strain_relative_error: 0.0028250075232005745
+    strain_rate_relative_error: 0.016101739164063596
+    physical_length_error_m: 1.5059463853717148e-07
+    chord_length_error_m: 1.5106592854419176e-07
+    grasp_wrench_relative_error: 0.00010879370492764421
+    grasp_position_m: 0.00010818550064003207
+    grasp_orientation_rad: 0.00577741160092151
+    fom_grasp:
+      position_m: 0.00010818167435579454
+      orientation_rad: 0.005776834695102188
+      compliance_m: 0.00010818167435579454
+    rom_grasp:
+      position_m: 0.00010818550064003207
+      orientation_rad: 0.00577741160092151
+      compliance_m: 0.00010818550064003207
+    fom_step_seconds: 0.0017305654104166025
+    rom_step_seconds: 0.001987257630833786
+    speedup: 0.8708309298027533
+    strain_bend_relative_error: 0.0022445204119531316
+    strain_extension_relative_error: 0.011942140276897223
+    strain_shear_relative_error: 0.051749406274638206
+    strain_component_relative_error: 0.051749406274638206
+- n_modes: 18
+  strain_basis_sha256: 92a73df9dfd655513c9e5b7d3d7df448818e7c93de726d48fbe5afecaae7d1f2
+  passed: false
   episodes:
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 1.591457558791177e-15
-    marker_max_m: 1.6010715441069178e-14
-    tip_position_m: 1.0112175573993643e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 7.10782791944471e-14
-    chain_length_error_m: 0.00018618009029092164
-    fom_step_seconds: 0.0017742895466669021
-    rom_step_seconds: 0.0030247407283339575
-    speedup: 0.5865922755118882
+    passed: false
+    marker_rmse_m: 3.9080249925729e-07
+    marker_max_m: 8.531262678871954e-06
+    centerline_rmse_m: 5.776252351648618e-07
+    centerline_max_m: 8.86886808591446e-06
+    tip_position_m: 1.6230541296520845e-08
+    tip_orientation_rad: 5.575503985246947e-07
+    strain_relative_error: 0.0009261973819290538
+    strain_rate_relative_error: 0.015019093518257276
+    physical_length_error_m: 1.5139544373710123e-07
+    chord_length_error_m: 1.5147456344788424e-07
+    grasp_wrench_relative_error: 0.00014257731992757102
+    grasp_position_m: 0.0001138510386137406
+    grasp_orientation_rad: 0.0037963297060139675
+    fom_grasp:
+      position_m: 0.00011383629401657634
+      orientation_rad: 0.0037963297060139675
+      compliance_m: 0.00011383629401657634
+    rom_grasp:
+      position_m: 0.0001138510386137406
+      orientation_rad: 0.003795770695773086
+      compliance_m: 0.00011385103861374061
+    fom_step_seconds: 0.0017078966329161934
+    rom_step_seconds: 0.002664490642500065
+    speedup: 0.6409842863301224
+    strain_bend_relative_error: 0.000656220017582797
+    strain_extension_relative_error: 0.0033314243827775383
+    strain_shear_relative_error: 0.051465942933989844
+    strain_component_relative_error: 0.051465942933989844
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 4
     split: validation
     passed: true
-    marker_rmse_m: 4.697750659784017e-15
-    marker_max_m: 4.3051080948353944e-14
-    tip_position_m: 1.1121096681068653e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 1.8941301084551924e-13
-    chain_length_error_m: 0.0002105888617235374
-    fom_step_seconds: 0.0017681257108332223
-    rom_step_seconds: 0.0030402673375003056
-    speedup: 0.581569156443646
+    marker_rmse_m: 1.583321549602564e-06
+    marker_max_m: 3.468622972021205e-05
+    centerline_rmse_m: 2.3348457038499314e-06
+    centerline_max_m: 3.661067038628517e-05
+    tip_position_m: 1.6270643580039072e-07
+    tip_orientation_rad: 2.318268236767708e-06
+    strain_relative_error: 0.0011236618192025673
+    strain_rate_relative_error: 0.008555001446265805
+    physical_length_error_m: 4.039107892594984e-08
+    chord_length_error_m: 5.083090137691926e-08
+    grasp_wrench_relative_error: 0.0009540117931140605
+    grasp_position_m: 0.00017054967041619422
+    grasp_orientation_rad: 0.00309478701875855
+    fom_grasp:
+      position_m: 0.00017054967041619422
+      orientation_rad: 0.00309478701875855
+      compliance_m: 0.0001705496704161942
+    rom_grasp:
+      position_m: 0.00017051925702424352
+      orientation_rad: 0.0030934946004855346
+      compliance_m: 0.00017051925702424352
+    fom_step_seconds: 0.0017220454233332324
+    rom_step_seconds: 0.0025999787999997654
+    speedup: 0.6623305633620504
+    strain_bend_relative_error: 0.0009285788473266511
+    strain_extension_relative_error: 0.006064815642279524
+    strain_shear_relative_error: 0.04530289598999794
+    strain_component_relative_error: 0.04530289598999794
   - vertex_id: 0
     parameters: *id001
     trajectory_id: 5
-    split: test
+    split: validation
     passed: true
-    marker_rmse_m: 1.4857868790046319e-15
-    marker_max_m: 1.4063178005598432e-14
-    tip_position_m: 1.3000309855528732e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 5.421125282464498e-14
-    chain_length_error_m: 0.00017697177938624797
-    fom_step_seconds: 0.0017558631454168486
-    rom_step_seconds: 0.003020945434999855
-    speedup: 0.5812296789852257
+    marker_rmse_m: 3.266545928702804e-07
+    marker_max_m: 4.419577133171381e-06
+    centerline_rmse_m: 4.999574902984653e-07
+    centerline_max_m: 4.693022110077335e-06
+    tip_position_m: 1.8398898739539538e-08
+    tip_orientation_rad: 2.1283115233608642e-07
+    strain_relative_error: 0.0006596997354542394
+    strain_rate_relative_error: 0.010715171689046097
+    physical_length_error_m: 4.063339120730092e-08
+    chord_length_error_m: 4.104223338963209e-08
+    grasp_wrench_relative_error: 0.0001736435063905225
+    grasp_position_m: 0.0001059583629008611
+    grasp_orientation_rad: 0.004370758804763668
+    fom_grasp:
+      position_m: 0.00010595713868965304
+      orientation_rad: 0.004370758804763668
+      compliance_m: 0.00010595713868965303
+    rom_grasp:
+      position_m: 0.0001059583629008611
+      orientation_rad: 0.004370733043429973
+      compliance_m: 0.0001059583629008611
+    fom_step_seconds: 0.00172567598083333
+    rom_step_seconds: 0.002585577648333886
+    speedup: 0.66742376967303
+    strain_bend_relative_error: 0.00039968859110002856
+    strain_extension_relative_error: 0.003461009620546202
+    strain_shear_relative_error: 0.03623520779892539
+    strain_component_relative_error: 0.03623520779892539
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 0
     split: train
-    passed: true
-    marker_rmse_m: 1.5275919426147042e-15
-    marker_max_m: 1.1949935758049421e-14
-    tip_position_m: 4.0291498715273535e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 5.1214476984116505e-14
-    chain_length_error_m: 0.00019154091981432586
-    fom_step_seconds: 0.0017560899275000945
-    rom_step_seconds: 0.003021790955833694
-    speedup: 0.5811420952564205
+    passed: false
+    marker_rmse_m: 3.8851094617325876e-07
+    marker_max_m: 8.722872746431889e-06
+    centerline_rmse_m: 5.751002687514619e-07
+    centerline_max_m: 9.119802514841512e-06
+    tip_position_m: 1.6598063848696193e-08
+    tip_orientation_rad: 5.91559208669641e-07
+    strain_relative_error: 0.0009218055270277894
+    strain_rate_relative_error: 0.014374011833132373
+    physical_length_error_m: 1.7206751401488418e-07
+    chord_length_error_m: 1.70321975301313e-07
+    grasp_wrench_relative_error: 0.00014384296264508066
+    grasp_position_m: 0.00011540455047996137
+    grasp_orientation_rad: 0.003898855089641626
+    fom_grasp:
+      position_m: 0.00011538976736560608
+      orientation_rad: 0.003898855089641626
+      compliance_m: 0.00011538976736560608
+    rom_grasp:
+      position_m: 0.00011540455047996137
+      orientation_rad: 0.0038982616313866605
+      compliance_m: 0.00011540455047996139
+    fom_step_seconds: 0.001732327859582862
+    rom_step_seconds: 0.002562607759999385
+    speedup: 0.6760019565316846
+    strain_bend_relative_error: 0.0006554567290118527
+    strain_extension_relative_error: 0.0033055595562898805
+    strain_shear_relative_error: 0.05105226627247141
+    strain_component_relative_error: 0.05105226627247141
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 4
     split: validation
     passed: true
-    marker_rmse_m: 3.4073580972261586e-14
-    marker_max_m: 3.2905423291802254e-13
-    tip_position_m: 7.094754349840708e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 1.2215902052865894e-12
-    chain_length_error_m: 0.00021281489412738885
-    fom_step_seconds: 0.001765722600416666
-    rom_step_seconds: 0.003006047472500389
-    speedup: 0.5873901249297178
+    marker_rmse_m: 1.6709205685470681e-06
+    marker_max_m: 3.748944457002447e-05
+    centerline_rmse_m: 2.459633946409399e-06
+    centerline_max_m: 3.90719448950665e-05
+    tip_position_m: 1.4800256381592421e-07
+    tip_orientation_rad: 2.3729836031670035e-06
+    strain_relative_error: 0.0011253848774826106
+    strain_rate_relative_error: 0.007725627330208792
+    physical_length_error_m: 4.0474506413090694e-08
+    chord_length_error_m: 5.122318080807986e-08
+    grasp_wrench_relative_error: 0.001045939372338234
+    grasp_position_m: 0.00014150197634348743
+    grasp_orientation_rad: 0.0028271365775970132
+    fom_grasp:
+      position_m: 0.00014150197634348743
+      orientation_rad: 0.002826927039525143
+      compliance_m: 0.0001415019763434874
+    rom_grasp:
+      position_m: 0.00014149469250921985
+      orientation_rad: 0.0028271365775970132
+      compliance_m: 0.00014149469250921985
+    fom_step_seconds: 0.0017184685324999312
+    rom_step_seconds: 0.0025655819866665297
+    speedup: 0.6698162605720287
+    strain_bend_relative_error: 0.0009332894572889981
+    strain_extension_relative_error: 0.005992320768092915
+    strain_shear_relative_error: 0.04525781329601903
+    strain_component_relative_error: 0.04525781329601903
   - vertex_id: 1
     parameters: *id002
     trajectory_id: 5
-    split: test
+    split: validation
     passed: true
-    marker_rmse_m: 5.711780747975375e-15
-    marker_max_m: 5.0939444761761477e-14
-    tip_position_m: 1.1461973734877882e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 2.717601137973037e-13
-    chain_length_error_m: 0.00018050211111719783
-    fom_step_seconds: 0.0017522824620831063
-    rom_step_seconds: 0.003031553409166463
-    speedup: 0.578014709153649
+    marker_rmse_m: 3.2027651303576465e-07
+    marker_max_m: 3.99600899652302e-06
+    centerline_rmse_m: 4.894425741923091e-07
+    centerline_max_m: 4.255222527094298e-06
+    tip_position_m: 1.428113931168078e-08
+    tip_orientation_rad: 1.931411236050088e-07
+    strain_relative_error: 0.0006501134544337179
+    strain_rate_relative_error: 0.009627068784095243
+    physical_length_error_m: 2.888265493439235e-08
+    chord_length_error_m: 2.9107878662948394e-08
+    grasp_wrench_relative_error: 0.00013489660677406702
+    grasp_position_m: 0.00010586839260499333
+    grasp_orientation_rad: 0.0043773655966445205
+    fom_grasp:
+      position_m: 0.00010586654350082897
+      orientation_rad: 0.0043773525742309
+      compliance_m: 0.00010586654350082897
+    rom_grasp:
+      position_m: 0.00010586839260499333
+      orientation_rad: 0.0043773655966445205
+      compliance_m: 0.00010586839260499334
+    fom_step_seconds: 0.001721639434166112
+    rom_step_seconds: 0.002560639242083198
+    speedup: 0.672347516148147
+    strain_bend_relative_error: 0.000393383746752541
+    strain_extension_relative_error: 0.0034234487533781424
+    strain_shear_relative_error: 0.03561911793657212
+    strain_component_relative_error: 0.03561911793657212
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 0
     split: train
     passed: true
-    marker_rmse_m: 2.1750615746905233e-16
-    marker_max_m: 3.700584395682044e-15
-    tip_position_m: 3.700584395682044e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 9.160071095072733e-15
-    chain_length_error_m: 8.158085974818707e-05
-    fom_step_seconds: 0.001774485790416141
-    rom_step_seconds: 0.003062028840416436
-    speedup: 0.579513088509908
+    marker_rmse_m: 2.653301637586272e-07
+    marker_max_m: 3.7264084988802643e-06
+    centerline_rmse_m: 4.1477580382133416e-07
+    centerline_max_m: 4.083881864600974e-06
+    tip_position_m: 1.6624309346245142e-08
+    tip_orientation_rad: 6.795975119466444e-07
+    strain_relative_error: 0.0012810962451530472
+    strain_rate_relative_error: 0.011071456260753901
+    physical_length_error_m: 1.1698414281724467e-07
+    chord_length_error_m: 1.0758905455432455e-07
+    grasp_wrench_relative_error: 0.00013343952422225622
+    grasp_position_m: 0.00012459141948446993
+    grasp_orientation_rad: 0.0070151446699339825
+    fom_grasp:
+      position_m: 0.00012458211585692882
+      orientation_rad: 0.007015087169031823
+      compliance_m: 0.00012458211585692882
+    rom_grasp:
+      position_m: 0.00012459141948446993
+      orientation_rad: 0.0070151446699339825
+      compliance_m: 0.00012459141948446993
+    fom_step_seconds: 0.0017202267750000525
+    rom_step_seconds: 0.0025650195466672206
+    speedup: 0.6706486027504844
+    strain_bend_relative_error: 0.00041970620818047194
+    strain_extension_relative_error: 0.00544134641395338
+    strain_shear_relative_error: 0.0326543100901657
+    strain_component_relative_error: 0.0326543100901657
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 4
     split: validation
     passed: true
-    marker_rmse_m: 2.237375602068674e-16
-    marker_max_m: 5.43818074856221e-15
-    tip_position_m: 5.198097665566664e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 8.05121298911579e-15
-    chain_length_error_m: 8.149657574885172e-05
-    fom_step_seconds: 0.001750303634166812
-    rom_step_seconds: 0.0030226836720832276
-    speedup: 0.5790561712865264
+    marker_rmse_m: 1.5334921551355583e-06
+    marker_max_m: 4.0313308473814795e-05
+    centerline_rmse_m: 2.254199856725064e-06
+    centerline_max_m: 4.2178727536448114e-05
+    tip_position_m: 2.812914529615395e-07
+    tip_orientation_rad: 6.309229779787167e-06
+    strain_relative_error: 0.001499775109494791
+    strain_rate_relative_error: 0.006541435057094206
+    physical_length_error_m: 8.673266560510484e-08
+    chord_length_error_m: 1.0499579361500366e-07
+    grasp_wrench_relative_error: 0.0010240157295681698
+    grasp_position_m: 0.0002746945278227987
+    grasp_orientation_rad: 0.008276777905669712
+    fom_grasp:
+      position_m: 0.0002746945278227987
+      orientation_rad: 0.008276718605634836
+      compliance_m: 0.0002746945278227987
+    rom_grasp:
+      position_m: 0.00027460285155690196
+      orientation_rad: 0.008276777905669712
+      compliance_m: 0.00027460285155690196
+    fom_step_seconds: 0.0017203897941665976
+    rom_step_seconds: 0.002552207274165994
+    speedup: 0.674079182980459
+    strain_bend_relative_error: 0.0009102693607897634
+    strain_extension_relative_error: 0.009785019405838332
+    strain_shear_relative_error: 0.022707278498693344
+    strain_component_relative_error: 0.022707278498693344
   - vertex_id: 2
     parameters: *id003
     trajectory_id: 5
-    split: test
+    split: validation
     passed: true
-    marker_rmse_m: 2.0750490390636532e-16
-    marker_max_m: 3.3019804059329333e-15
-    tip_position_m: 3.254037927597191e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 9.957656682276943e-15
-    chain_length_error_m: 8.297329945761156e-05
-    fom_step_seconds: 0.0017515989220828487
-    rom_step_seconds: 0.003014681525000166
-    speedup: 0.5810228734137189
+    marker_rmse_m: 2.501291116307773e-07
+    marker_max_m: 1.7207706819364936e-06
+    centerline_rmse_m: 3.746211132202095e-07
+    centerline_max_m: 1.987918961052865e-06
+    tip_position_m: 3.2448975966800844e-09
+    tip_orientation_rad: 2.0647654623614288e-07
+    strain_relative_error: 0.0008900592301846869
+    strain_rate_relative_error: 0.009046321860565013
+    physical_length_error_m: 3.747416610355714e-08
+    chord_length_error_m: 3.526013714338916e-08
+    grasp_wrench_relative_error: 2.950089811177638e-05
+    grasp_position_m: 0.00010999462358620201
+    grasp_orientation_rad: 0.00701089048601668
+    fom_grasp:
+      position_m: 0.00010999334300605909
+      orientation_rad: 0.007010745066571212
+      compliance_m: 0.00010999334300605909
+    rom_grasp:
+      position_m: 0.00010999462358620201
+      orientation_rad: 0.00701089048601668
+      compliance_m: 0.00010999462358620201
+    fom_step_seconds: 0.0017247994083330316
+    rom_step_seconds: 0.002565857906667285
+    speedup: 0.6722115842234309
+    strain_bend_relative_error: 0.00025079544340787503
+    strain_extension_relative_error: 0.005555986976074502
+    strain_shear_relative_error: 0.016636349708701863
+    strain_component_relative_error: 0.016636349708701863
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 0
     split: train
     passed: true
-    marker_rmse_m: 2.8938357059675373e-16
-    marker_max_m: 3.4259870771901007e-15
-    tip_position_m: 2.4980018054066022e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 1.779335594273575e-14
-    chain_length_error_m: 8.141808721295885e-05
-    fom_step_seconds: 0.0017470836691662348
-    rom_step_seconds: 0.003033183009166199
-    speedup: 0.5759901937623262
+    marker_rmse_m: 2.6412917952432177e-07
+    marker_max_m: 3.847548389682386e-06
+    centerline_rmse_m: 4.1265314281903554e-07
+    centerline_max_m: 4.211314490613287e-06
+    tip_position_m: 1.3540728737923213e-08
+    tip_orientation_rad: 6.77634298855193e-07
+    strain_relative_error: 0.0012801459232857247
+    strain_rate_relative_error: 0.009969784927570778
+    physical_length_error_m: 1.1615298611822311e-07
+    chord_length_error_m: 1.0681603512807669e-07
+    grasp_wrench_relative_error: 0.00010812324264793763
+    grasp_position_m: 0.00012524256301036168
+    grasp_orientation_rad: 0.007018558741690676
+    fom_grasp:
+      position_m: 0.00012523321211857638
+      orientation_rad: 0.007018510055896178
+      compliance_m: 0.00012523321211857638
+    rom_grasp:
+      position_m: 0.00012524256301036168
+      orientation_rad: 0.007018558741690676
+      compliance_m: 0.00012524256301036168
+    fom_step_seconds: 0.0017514788933332662
+    rom_step_seconds: 0.002559877712499959
+    speedup: 0.6842041261505355
+    strain_bend_relative_error: 0.0004187905178405052
+    strain_extension_relative_error: 0.005455872230512918
+    strain_shear_relative_error: 0.032571989212514724
+    strain_component_relative_error: 0.032571989212514724
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 4
     split: validation
     passed: true
-    marker_rmse_m: 2.0566195130516457e-16
-    marker_max_m: 3.5130270542131337e-15
-    tip_position_m: 2.8877805767053584e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 8.195211797807598e-15
-    chain_length_error_m: 8.134892594613419e-05
-    fom_step_seconds: 0.0017618200983338284
-    rom_step_seconds: 0.003010392244167027
-    speedup: 0.5852460262437735
+    marker_rmse_m: 1.5816193018998216e-06
+    marker_max_m: 4.141046073297197e-05
+    centerline_rmse_m: 2.325041430554715e-06
+    centerline_max_m: 4.239027873494502e-05
+    tip_position_m: 2.344857515814473e-07
+    tip_orientation_rad: 6.388411256741026e-06
+    strain_relative_error: 0.0015056673055170555
+    strain_rate_relative_error: 0.006030254437969211
+    physical_length_error_m: 8.96398156813305e-08
+    chord_length_error_m: 1.0647565218402377e-07
+    grasp_wrench_relative_error: 0.001031701203827521
+    grasp_position_m: 0.0002272804862986642
+    grasp_orientation_rad: 0.00833153333084219
+    fom_grasp:
+      position_m: 0.0002272804862986642
+      orientation_rad: 0.008331472837653262
+      compliance_m: 0.0002272804862986642
+    rom_grasp:
+      position_m: 0.00022725849411471804
+      orientation_rad: 0.00833153333084219
+      compliance_m: 0.00022725849411471807
+    fom_step_seconds: 0.0017346631095832283
+    rom_step_seconds: 0.002573170842917231
+    speedup: 0.674134449470375
+    strain_bend_relative_error: 0.0009170773500326328
+    strain_extension_relative_error: 0.00978172008658931
+    strain_shear_relative_error: 0.022857243876969798
+    strain_component_relative_error: 0.022857243876969798
   - vertex_id: 3
     parameters: *id004
     trajectory_id: 5
-    split: test
+    split: validation
     passed: true
-    marker_rmse_m: 1.6647277141575411e-16
-    marker_max_m: 2.0282945925593685e-15
-    tip_position_m: 2.0282945925593685e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 8.172414762738134e-15
-    chain_length_error_m: 8.279276519695955e-05
-    fom_step_seconds: 0.001758061822916564
-    rom_step_seconds: 0.00301254590541627
-    speedup: 0.5835800940844542
+    marker_rmse_m: 2.499354578136308e-07
+    marker_max_m: 1.732171304756513e-06
+    centerline_rmse_m: 3.74016426659279e-07
+    centerline_max_m: 1.997197369118993e-06
+    tip_position_m: 3.260769486691468e-09
+    tip_orientation_rad: 2.1073424255447025e-07
+    strain_relative_error: 0.0008893800368628791
+    strain_rate_relative_error: 0.007905308072466971
+    physical_length_error_m: 3.700411665974457e-08
+    chord_length_error_m: 3.4827828621075696e-08
+    grasp_wrench_relative_error: 2.953160306481293e-05
+    grasp_position_m: 0.00011041770086865947
+    grasp_orientation_rad: 0.007027645379190512
+    fom_grasp:
+      position_m: 0.00011041641339034326
+      orientation_rad: 0.007027502330907729
+      compliance_m: 0.00011041641339034326
+    rom_grasp:
+      position_m: 0.00011041770086865947
+      orientation_rad: 0.007027645379190512
+      compliance_m: 0.00011041770086865947
+    fom_step_seconds: 0.001767515604583423
+    rom_step_seconds: 0.002572535045416468
+    speedup: 0.6870715358115869
+    strain_bend_relative_error: 0.0002498583895175272
+    strain_extension_relative_error: 0.0055608007201516894
+    strain_shear_relative_error: 0.016568579287060736
+    strain_component_relative_error: 0.016568579287060736
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 0
     split: train
     passed: true
-    marker_rmse_m: 4.282982836157299e-15
-    marker_max_m: 3.5939355074276775e-14
-    tip_position_m: 3.676775769425887e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 2.4645525112351794e-13
-    chain_length_error_m: 8.223627305459225e-05
-    fom_step_seconds: 0.0017528852958336454
-    rom_step_seconds: 0.0030243000587499105
-    speedup: 0.5796003246312132
+    marker_rmse_m: 2.6274653204272557e-07
+    marker_max_m: 4.542444137574205e-06
+    centerline_rmse_m: 4.1109732499774007e-07
+    centerline_max_m: 5.333279585212714e-06
+    tip_position_m: 5.637681480885744e-09
+    tip_orientation_rad: 3.2917740992269735e-07
+    strain_relative_error: 0.0009245820275654226
+    strain_rate_relative_error: 0.00985206766087006
+    physical_length_error_m: 5.9138910879497075e-08
+    chord_length_error_m: 5.256953394816577e-08
+    grasp_wrench_relative_error: 4.634441721346895e-05
+    grasp_position_m: 0.00012165451942175551
+    grasp_orientation_rad: 0.005224795781736806
+    fom_grasp:
+      position_m: 0.00012164888553176848
+      orientation_rad: 0.005224639860684211
+      compliance_m: 0.00012164888553176848
+    rom_grasp:
+      position_m: 0.00012165451942175551
+      orientation_rad: 0.005224795781736806
+      compliance_m: 0.00012165451942175551
+    fom_step_seconds: 0.0017341377933333508
+    rom_step_seconds: 0.0025761232041668337
+    speedup: 0.673157941564446
+    strain_bend_relative_error: 0.0004784412875037328
+    strain_extension_relative_error: 0.0043485273803560535
+    strain_shear_relative_error: 0.02941296339780684
+    strain_component_relative_error: 0.02941296339780684
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 4
     split: validation
     passed: true
-    marker_rmse_m: 5.816704268629397e-16
-    marker_max_m: 1.7935863641090556e-14
-    tip_position_m: 1.7935863641090556e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 2.7885334786942922e-14
-    chain_length_error_m: 8.296546115371672e-05
-    fom_step_seconds: 0.0017494047016665111
-    rom_step_seconds: 0.0030210732516661666
-    speedup: 0.57906729030873
+    marker_rmse_m: 1.405345733159668e-06
+    marker_max_m: 3.332584737877294e-05
+    centerline_rmse_m: 2.0779805070860276e-06
+    centerline_max_m: 3.54257340122715e-05
+    tip_position_m: 1.5228532618081356e-07
+    tip_orientation_rad: 3.6570740550128615e-06
+    strain_relative_error: 0.0011921754973140046
+    strain_rate_relative_error: 0.005985768936917925
+    physical_length_error_m: 5.0776044147049504e-08
+    chord_length_error_m: 6.421709575210599e-08
+    grasp_wrench_relative_error: 0.0007582777100530631
+    grasp_position_m: 0.00020083069195381468
+    grasp_orientation_rad: 0.005678456215208648
+    fom_grasp:
+      position_m: 0.00020083069195381468
+      orientation_rad: 0.005677695639540955
+      compliance_m: 0.00020083069195381468
+    rom_grasp:
+      position_m: 0.0002007725897716616
+      orientation_rad: 0.005678456215208648
+      compliance_m: 0.0002007725897716616
+    fom_step_seconds: 0.0017283305495834611
+    rom_step_seconds: 0.002572153614166079
+    speedup: 0.6719390864000964
+    strain_bend_relative_error: 0.0009243068354510086
+    strain_extension_relative_error: 0.008012100937201663
+    strain_shear_relative_error: 0.014486905825805483
+    strain_component_relative_error: 0.014486905825805483
   - vertex_id: 4
     parameters: *id005
     trajectory_id: 5
-    split: test
+    split: validation
     passed: true
-    marker_rmse_m: 2.0265780393101524e-15
-    marker_max_m: 1.761068853862805e-14
-    tip_position_m: 2.5371693372969605e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 1.1580340359222438e-13
-    chain_length_error_m: 8.425972529024772e-05
-    fom_step_seconds: 0.0017526822274999175
-    rom_step_seconds: 0.003013715137500033
-    speedup: 0.5815686445248505
-  holds:
-  - vertex_id: 0
-    passed: true
-    marker_rmse_m: 1.2876508114001926e-15
-    marker_max_m: 6.446318369391021e-14
-    tip_position_m: 4.3966694044598185e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 1.067765183615726e-13
-    chain_length_error_m: 0.00012696068176443198
-    fom_step_seconds: 0.0017388963301000029
-    rom_step_seconds: 0.0030261506801666656
-    speedup: 0.5746231810255505
-  - vertex_id: 1
-    passed: true
-    marker_rmse_m: 3.6380107968676243e-16
-    marker_max_m: 1.9286511747211646e-14
-    tip_position_m: 1.644557087322736e-14
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 3.228719689599833e-14
-    chain_length_error_m: 0.0001186114268884042
-    fom_step_seconds: 0.0017351010106500023
-    rom_step_seconds: 0.0030227474206333377
-    speedup: 0.5740145533848333
-  - vertex_id: 2
-    passed: true
-    marker_rmse_m: 9.969227282144606e-17
-    marker_max_m: 2.6261307160642734e-15
-    tip_position_m: 2.6261307160642734e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 1.4176859082011969e-15
-    chain_length_error_m: 5.8202781276661675e-05
-    fom_step_seconds: 0.0017330468935333253
-    rom_step_seconds: 0.003022515111133331
-    speedup: 0.5733790667082875
-  - vertex_id: 3
-    passed: true
-    marker_rmse_m: 1.0735779556946924e-16
-    marker_max_m: 3.75921581715333e-15
-    tip_position_m: 1.6504651808933464e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 3.1705529552452064e-15
-    chain_length_error_m: 5.6930054840975686e-05
-    fom_step_seconds: 0.0017216850059999767
-    rom_step_seconds: 0.0029925269239000044
-    speedup: 0.5753281590383135
-  - vertex_id: 4
-    passed: true
-    marker_rmse_m: 1.2539963855191759e-16
-    marker_max_m: 6.1439585700092265e-15
-    tip_position_m: 5.829480360694111e-15
-    tip_orientation_rad: 4.2146848510894035e-08
-    strain_relative_error: 4.478677460778883e-15
-    chain_length_error_m: 7.58407568157704e-05
-    fom_step_seconds: 0.0017173388737500015
-    rom_step_seconds: 0.0029863524310000077
-    speedup: 0.5750623589912108
-  one_step_marker_rmse_m: 9.497190577604154e-08
-  rollout_2s_marker_rmse_m: 3.280696166763455e-08
-selected_order: 16
-strain_basis_sha256: beb83b3c9b72d25bfbe7e83dc4361097e24e852fa623015deb8f320072b9e452
+    marker_rmse_m: 2.5913400924412993e-07
+    marker_max_m: 2.394892162116599e-06
+    centerline_rmse_m: 3.9492738920811256e-07
+    centerline_max_m: 2.7493081103665587e-06
+    tip_position_m: 2.026484370364987e-09
+    tip_orientation_rad: 1.1151007970493858e-07
+    strain_relative_error: 0.0006824544489194573
+    strain_rate_relative_error: 0.008494844159422888
+    physical_length_error_m: 1.6822056969623134e-08
+    chord_length_error_m: 1.5460854374538258e-08
+    grasp_wrench_relative_error: 1.8731968485284077e-05
+    grasp_position_m: 0.00010818253040809805
+    grasp_orientation_rad: 0.0057769142274993555
+    fom_grasp:
+      position_m: 0.00010818167435579454
+      orientation_rad: 0.005776834695102188
+      compliance_m: 0.00010818167435579454
+    rom_grasp:
+      position_m: 0.00010818253040809805
+      orientation_rad: 0.0057769142274993555
+      compliance_m: 0.00010818253040809803
+    fom_step_seconds: 0.0017305654104166025
+    rom_step_seconds: 0.0025734604029169837
+    speedup: 0.6724663058561263
+    strain_bend_relative_error: 0.0003129467734285827
+    strain_extension_relative_error: 0.004368491564980914
+    strain_shear_relative_error: 0.015589373271471672
+    strain_component_relative_error: 0.015589373271471672

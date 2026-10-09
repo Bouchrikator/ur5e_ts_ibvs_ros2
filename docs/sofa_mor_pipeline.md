@@ -1,8 +1,11 @@
 # SOFA strain-POD (MOR) pipeline for the cable TS-PDC
 
-Status: **implemented and gated end to end; every number below is measured**
-(`artifacts/cable_mor/*.yaml`). One host command runs it all and stops at the
-first unsatisfied gate:
+Status: **mechanical model, POD and ROM rebuilt on 2026-10-09** (sections 1-3 and
+8-9 describe the current chain; sections 4-7 describe the TS/observer/LMI stages
+as they were run on the previous model and are not re-run yet: their artifacts
+carry the old basis hash and are refused by `modal_contract`). Every number is
+measured (`artifacts/cable_mor/*.yaml`). One host command runs it all and stops
+at the first unsatisfied gate:
 
 ```bash
 ./scripts/run.sh cable_sofa_mor_pipeline     # ~1 h on the 7 GB host, idle
@@ -21,8 +24,8 @@ Each phase is also a command (`./scripts/run.sh cable_sofa_<phase>`), prints one
 ```mermaid
 flowchart LR
   A[FOM Cosserat + GraspCoupling<br/>CableMORSnapshotController] --> B[WriteState on cosseratCoordinateMO<br/>X0=, X=, V= at 25 Hz]
-  B --> C[mor.reduction.script.readStateFilesAndComputeModes<br/>training trajectories only]
-  C --> D[ModelOrderReductionMapping<br/>modalCoordinateMO Vec1d -> cosseratCoordinateMO Vec3d]
+  B --> C[mor.reduction.script.readStateFilesAndComputeModes<br/>energy-scaled training trajectories only]
+  C --> D[ModelOrderReductionMapping<br/>modalCoordinateMO Vec1d -> cosseratCoordinateMO Vec6d]
   D --> E[ROM: a, a_dot read from modalCoordinateMO]
   E --> F[CableModalTsIdentificationController<br/>x = a, a_dot, p_g - p_g0]
   F --> G[solve_cable_ts_lmi --backend sparse<br/>verify_certificate]
@@ -30,82 +33,154 @@ flowchart LR
   E -. h_ROM = mapping .-> I[cable_modal_observer_node<br/>markers -> a_hat]
 ```
 
-* The basis `Phi_kappa` (48 x r, section-major `kappa_x, kappa_y, kappa_z`,
-  reference `kappa_0 = 0`) is computed once by the plugin's own POD from the
-  `WriteState` files of the **training** trajectories. The marker POD of
-  `modal_basis.py` is not called anywhere in this chain; `ModalBasis.project`
-  never touches `a`.
+* The FOM is the planar extensible Cosserat rod of
+  [cable_dynamics_remarks.md](cable_dynamics_remarks.md): `Vec6d` strains
+  `(kappa_x, kappa_y, kappa_z, eps_x, eps_y, eps_z)` per section (96 dofs, 48
+  active: in-plane bending, extension, in-plane shear), consistent Jacobian
+  (`cosserat-patches/0002`), rod-segment inertia, Kelvin-Voigt damping, no-slip
+  grasp on the grasped frame. Verified by `./scripts/run.sh cable_fom_test`.
+* The basis `Phi` (96 x r, reference `q_0 = 0`) is computed once by the plugin's
+  own POD from the **energy-scaled** `WriteState` files of the **training**
+  trajectories: `W = diag(GJ, EI, EI, EA, GA, GA) l` (`strain_weights`, nominal
+  parameters), the POD runs on `W^1/2 q`, the stored modes are
+  `Phi = W^-1/2 Phi~` so that `Phi^T W Phi = I`; the projection is
+  `a = Phi^T W (q - q_0)` and the ROM mapping reads `q = q_0 + Phi a`
+  (`Vec1d -> Vec6d`, MOR patch 0004). Curvature and extension are thereby
+  compared in joules, not mixed units. The marker POD of `modal_basis.py` is not
+  called anywhere in this chain.
 * `a` is the independent DOF of the SOFA ROM, the TS state and the PDC state.
   On the robot the same `a` is estimated by the visual observer through the
   ROM mapping (section 4); nothing re-fits a basis on markers.
-* Planar case: rows `3s` and `3s+1` (torsion, out-of-plane bending) of every
-  retained mode are zero (checked, tolerance 1e-10); the
+* Planar case: the torsion, out-of-plane bending and out-of-plane shear rows of
+  every retained mode are zero (checked, tolerance 1e-10); the
   `PartialFixedProjectiveConstraint` stays on the FOM only, the ROM's strain
   state is mapped.
+* Compatibility metadata of every basis: component order and units, inner
+  product and weights, reference state, operating envelope (radial range, bearing
+  and yaw limits incl. the taut taper, speeds, parameter bounds), mechanics flags,
+  mapping template and the installed Cosserat/MOR patch hashes;
+  `validate_reduction` refuses a basis whose patch hashes differ from the
+  installed plugins.
 
-Pinned versions: SOFA v25.12.00, Cosserat `f64e029` (+ EI/GI patch),
+Pinned versions: SOFA v25.12.00, Cosserat `f64e029` (+ patch 0001 EI/GI internal
+data, + patch 0002 consistent tangent operator and usable `Vec6` route),
 ModelOrderReduction `d94dc49dff66d936ad11c33a8f195cc167c98b61` built from
 source by [install_model_order_reduction.sh](../scripts/install_model_order_reduction.sh)
-with three patches in `third_party/model-order-reduction-patches/`
+with four patches in `third_party/model-order-reduction-patches/`
 (mapping-only build, assembled-Jacobian population so `SparseLDLSolver` sees the
-mapped mass, lazy Python imports so the POD reader runs headless).
+mapped mass, lazy Python imports so the POD reader runs headless, and 0004: the
+mapping's `apply/applyJ/applyJT` and constraint `applyJT` written for any output
+dimension instead of hard-coded 3, plus the `Vec1d -> Vec6d` instantiation, which
+also instantiates `core::Mapping<Vec1, Vec6>` from `Mapping.inl` because Sofa.Core
+does not ship it). `cable_sofa_mor_plugin_test` checks both templates against numpy.
 
 ## 2. Snapshots and POD
 
-* 4 physical vertices (`EI` x `rayleigh_stiffness` box) x 6 shared trajectories
+* 4 physical vertices (`EI` x `rayleigh_stiffness` box) x 7 shared trajectories
   x 600 samples at 25 Hz (`control_dt = 0.04 s` = 4 SOFA steps), holds of 5 s at
-  both ends, polar excitation in the annulus 0.92-0.985 L, `u[k]` drives
-  `k -> k+1` (checked by `check_input_alignment`). Split by whole trajectories:
-  train {0,1,2,3}, validation {4}, test {5}.
-* `WriteState` writes 48 scalars per `X0=/X=/V=` line; timestamps and line
-  counts are checked against the controller's own record (rtol 1e-5).
+  both ends. Excitation (`cable_mor_training_scene.excitation_paths`): radius
+  sweep 0.92-1.002 L (bent to taut and stretched: 1.4 mm = 10 N at EA = 5 kN),
+  bearing sweep +-0.55 rad with 35-57 reversals per trajectory, gripper yaw =
+  bearing + relative yaw (+-0.5 rad), everything rate-limited (0.15 m/s,
+  0.5 rad/s). Bearing and relative yaw taper to +-0.2 rad between 0.97 L and
+  the rest length: a clamp angle theta on a cable under tension T bends it with
+  `kappa ~ theta sqrt(T/EI)` within `sqrt(EI/T)` = 15-30 mm of the clamp, so
+  0.5 rad when taut means kappa > 20 /m (outside the linear law, below the section
+  size; the FOM then needs a 7 mm attachment stretch to reach the target), 0.2 rad
+  gives 4-8 /m, resolved to 0.5 mm in marker position by the 16 sections
+  (`cable_fom_test`). This is the declared operating envelope; a fixed-world-yaw
+  gripper at large bearing near the rest length is outside it.
+* Split by whole trajectories (all parameter vertices of a trajectory go with
+  it): train {0,1,2,3}, validation {4,5} (order selection), test {6} (fresh:
+  trajectories 0-5 took part in earlier selections; evaluated once with the
+  frozen order).
+* `WriteState` writes 96 scalars per `X0=/X=/V=` line; timestamps and line
+  counts are checked against the controller's own record (rtol 1e-5). A
+  diverging episode aborts the phase (FOM) or fails the candidate (ROM).
 * `readStateFilesAndComputeModes(addRigidBodyModes=None)` over the 9600
-  training snapshots; singular values 874 ... 1.1 for the 16 active modes, then
-  8.5e-14 (numerical null space, refused by `rank_relative_tolerance`).
+  energy-scaled training snapshots; `nu = sqrt(sum_{i>r} sigma_i^2 / sum sigma_i^2)`
+  is the snapshot-energy criterion that generates the candidates (Goury & Duriez
+  2018, eq. 15), not an accuracy bound; the tolerance list reaches the full
+  active rank (48, nu ~ 1.5e-8) so the selection can fall back to a pure
+  coordinate change. The plugin writes the modes with 5 decimals, which leaves a
+  2.5e-5 relative projection residual even at r = 48.
 
-| tol | r | position projection | velocity projection |
-|---|---|---|---|
-| 0.2 | 3 | 13.1 % | 38.3 % |
-| 0.1 | 4 | 8.9 % | 34.4 % |
-| 0.05 | 6 | 3.2 % | 20.4 % |
-| 0.02 | 8 | 1.5 % | 12.9 % |
-| 0.01 | 9 | 0.97 % | 9.7 % |
-| 0.005 | 12 | 0.41 % | 4.5 % |
-| 0.001 | 16 | 1.5e-5 | 1.6e-5 |
+Measured on the 2026-10-09 snapshots (`candidates.yaml`, `candidates/tol_*.yaml`;
+`Sdata.txt` = singular values of `W^1/2 S`, in sqrt(J): 13.38, 9.27, 3.80, 2.43,
+2.18, 0.90, 0.61, 0.155, ..., sigma_48 = 1.8e-6, then 9e-16 = the 48 locked rows):
+
+| tol nu | r | nu at r | position projection (W-norm, train) | velocity projection |
+|---|---|---|---|---|
+| 0.1 | 5 | 6.5e-2 | 6.5 % | 29.9 % |
+| 0.02 | 7 | 1.4e-2 | 1.4 % | 9.5 % |
+| 0.01 | 9 | 8.1e-3 | 0.81 % | 6.0 % |
+| 0.005 | 11 | 3.8e-3 | 0.38 % | 2.8 % |
+| 0.001 | 18 | 6.7e-4 | 0.067 % | 0.82 % |
+| 2e-4 | 24 | 1.7e-4 | 0.017 % | 0.33 % |
+| 5e-5 | 28 | 4.3e-5 | 5.1e-5 | 6.8e-4 |
+| 1e-5 | 33 | 9.0e-6 | 2.9e-5 | 1.5e-4 |
+| 2e-6 | 39 | 2.0e-6 | 2.8e-5 | 5.3e-5 |
+| 1e-7 | 48 (full active rank) | ~0 | 2.9e-5 | 2.9e-5 |
+
+The projection floor of 2.8-2.9e-5 from r = 33 on is the 5-decimal mode file of
+the official script, not missing snapshot content. The velocity residual stays
+5-10x the position residual: strain rates live in higher modes than strains.
 
 ## 3. FOM/ROM validation and the retained order
 
-Same commands on FOM and ROM (`validate_cosserat_rom`): train trajectory 0,
-validation 4, test 5, at the four vertices and the box centre; 600 s holds;
-2 s projected rollouts. Limits (marker-space requirements of the existing
-pipeline): marker rmse 5 mm, max 10 mm, tip 1 mm / 0.02 rad, strain 5 %,
-chain length 1 mm.
+Same commands on FOM and ROM (`validate_cosserat_rom`): the order is selected on
+train trajectory 0 (sanity) and the validation trajectories 4 and 5 at the four
+vertices and the box centre, plus 600 s holds and 2 s projected rollouts
+(`a = Phi^T W q`); the smallest passing order is frozen and the test trajectory 6
+is evaluated once (a failure there is reported, no other candidate is tried).
+Tolerances fixed before the selection (`cable_mor.yaml`): markers and full
+centerline (41 material frames) rmse 5 mm / max 10 mm, ROM-FOM tip 1 mm /
+0.02 rad, each model's grasp tracking of the commanded pose 1 mm / 0.02 rad,
+strain 5 % in the energy norm AND per active component (bending, extension,
+shear), strain rate 10 %, grasp reaction wrench 5 %, physical length
+`sum(l_i |v_i|)` ROM vs FOM 1 mm (the polyline chord is reported separately).
 
-| r | worst marker rmse | failing episodes | mean step ROM/FOM |
-|---|---|---|---|
-| 3 | 48.9 mm | 15/15 | 1.13x faster |
-| 4 | 48.6 mm | 15/15 | 1.06x |
-| 6 | 55.4 mm | 6/15 | 0.94x |
-| 8 | 5.9 mm | 6/15 | 0.86x |
-| 9 | 1.72 mm (max 17.4 mm) | 1/15 | 0.82x |
-| 12 | 1.10 mm (max 10.2 mm) | 1/15 | 0.69x |
-| **16** | **0.000 mm** | 0/15, holds 0/5 | **0.62x (slower)** |
+**State on 2026-10-09: selection not completed, no order promoted.** The
+validation run was stopped on request while evaluating r = 24. Measured on the
+selection set (train trajectory 0 + validation 4, 5) x (4 vertices + centre), worst
+episode per column (`artifacts/cable_mor/cable_rom_validation.yaml`, partial report,
+`passed: false`):
 
-The failing episode of r = 9 and 12 is always vertex 1 (EI = 0.005,
-c_R = 0.022, softest) on validation trajectory 4, a large-deformation event.
-**r = 16 is the full active rank**: the planar rod has 16 in-plane bending
-strains, so the retained ROM is an exact change of coordinates of the FOM,
-not a truncation. Consequences, stated plainly:
+| r | selection episodes passing | binding criteria (worst value) | centerline rmse / max | mean step ROM/FOM |
+|---|---|---|---|---|
+| 5 | 0/15 | centerline, strain 50 %, strain rate 98 %, grasp wrench 124 % | 22.4 / 138 mm | 1.20x faster |
+| 7 | 0/15 | shear 95 %, extension 5.9 %, strain rate 19.5 %, wrench 8.5 % | 0.19 / 3.3 mm | 1.09x faster |
+| 9 | 0/15 | shear 84 %, wrench 9.5 % | 0.20 / 3.7 mm | 0.97x |
+| 11 | 0/15 | shear 35 % | 0.021 / 0.36 mm | 0.88x |
+| 18 | 13/15 | shear 5.15 % / 5.11 % (train trajectory 0, both EI = 0.005 vertices) | 0.0025 / 0.042 mm | 0.67x (slower) |
+| 24 | 13 of 15 evaluated before the stop, all passing | none so far | not recorded (the report is written per finished candidate) | not recorded |
 
-* no speed-up (mapping overhead, `BeamHookeLawForceField` still evaluated on
-  all 16 sections; this is coordinate reduction, not hyper-reduction);
-* the gain of the chain is the **single, hash-tracked strain coordinate**
-  shared by plant, identification, control and observation, not accuracy;
-* `x = [a, a_dot, p_g - p_g0]` has 34 states.
+For r >= 7 every geometric quantity is far inside its tolerance (centreline,
+markers, tip 18 um / 0.6 mrad, physical length 0.09 mm, chord likewise); the
+grasp-tracking columns (0.28 mm / 8.3 mrad for FOM and ROM alike) are the no-slip
+spring's own compliance under the cable loads, inside 1 mm / 0.02 rad. What
+decides the order is the per-component strain criterion on the in-plane shear
+`eps_y`, a strain of at most 3e-4 here that moves the centreline by micrometres.
+The tolerance stays as fixed before the selection; whether a 5 % per-component
+requirement on shear is the right mechanical requirement (or whether shear can be
+eliminated, which the task allows only after a targeted comparison) is an open
+modelling decision, not a knob for this run.
 
-Lower orders were not promoted because they fail the fixed limits; loosening a
-limit to promote r = 9 or 12 is a modelling decision to justify and revalidate,
-not a knob.
+Not done yet, in this order: finish `mor_validate` (r = 24, then holds and
+projected rollouts for the first passing order), evaluate the independent test
+trajectory 6 once with the frozen order, then `cable_dynamics --rom` and
+`cable_sofa_mor_plugin_test --cable-modes` on the promoted basis. Until then
+`cable_strain_modes.{txt,yaml}` are still the 2026-09-08 three-component basis
+(48 x 16), refused by `validate_reduction` (dimension 48 != 96), so every
+downstream phase refuses to run: the old basis cannot be reused silently.
+Resume with `./scripts/run.sh cable_sofa_mor_validate` (restarts at r = 5; the
+snapshots and candidates on disk are current).
+
+Previous model (2026-09-08, inextensible 3-strain plant with the inconsistent
+Jacobian, superseded): r = 16, the full rank of the 16 in-plane curvatures, was
+promoted with 0/15 failing episodes and no speed-up (0.62x); r = 9 and 12 failed one
+large-deformation episode. Those numbers are in git history and do not describe the
+current model.
 
 ## 4. Modal TS identification
 
@@ -218,7 +293,29 @@ gains or state of another coordinate type, order or basis hash
 the desired gripper pose to IBVS features and is coordinate-agnostic; it needed
 no change. `cable_supervisor_node` compares the modal block of `[a*, g*]`.
 
-## 8. Gate record (2026-09-08, start commit `2f90727`, MOR `d94dc49`)
+## 8. Gate record
+
+### 8.1 2026-10-09: planar extensible model (working tree on `1283334`, uncommitted)
+
+Cosserat `f64e029` + patches 0001-0002, MOR `d94dc49` + patches 0001-0004 (hashes in
+every `snapshots.yaml` / candidate metadata under `plugin_patches`).
+
+| gate | command | result |
+|---|---|---|
+| Cosserat plugin and Hooke-law data | `cable_plugin_test` | PASSED |
+| forward behaviour incl. pre-init coupling (runSofa order) | `cable_forward_test` | PASSED 7/7 (grasped tip 0.02 mm) |
+| FOM numerical verification | `cable_fom_test` | PASSED 12/12: traction 7e-5, bending exact, `J` vs FD 1.5e-10, virtual work 2.7e-8, grasp 5 um / 2.5 mrad, energy balance, convergence ([cable_dynamics_remarks.md](cable_dynamics_remarks.md)) |
+| FOM term-by-term dump and SOFA identities | `cable_dynamics` | PASSED |
+| MOR mapping Vec1d->Vec3d and Vec1d->Vec6d (apply/applyJ/applyJT, assembled mass) | `check_mapping()` of `cable_sofa_mor_plugin_test`, run from the source tree | PASSED; the `--cable-modes` restore check needs a promoted basis: NOT RUN |
+| native snapshots, 4 vertices x 7 trajectories x 600 x 96 | `cable_sofa_mor_snapshots` | PASSED, 16 800 samples |
+| official POD on energy-scaled snapshots, 10 tolerances, planar rows zero, `Phi^T W Phi = I` | `cable_sofa_mor_compute_modes` | PASSED, r = 5..48 (section 2) |
+| order selection on validation, one independent test | `cable_sofa_mor_validate` | **NOT COMPLETED**: stopped during r = 24, nothing promoted (section 3) |
+| ROM dump | `cable_dynamics --rom` | NOT RUN (needs a promoted basis) |
+| ROM dataset, modal TS, observer, LMI, PDC | `cable_sofa_modal_*`, `cable_sofa_pdc_test` | out of scope of this change, NOT RUN; they refuse the old artifacts (basis hash and dimension) |
+| Optimus | `optimus_smoke_test`, `cable_optimus_test`, `cable_optimus_pipeline --duration 60` | PASSED; GJ (gate G) and EI in the table setup (gate I) are measured identifiability limits ([optimus_port.md §5, §7](optimus_port.md)) |
+| unit tests | pytest on `cable_identification/test` and `cable_ts_control/test` (not the colcon `cable_unit_tests`) | 30 + 124 passed |
+
+### 8.2 2026-09-08: previous model (start commit `2f90727`, MOR `d94dc49`)
 
 `cable_sofa_mor_pipeline` runs the phases in the order below and stops at the
 first failure. The observer gate is placed before the LMI because it does not
@@ -249,62 +346,63 @@ nodes refuse anything that does not match (`modal_contract.py`).
 ## 9. The equation SOFA actually solves, term by term
 
 `./scripts/run.sh cable_dynamics` (`cable_identification/dynamics_dump.py`)
-builds the truth cable with `build_cable(..., expose_matrices=True)`, attaches
-and drags the tip to a bent configuration and, for the last step, writes every
-term of
+builds the truth cable with `build_cable(..., expose_matrices=True)`, latches the
+grasp at the tip, drags the gripper by (-4, +6) cm and, for the last step, writes
+every term of
 
     M(q) q'' + C(q,q') q' + f_int(q; EA,EI,GJ) = f_g + J_g(q)^T lambda
 
 to `artifacts/cable_dynamics/` (`cable_dynamics.npz`, `.png`, a report with
 every array printed in full, and `sofa_export/*.txt` written by SOFA's own
-`GlobalSystemMatrixExporter`, plugin `SofaMatrix`, shipped under
-`/opt/sofa/plugins`). Every number comes from a SOFA component:
+`GlobalSystemMatrixExporter`, plugin `SofaMatrix`). The FOM files were regenerated
+on 2026-10-09; `cable_dynamics_rom.*`, `r3/` and `sofa_export_rom/` in the same
+folder are still the 2026-09-09 three-strain ROM and are superseded until
+`cable_dynamics --rom` is re-run on a promoted basis (section 3). Every number
+comes from a SOFA component:
 
 | term | SOFA source | shape |
 |---|---|---|
-| `q`, `q'` | `MechanicalObject.position/velocity` of the rigid base (6 dofs) and the 16 x 3 strains (torsion, bend_y, bend_z) | 54 |
-| `q''` | `(q'+ - q')/h`, `q'+ - q'` = `SparseLDLSolver` solution (`MatrixLinearSystem.x`) | 54 |
-| `M(q)` | `MatrixLinearSystem(assembleMass)` / `(1 + h rM)` = `J^T diag(m) J` of the frames' `UniformMass` (0.07 kg): dense, configuration dependent, SPD | 54 x 54 |
-| `C(q,q') q'` | `EulerImplicitSolver` Rayleigh damping `(rM M - rK K) q'+` (implicit) `- rK_ff K_int dq'`; SOFA computes **no Coriolis/centrifugal term** for mapped masses | 54 |
-| `f_int` | `BeamHookeLawForceField`: `-K_int (q - q0)`, `K_int = -diag(GI l, EI l, EI l)` from `MatrixLinearSystem(assembleStiffness, applyMappedComponents=0)` | 54 |
-| `f_g` | `UniformMass x root.gravity` = 0 (table model); the base clamp reaction `f_clamp` (RestShapeSprings 1e8) is the other external force | 54 |
-| `lambda` | `FramesMO.force[tip]`: the grasp `RestShapeSpringsForceField` wrench `(F, tau) = (k (p_target - p_tip), -k_a rotvec)` | 6 |
-| `J_g(q)` | `DiscreteCosseratMapping.applyJ` probed with unit velocities (the Jacobian SOFA uses) | 6 x 54 |
-| `J_g^T lambda` | `DiscreteCosseratMapping.applyJT` (strain/base force minus Hooke and clamp) == probed `J_g^T lambda` | 54 |
+| `q`, `q'` | `MechanicalObject.position/velocity` of the rigid base (6 dofs) and the 16 x 6 strains `(kappa_x, kappa_y, kappa_z, eps_x, eps_y, eps_z)` | 102 |
+| `q''` | `(q'+ - q')/h`, `q'+ - q'` = `SparseLDLSolver` solution (`MatrixLinearSystem.x`) | 102 |
+| `M(q)` | `MatrixLinearSystem(assembleMass)` / `(1 + h rM)` = `J^T diag(m, I) J` of the frames' `UniformMass` (0.07 kg over 41 frames, rod-segment rotational inertia): dense, configuration dependent, SPD | 102 x 102 |
+| `C(q,q') q'` | Kelvin-Voigt `-B q'+`, `B = -c_R diag(GJ, EI, EI, EA, GA, GA) l` from `MatrixLinearSystem(assembleDamping)` (`DiagonalVelocityDampingForceField`, implicit); plus the explicit convective term `-sum_f J_f^T w_f` when `convective_inertia` is on (off by default); the solver's Rayleigh factors are 0 | 102 |
+| `f_int` | `BeamHookeLawForceField<Vec6d>`: `-K_int (q - q0)`, `K_int = -diag(GJ, EI, EI, EA, GA, GA) l` = (3.5e-4, 4.375e-4, 4.375e-4, 218.75, 87.5, 87.5) per section | 102 |
+| `f_g` | `UniformMass x root.gravity` = 0 (table model); the base clamp reaction `f_clamp` (RestShapeSprings 1e8) is the other external force | 102 |
+| `lambda` | `FramesMO.force[grasped frame]` minus the convective wrench: the grasp `RestShapeSpringsForceField` wrench `(F, tau) = (k (p_target - p), -k_a rotvec)`, `k` = 1e5 N/m, `k_a` = 10 N m/rad | 6 |
+| `J_g(q)` | `DiscreteCosseratMapping.applyJ` probed with unit velocities; equal to the central-difference derivative of `apply()` (asserted, `cosserat-patches/0002`) | 6 x 102 |
+| `J_g^T lambda` | `DiscreteCosseratMapping.applyJT` (strain/base force minus Hooke, damping and clamp) == probed `J_g^T lambda` | 102 |
 
 What SOFA does with them (`EulerImplicitSolver.cpp` v25.12): `A dq' = b` with
 `A = (1 + h rM) M - h B - h (h + rK) K` and `b = h (f + ((h + rK) K - rM M) q')`,
-`K = df/dq`. A force field's own `rayleighStiffness` (`rK_ff`, the Hooke law here)
-is added to its K factor in `A` only (`kFactorIncludingRayleighDamping`, the RHS
-uses `B(0)`), so it damps the velocity **increment**: `-rK_ff K_int dq'` (1e-5 N m
-here), not a `rK_ff K q'` force. Rewritten, SOFA's step is exactly
-`M q'' + (rM M - rK K) q'+ - rK_ff K_int dq' = f(q) + h K q'+ ~ f(q+)`, the
-equation above at the new configuration; the dump asserts that identity to
-1e-14 on the free dofs. `B == 0` (no component implements
-`buildDampingMatrix`); the planar `PartialFixedProjectiveConstraint` shows up in
-`A` as identity rows/columns on the 32 locked dofs.
-
-Measured property of the pinned Cosserat release (f64e029, also the source of
-the patched build): `applyJT == applyJ^T`, but **`applyJ` is not the derivative
-of `apply()`**. On the straight rod the tip moves by `l (L - s_i)` per unit
-bend rate of section `i` (rotation about the section START node) instead of
-`l (L - s_i - l/2)` (curvature distributed over the section): the tangent
-operator of `updateTangExpSE3` lacks the angular-linear coupling. At the bent
-dump configuration `J_g^T lambda` differs from a consistent Jacobian by 1.5-3 %
-at the base sections, 27-58 % near the tip and flips sign on the last one.
-`M = J^T diag(m) J`, `J^T K_g J` and `J_g^T lambda` all use this `J`, so the
-equation is exact for SOFA's own `J` but not the virtual work of the frames'
-motion. This is recorded, not changed (it is the plant everything was identified
-on); it is a candidate explanation for the energy pumped into the rod by forces
-on mapped frames (status doc section 5.16), which is a hypothesis, not a result.
+`K = df/dq`, `B = df/dv`. Rewritten, SOFA's step is exactly
+`M q'' + (rM M - B - rK K) q'+ - rK_ff K_int dq' = f(q) + h K q'+ ~ f(q+)`, the
+equation above at the new configuration (here `rM = rK = rK_ff = 0`); the dump
+asserts that identity on the free dofs (residual 2.2e-15). The planar
+`PartialFixedProjectiveConstraint` shows up in `A` as identity rows/columns on the
+48 locked dofs (torsion, bend_y, shear_z of every section).
 
 The dump asserts: exporter files == binding read, `A == M_term + B_term +
-K_term`, `||A dq' - b|| <= 1e-8 ||b||`, `q'+ - q' == dq'`, `M` SPD with the
-cable mass on the base translation block, `K_int` == the force-field Data,
-`K_clamp` == the base spring Data, `lambda` == the grasp spring law, the frames
-carry no other force, `applyJT == applyJ^T`, the clamp translation law, the
-lumped-node lever on the straight rod, the residual and the locked-dof pattern;
-then prints `CABLE_DYNAMICS_DUMP_PASSED`.
+K_term`, `||A dq' - b|| <= 1e-8 ||b||`, `q'+ - q' == dq'`, `B` == the Kelvin-Voigt
+law on the strains and nothing on the base, `M` SPD with the cable mass on the
+base translation block, `K_int` == the force-field Data, `K_clamp` == the base
+spring Data, `lambda` == the grasp spring law, the frames carry no other force than
+the (optional) convective wrench, `applyJT == applyJ^T`, `applyJ` == the
+finite-difference derivative of `apply()` (bent state; straight rod: lever
+`l (L - s_i - l/2)` per bend rate, `l` per extension rate), the clamp translation
+law, the residual and the locked-dof pattern; then prints
+`CABLE_DYNAMICS_DUMP_PASSED`. The 2026-09-09 finding that `applyJ` was not the
+derivative of `apply()` (lumped-node lever `l (L - s_i)`) is fixed by
+`cosserat-patches/0002`; record in [cable_dynamics_remarks.md](cable_dynamics_remarks.md) §4.
+
+**Open (2026-10-09):** in the regenerated dump state the locked out-of-plane strains
+are not exactly zero (max 1.0e-4, the step of the dump's own straight-rod
+finite-difference probe, which writes those components directly; the projective
+constraint then freezes them at that value), the grasped tip and its target sit
+55-76 um below the table plane and the grasp spring carries a 2.1 N out-of-plane
+force against the clamp. The identities above hold for that state, so the gate is
+not affected, but the dumped configuration is not exactly planar. Likely fix: run
+the straight-rod probe on a separate scene (or `save_state`/`restore_state` around
+it) and assert the locked strains are zero; not done, the run was stopped first.
 
 ### 9.1 The form of the discretisation (what "finite element" means here)
 
@@ -316,43 +414,37 @@ so the "elements" are the 16 sections and the nodal unknowns are the strains:
 
 | FEM notion | cable equivalent (`cosserat_model.py`) |
 |---|---|
-| element | one section of length `l = L/16`, constant strain `(kappa_x, kappa_y, kappa_z)` |
-| nodal dofs | 6 rigid base dofs + 3 strains per section = 54 |
+| element | one section of length `l = L/16`, constant strain `(kappa_x, kappa_y, kappa_z, eps_x, eps_y, eps_z)`, twist `xi = (kappa, 1 + eps_x, eps_y, eps_z)` |
+| nodal dofs | 6 rigid base dofs + 6 strains per section = 102 (48 strains free in the planar table setup) |
 | shape functions | `DiscreteCosseratMapping`: frames `g(s) = g_base exp(l_1 hat(xi_1)) ... exp((s - s_i) hat(xi_i))` (SE(3) exponentials, `apply`) |
-| element stiffness | `BeamHookeLawForceField`: `K_e = -diag(GI, EI, EI) l` per section, block-diagonal, constant (linear constitutive law, geometric nonlinearity only through the mapping) |
-| element mass | none on the strains: `UniformMass` puts `0.07/41 kg` on each of the 41 mapped frames and SOFA projects it, `M(q) = J(q)^T diag(m) J(q)` every step |
-| boundary conditions | `PartialFixedProjectiveConstraint` (planar: rows of `A` replaced by identity), `RestShapeSpringsForceField` 1e8 on the base, 2e3 on the tip (penalty, not Lagrange) |
+| element stiffness | `BeamHookeLawForceField<Vec6d>`: `K_e = -diag(GJ, EI, EI, EA, GA, GA) l` per section, block-diagonal, constant (linear constitutive law for small strains, geometric nonlinearity only through the mapping) |
+| element damping | `DiagonalVelocityDampingForceField<Vec6d>`: Kelvin-Voigt `-c_R diag(GJ, EI, EI, EA, GA, GA) l q'`, `c_R = rayleigh_stiffness_s` |
+| element mass | none on the strains: `UniformMass` puts `0.07/41 kg` and the rod-segment inertia on each of the 41 mapped frames and SOFA projects it, `M(q) = J(q)^T diag(m, I) J(q)` every step |
+| boundary conditions | `PartialFixedProjectiveConstraint` (planar: rows of `A` replaced by identity), `RestShapeSpringsForceField` 1e8 on the base, 1e5 N/m and 10 N m/rad on the grasped frame (penalty, not Lagrange) |
 | assembly | `MatrixLinearSystem`: force fields write their local blocks (`buildStiffnessMatrix` / legacy `addKToMatrix`), mapped components are projected with the mappings' assembled Jacobians (`J^T K J`, `J^T M J`), then projective constraints are applied |
-| time integration | `EulerImplicitSolver`: one linearised implicit Euler step per `h = 0.01 s`, no Newton iterations |
-
-What the dump shows about this form: `K_int` is exactly the block-diagonal
-Hooke law (values `3.5e-4, 4.375e-4, 4.375e-4 N m^2` per section), `M` is dense
-because every frame depends on every upstream strain, the two springs dominate
-`K` by 4 to 11 decades, and the only nonlinearity is `J(q)`.
+| time integration | `EulerImplicitSolver`: one linearised implicit Euler step per `h = 0.01 s`, no Newton iterations; first-order convergence and 0.44x the Kelvin-Voigt dissipation added numerically in a free oscillation (`cable_fom_test`) |
 
 ### 9.2 The form of the POD-Galerkin reduction (`--rom`)
 
 `./scripts/run.sh cable_dynamics --rom` repeats the dump on the reduced cable
-(`build_cable(..., reduction=...)`, section 1 of this document) and writes
+(`build_cable(..., reduction=...)`, section 1) and writes
 `cable_dynamics_rom.{npz,png}`, `cable_dynamics_rom_report.txt`,
-`sofa_export_rom/`. Default basis: the promoted `cable_strain_modes.txt`
-(r = 16, the full planar rank); `--modes/--modes-metadata` selects a candidate,
-e.g. `candidates/tol_0.2` for r = 3 (98.27 % of the snapshot energy).
+`sofa_export_rom/`. Default basis: the promoted `cable_strain_modes.txt`;
+`--modes/--modes-metadata` selects a candidate. **Not re-run on the current model**
+(no basis is promoted yet, section 3).
 
 | POD step | where it happens |
 |---|---|
-| snapshots | `WriteState` on the strain MO during the 24 training drags (`cable_sofa_mor_snapshots`), `X0` = `kappa_0 = 0` |
-| SVD | the plugin's `readStateFilesAndComputeModes` (`cable_sofa_mor_compute_modes`), singular values in `cable_strain_modes.yaml` (874, 685, 204, 110, 78, 54, 27, 17, ...; 0 after 16 = the 32 planar-locked rows) |
-| basis | `Phi` 48 x r, orthonormal columns, torsion/bend_y rows exactly zero |
-| reduced coordinates | `modalCoordinateMO` (Vec1d, r values) -> `ModelOrderReductionMapping` -> `cosseratCoordinateMO`: `kappa = kappa_0 + Phi a`, `kappa' = Phi a'`, `f_a = Phi^T f_kappa` |
-| reduced operators | assembled by SOFA through the mapping chain: `M_r = Phi^T J^T diag(m) J Phi` (6+r square, base block untouched), `K_int_r = Phi^T K_int Phi`, `K_grasp_r = Phi^T J^T K_g J Phi`, clamp unchanged |
-| reduced equation | `M_r a'' + C_r a' + f_int_r = J_r^T lambda` with `f_int_r = -Phi^T K_int (kappa - kappa_0)`, `J_r^T lambda = Phi^T J_g^T lambda` |
+| snapshots | `WriteState` on the strain MO during the 28 training drags (`cable_sofa_mor_snapshots`), `X0` = `q_0 = 0` |
+| SVD | the plugin's `readStateFilesAndComputeModes` on `W^1/2 q` (`cable_sofa_mor_compute_modes`), singular values in the candidate metadata (13.4, 9.3, 3.8, 2.4, 2.2, 0.90, ...; zero after 48 = the locked rows) |
+| basis | `Phi = W^-1/2 Phi~`, 96 x r, `Phi^T W Phi = I`, torsion/bend_y/shear_z rows exactly zero |
+| reduced coordinates | `modalCoordinateMO` (Vec1d, r values) -> `ModelOrderReductionMapping` (`Vec1d -> Vec6d`) -> `cosseratCoordinateMO`: `q = q_0 + Phi a`, `q' = Phi a'`, `f_a = Phi^T f_q`; state projection `a = Phi^T W (q - q_0)` |
+| reduced operators | assembled by SOFA through the mapping chain, virtual-work projection without `W`: `M_r = Phi^T J^T diag(m, I) J Phi` (6+r square, base block untouched), `K_int_r = Phi^T K_int Phi`, `B_r = Phi^T B Phi`, `K_grasp_r = Phi^T J^T K_g J Phi`, clamp unchanged |
+| reduced equation | `M_r a'' + C_r a' + f_int_r = J_r^T lambda` with `f_int_r = -Phi^T K_int (q - q_0)`, `J_r^T lambda = Phi^T J_g^T lambda` |
 
-The dump checks the Galerkin property directly: SOFA's assembled `M_r` and
-`K_r` equal `Phi^T (.) Phi` of the full model placed at `kappa_0 + Phi a` to
-1e-8 (the text precision of the mode file), `kappa == kappa_0 + Phi a`
-exactly, and the reduced equation balances to 6e-15. No hyper-reduction (ECSW)
-is used: the Hooke law is 48 diagonal entries, there is nothing to sample.
-With r = 16 the reduced matrices are a change of basis (no speed-up, section
-3); with r = 3 the modal mass is 3 x 3 and the internal stiffness
-`Phi^T K_int Phi` is 3 x 3.
+`check_rom` asserts the Galerkin property (SOFA's assembled `M_r` and `K_r` equal
+`Phi^T (.) Phi` of the full model placed at `q_0 + Phi a`), `q == q_0 + Phi a`,
+`Phi^T W Phi = I`, `B_r = Phi^T B Phi` and the reduced residual. No hyper-reduction
+(ECSW): the Hooke law and the damping are 96 diagonal entries, there is nothing to
+sample; the cost of the ROM is the Cosserat mapping on all 16 sections, hence no
+speed-up beyond r ~ 9 (section 3).

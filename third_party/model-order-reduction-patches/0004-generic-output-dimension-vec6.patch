@@ -1,0 +1,122 @@
+diff -ruN a/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.cpp b/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.cpp
+--- a/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.cpp	2026-05-21 11:22:29.000000000 +0200
++++ b/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.cpp	2026-10-09 15:00:30.662443424 +0200
+@@ -16,6 +16,8 @@
+ ******************************************************************************/
+ #define SOFA_COMPONENT_MAPPING_MODELORDERREDUCTIONMAPPING_CPP
+ #include "ModelOrderReductionMapping.inl"
++// Mapping<Vec1, Vec6> is not pre-instantiated by Sofa.Core (Mapping.h externs Vec1->Vec1/2/3 only).
++#include <sofa/core/Mapping.inl>
+ #include <sofa/defaulttype/VecTypes.h>
+ #include <sofa/core/ObjectFactory.h>
+ 
+@@ -39,10 +41,12 @@
+ void registerModelOrderReductionMapping(sofa::core::ObjectFactory* factory)
+ {
+     factory->registerObjects(sofa::core::ObjectRegistrationData("Reduced model")
+-    .add< ModelOrderReductionMapping< Vec1Types, Vec3Types > >(true));
++    .add< ModelOrderReductionMapping< Vec1Types, Vec3Types > >(true)
++    .add< ModelOrderReductionMapping< Vec1Types, Vec6Types > >());
+ }
+ 
+ template class SOFA_MODELORDERREDUCTION_API ModelOrderReductionMapping< Vec1Types, Vec3Types >;
++template class SOFA_MODELORDERREDUCTION_API ModelOrderReductionMapping< Vec1Types, Vec6Types >;
+ 
+ } // namespace mapping
+ 
+diff -ruN a/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.h b/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.h
+--- a/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.h	2026-05-21 11:22:29.000000000 +0200
++++ b/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.h	2026-10-09 14:41:23.527457903 +0200
+@@ -176,6 +176,7 @@
+ 
+ #if !defined(SOFA_COMPONENT_MAPPING_MODELORDERREDUCTIONMAPPING_CPP)
+ extern template class SOFA_MODELORDERREDUCTION_API ModelOrderReductionMapping< sofa::defaulttype::Vec1Types, sofa::defaulttype::Vec3Types >;
++extern template class SOFA_MODELORDERREDUCTION_API ModelOrderReductionMapping< sofa::defaulttype::Vec1Types, sofa::defaulttype::Vec6Types >;
+ #endif
+ 
+ } // namespace mapping
+diff -ruN a/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.inl b/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.inl
+--- a/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.inl	2026-10-09 14:30:43.998892262 +0200
++++ b/src/ModelOrderReduction/component/mapping/ModelOrderReductionMapping.inl	2026-10-09 14:41:23.527623755 +0200
+@@ -89,6 +89,13 @@
+ template <class TIn, class TOut>
+ void ModelOrderReductionMapping<TIn, TOut>::applyRotation(const type::Quat<SReal>& q)
+ {
++    if constexpr (NOut != 3)
++    {
++        msg_error(this) << "rotation of the modes is only defined for 3D output states";
++        return;
++    }
++    else
++    {
+     type::Vec<3, InReal> pos;
+     for (unsigned int i = 0; i < m_modesEigen.cols(); i++) // loop over modes
+     {
+@@ -103,6 +110,7 @@
+             m_modesEigen(j+2, i) = newposition[2];
+         }
+     }
++    }
+ }
+ 
+ template <class TIn, class TOut>
+@@ -118,7 +126,7 @@
+ 
+     out.wref() = restPosData->getValue();
+ 
+-    Eigen::Map<Eigen::Matrix<OutReal, Eigen::Dynamic, 1> > outMatrix(out.wref()[0].ptr(), out.size() * 3, 1);
++    Eigen::Map<Eigen::Matrix<OutReal, Eigen::Dynamic, 1> > outMatrix(out.wref()[0].ptr(), out.size() * NOut, 1);
+     Eigen::Map<const Eigen::Matrix<InReal, Eigen::Dynamic, 1> > inMatrix(in.ref()[0].ptr(), in.size(), 1);
+ 
+     outMatrix += m_modesEigen * inMatrix;
+@@ -135,7 +143,7 @@
+     Eigen::VectorXd inEig;
+     inEig.resize(in.size());
+     Eigen::VectorXd outEig;
+-    outEig.resize(3*out.size());
++    outEig.resize(NOut*out.size());
+     for(unsigned int j=0; j<in.size(); j++)
+     {
+         inEig(j) = in[j][0];
+@@ -143,7 +151,8 @@
+     outEig = m_modesEigen*inEig;
+     for(unsigned int i=0; i<out.size(); i++)
+     {
+-        out[i] = Deriv(outEig(3*i),outEig(3*i+1),outEig(3*i+2));
++        for(unsigned int k=0; k<NOut; k++)
++            out[i][k] = outEig(NOut*i+k);
+     }
+ }
+ 
+@@ -156,16 +165,15 @@
+     helper::ReadAccessor< Data<VecDeriv> > in = dIn;
+ 
+     Eigen::VectorXd inEig;
+-    inEig.resize(3*in.size());
++    inEig.resize(NOut*in.size());
+     Eigen::VectorXd outEig;
+     outEig.resize(out.size());
+ 
+ 
+     for(unsigned int i=0; i<in.size(); i++)
+     {
+-        inEig(3*i) = in[i][0];
+-        inEig(3*i+1) = in[i][1];
+-        inEig(3*i+2) = in[i][2];
++        for(unsigned int k=0; k<NOut; k++)
++            inEig(NOut*i+k) = in[i][k];
+     }
+ 
+     outEig = m_modesEigen.transpose()*inEig;
+@@ -200,7 +208,10 @@
+ 
+                 {
+                     InDeriv data;
+-                    data[0] = Deriv(m_modesEigen(3*(colIt.index()),j),m_modesEigen(3*(colIt.index())+1,j),m_modesEigen(3*(colIt.index())+2,j))*(colIt.val());
++                    InReal projected = 0;
++                    for(unsigned int k=0; k<NOut; k++)
++                        projected += m_modesEigen(NOut*(colIt.index())+k,j) * colIt.val()[k];
++                    data[0] = projected;
+                     o.addCol(j,data);
+                 }
+ 

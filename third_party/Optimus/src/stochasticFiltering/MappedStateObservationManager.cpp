@@ -48,10 +48,12 @@ using namespace defaulttype;
 void registerMappedStateObservationManager(sofa::core::ObjectFactory* factory)
 {
     factory->registerObjects(core::ObjectRegistrationData("Observation manager comparing observed points with the mapped state of each sigma point")
-        .add< MappedStateObservationManager<double, Vec3Types, Vec3Types> >(true));
+        .add< MappedStateObservationManager<double, Vec3Types, Vec3Types> >(true)
+        .add< MappedStateObservationManager<double, Vec6Types, Vec3Types> >());
 }
 
 template class SOFA_STOCHASTIC_API MappedStateObservationManager<double, Vec3Types, Vec3Types>;
+template class SOFA_STOCHASTIC_API MappedStateObservationManager<double, Vec6Types, Vec3Types>;
 //template class SOFA_STOCHASTIC_API MappedStateObservationManager<float, Vec3Types, Vec3Types>;
 
 

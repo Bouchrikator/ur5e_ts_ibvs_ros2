@@ -45,8 +45,12 @@ done
 log() { echo "[install_optimus] $*"; }
 
 install_cosserat() {
-  if [ "$FORCE" = 0 ] && grep -q doUpdateInternal \
-      "$COSSERAT_PREFIX/include/Cosserat/Cosserat/forcefield/BeamHookeLawForceField.h" 2>/dev/null; then
+  # The marker carries the patch-set hash: a changed patch rebuilds, a container
+  # recreated from an image with the same patches does not.
+  local patch_hash marker
+  patch_hash=$(cat "$THIRD_PARTY"/cosserat-patches/*.patch | sha256sum | cut -d' ' -f1)
+  marker="$COSSERAT_SHA $patch_hash"
+  if [ "$FORCE" = 0 ] && [ "$(cat "$COSSERAT_PREFIX/.cable-cosserat-build" 2>/dev/null || true)" = "$marker" ]; then
     log "patched Cosserat already installed at $COSSERAT_PREFIX"
     return
   fi
@@ -78,6 +82,7 @@ install_cosserat() {
   for f in "$SOFA_ROOT"/lib/libSofa*.so.25.12.00; do ln -sf "$f" "$COSSERAT_PREFIX/lib/$(basename "$f")"; done
   printf 'source: %s @ %s\npatches: %s\n' "$COSSERAT_REPO" "$COSSERAT_SHA" \
     "$(ls "$THIRD_PARTY"/cosserat-patches/)" > "$COSSERAT_PREFIX/git-info.txt"
+  printf '%s\n' "$marker" > "$COSSERAT_PREFIX/.cable-cosserat-build"
   log "patched Cosserat installed at $COSSERAT_PREFIX"
 }
 

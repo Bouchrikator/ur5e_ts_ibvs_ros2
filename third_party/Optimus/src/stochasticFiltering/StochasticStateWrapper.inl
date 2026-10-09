@@ -168,6 +168,16 @@ void StochasticStateWrapper<sofa::defaulttype::Vec3dTypes, double>::stateDim()
 
 
 
+template <>
+void StochasticStateWrapper<sofa::defaulttype::Vec6dTypes, double>::stateDim()
+{
+    // 6-component Cosserat strain state (torsion, 2 bendings, extension, 2 shears)
+    posDim = 6;
+    velDim = 6;
+}
+
+
+
 template <class DataTypes, class FilterType>
 void StochasticStateWrapper<DataTypes, FilterType>::init()
 {

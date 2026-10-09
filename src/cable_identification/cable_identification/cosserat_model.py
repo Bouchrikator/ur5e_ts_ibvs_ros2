@@ -1,22 +1,39 @@
-"""Parameterized SOFA Cosserat cable (reduced formulation: bending + torsion).
+"""Parameterized SOFA Cosserat cable (piecewise-constant strain, full 6-strain state).
 
 Canonical node structure (mirrors the Cosserat v25.12 plugin examples):
 
     <parent>
       cable_solver          EulerImplicitSolver + SparseLDLSolver
         rigidBase           Rigid3d base frame (driven boundary) + anchor spring
-        cosseratCoordinate  Vec3d strains (torsion, bend-y, bend-z) + BeamHookeLawForceField
+        cosseratCoordinate  Vec6d strains + BeamHookeLawForceField + Kelvin-Voigt damping
         frames              Rigid3d centerline frames + UniformMass + DiscreteCosseratMapping
 
-The base frame is the DRIVEN end (robot gripper). The other end is free.
+Strain state per section: ``(kappa_x, kappa_y, kappa_z, eps_x, eps_y, eps_z)`` = torsion,
+bending about y and z, axial extension and the two shears, all as increments over the
+straight rest configuration: the plugin's exponential adds the unit axial stretch itself,
+so ``eps_x = 0`` is the undeformed rod and ``xi = (kappa, 1 + eps_x, eps_y, eps_z)`` is the
+twist of Renda et al. 2016.
+
+Constitutive law (per section of rest length ``l``): linear Hooke
+``f = -diag(GJ, EI, EI, EA, GA, GA) l (q - q0)`` plus the Kelvin-Voigt damping
+``-rayleigh_stiffness_s diag(GJ, EI, EI, EA, GA, GA) l q_dot`` (Renda 2016 eq. 15 with
+``Upsilon`` proportional to ``Sigma``). It is intended for small strains (|kappa| L of
+order 1, |eps| << 1); the nominal parameters are not experimentally calibrated.
+
 The Cosserat data field ``GI`` receives the torsional rigidity GJ [N.m^2].
 Units: SI (m, kg, s, N).
 """
 
+import math
 import os
 
 import numpy as np
 import yaml
+
+# Section-major order of the strain state; the rest value of every component is 0.
+STRAIN_COMPONENTS = ("kappa_x", "kappa_y", "kappa_z", "epsilon_x", "epsilon_y", "epsilon_z")
+# Planar rod in the base xy-plane: in-plane bending, axial extension, in-plane shear.
+PLANAR_ACTIVE_COMPONENTS = (2, 3, 4)
 
 DEFAULT_CONFIG = {
     "length_m": 0.5,
@@ -26,7 +43,11 @@ DEFAULT_CONFIG = {
     "GJ_Nm2": 0.008,
     "EA_N": 5000.0,
     "GA_N": 2000.0,
-    "rayleigh_mass_per_s": 0.1,
+    # Mass-proportional viscous damping of the frames [1/s]: the only friction-like
+    # term (table/air). The table model neglects friction: 0.
+    "rayleigh_mass_per_s": 0.0,
+    # Kelvin-Voigt internal damping [s]: Upsilon = rayleigh_stiffness_s * Sigma, a real
+    # force on the strain rates (stiffness-proportional, hence the historical name).
     "rayleigh_stiffness_s": 0.02,
     "number_of_sections": 12,
     "number_of_frames": 30,
@@ -39,18 +60,23 @@ DEFAULT_CONFIG = {
     "grasp_tip": False,
     "attach_distance_m": 0.15,   # xy proximity to the free end
     "attach_height_m": 0.01,     # gripper must be this close to the table plane
-    "attach_ramp_s": 0.5,
     # "proximity" latches on its own; "explicit" waits for a supervisor request
     "attach_mode": "proximity",
-    # Tip attachment compliance (see cable_common.yaml for the measured
-    # trade-off): 2e3 N/m = 0.21 mm attached error, stable over 300 s holds;
-    # 2e4 N/m destabilizes the solver through the Cosserat mapping (springs
-    # on mapped frames have no geometric stiffness) and the rod coils up.
-    "grasp_stiffness": 2000.0,
-    "grasp_angular_stiffness": 0.05,
+    # No-slip grasp assumption (no measurement of the real mounting yet): penalty
+    # springs stiff enough that the attachment error stays far below the 1 mm /
+    # 0.02 rad identifiability budget under the rod's mN / mN.m loads. Any real
+    # grasp compliance goes here once it is measured.
+    "grasp_stiffness": 1.0e5,
+    "grasp_angular_stiffness": 10.0,
     # Constrain the cable to the z = base plane (table shaping without contact)
     "planar": False,
-    "planar_stiffness": 1.0e4,
+    # Velocity-dependent inertia of the mapped frame masses, -m (dJ/dt q'), which
+    # SOFA's re-assembled M(q) q'' omits (add_convective_inertia). Measured in the
+    # declared excitation envelope: 0.2 % of the elastic force (median), 3 % at
+    # worst, below the 5 % strain tolerance; its explicit treatment is unstable at
+    # h = 0.01 s when the softest cable snaps taut (stable at 0.005 s). Off by
+    # default; enable with timestep_s <= 0.005 for the full-fidelity transient.
+    "convective_inertia": False,
 }
 
 # Core SOFA component plugins the scene needs (plus Cosserat itself)
@@ -63,12 +89,61 @@ REQUIRED_PLUGINS = [
     "Sofa.Component.SolidMechanics.Spring",
     "Sofa.Component.Constraint.Projective",
     "Sofa.Component.Mass",
+    "Sofa.Component.MechanicalLoad",
     "Cosserat",
 ]
 
 # Physical parameters the estimator is allowed to update online.
 IDENTIFIABLE_PARAMETERS = ("EI", "GJ", "EA", "GA",
                            "rayleigh_stiffness", "rayleigh_mass")
+
+
+def hooke_diagonal(cfg):
+    """Section stiffness per unit length, in STRAIN_COMPONENTS order [N.m^2, N]."""
+    return np.array([cfg["GJ_Nm2"], cfg["EI_Nm2"], cfg["EI_Nm2"],
+                     cfg["EA_N"], cfg["GA_N"], cfg["GA_N"]], dtype=float)
+
+
+def strain_dimension(cfg):
+    return len(STRAIN_COMPONENTS) * int(cfg["number_of_sections"])
+
+
+def strain_weights(cfg):
+    """Diagonal of the strain-energy inner product ``q^T W q = 2 V_elastic`` (6 ns,).
+
+    Curvatures [1/m] and extensions [-] have different units; the Hooke stiffness
+    ``diag(Sigma) l`` of the nominal configuration is the fixed, physically meaningful
+    scaling shared by the POD, its projection and the ROM compatibility checks.
+    """
+    section_len = float(cfg["length_m"]) / int(cfg["number_of_sections"])
+    return np.tile(hooke_diagonal(cfg) * section_len, int(cfg["number_of_sections"]))
+
+
+def active_components(cfg):
+    """Strain dofs that are free (flat index into the section-major 6 ns state)."""
+    dimension = len(STRAIN_COMPONENTS) * int(cfg["number_of_sections"])
+    if not cfg["planar"]:
+        return list(range(dimension))
+    return [index for index in range(dimension)
+            if index % len(STRAIN_COMPONENTS) in PLANAR_ACTIVE_COMPONENTS]
+
+
+def frame_rigid_mass(cfg):
+    """``UniformMass.vertexMass`` of one frame: a rod segment of the lumped mass.
+
+    SOFA's ``totalMass`` alone leaves ``inertiaMatrix`` at identity, i.e. a rotational
+    inertia numerically equal to the mass (1.7e-3 kg m^2 per frame here against the
+    physical 5e-8), so the segment inertia is given explicitly (specific inertia I/m,
+    body axes: x along the rod).
+    """
+    n_frames = int(cfg["number_of_frames"]) + 1
+    mass = float(cfg["mass_kg"]) / n_frames
+    segment = float(cfg["length_m"]) / int(cfg["number_of_frames"])
+    radius = float(cfg["radius_m"])
+    axial = radius ** 2 / 2.0
+    transverse = (3.0 * radius ** 2 + segment ** 2) / 12.0
+    volume = math.pi * radius ** 2 * segment
+    return f"{mass!r} {volume!r} {axial!r} 0 0 0 {transverse!r} 0 0 0 {transverse!r}"
 
 
 def load_config(path=None, _seen=None):
@@ -123,7 +198,7 @@ def build_geometry(cfg):
     nf = int(cfg["number_of_frames"])
 
     section_len = length / ns
-    strains = [[0.0, 0.0, 0.0] for _ in range(ns)]
+    strains = [[0.0] * len(STRAIN_COMPONENTS) for _ in range(ns)]
     section_lengths = [section_len] * ns
     curv_abs_input = [0.0] + [(i + 1) * section_len for i in range(ns)]
     curv_abs_input[-1] = length
@@ -141,12 +216,70 @@ def marker_frame_indices(cfg):
     return [min(nf, max(0, round(float(s) * nf))) for s in cfg["marker_s_over_l"]]
 
 
+def add_convective_inertia(cable, frames_node, eps=1e-6):
+    """Coriolis/centrifugal force of the lumped frame masses as a frame wrench.
+
+    SOFA rebuilds ``M(q) = J^T diag(m, I) J`` every step but drops ``d(J q')/dt`` at fixed
+    ``q'``, so the frames' acceleration misses ``a_c = (dJ/dt) q'``. The wrench
+    ``(-m a_c, -I_w alpha_c - omega x I_w omega)`` is written to a ConstantForceField on the
+    frames at the start of every step (finite difference of applyJ along the current
+    velocity) and reaches the independent dofs through the mapping chain as ``-J^T m a_c``
+    (and ``-Phi^T J^T m a_c`` for the ROM: the Galerkin projection is automatic). The term is
+    explicit (no B/K contribution): a few percent of the elastic force in fast transients,
+    and at h = 0.01 s the explicit feedback through the under-resolved axial mode (~80 Hz)
+    diverges when the softest cable snaps taut (vertex EI 0.005, c_R 0.022, excitation
+    trajectory 1, t = 7.6 s); at h = 0.005 s the same episode is stable. Optional
+    (``convective_inertia``), off by default.
+    """
+    import Sofa.Core
+
+    n_frames = len(cable.frames_mo.position.value)
+    rigid_mass = [float(v) for v in frame_rigid_mass(cable.cfg).split()]
+    mass, inertia = rigid_mass[0], rigid_mass[0] * np.array([rigid_mass[2], rigid_mass[6], rigid_mass[10]])
+    force_field = frames_node.addObject(
+        "ConstantForceField", template="Rigid3d", name="convectiveInertia",
+        indices=list(range(n_frames)), forces=[[0.0] * 6] * n_frames, showArrowSize=0.0)
+
+    class ConvectiveInertia(Sofa.Core.Controller):
+        def onAnimateBeginEvent(self, event):
+            cable.refresh_mapping()
+            v0 = np.array(cable.frames_mo.velocity.value, dtype=float)
+            state = cable.save_state()
+            if cable.modal_mo is not None:
+                with cable.modal_mo.position.writeable() as x:
+                    x[:] = state["modal"] + eps * state["modal_velocity"]
+            else:
+                with cable.strain_mo.position.writeable() as x:
+                    x[:] = state["strain"] + eps * state["strain_velocity"]
+            cable.refresh_mapping()
+            v1 = np.array(cable.frames_mo.velocity.value, dtype=float)
+            cable.restore_state(state)
+            cable.refresh_mapping()
+            acceleration = (v1 - v0) / eps
+            poses = np.asarray(cable.frames_mo.position.value)
+            x, y, z, w = poses[:, 3], poses[:, 4], poses[:, 5], poses[:, 6]
+            rotation = np.empty((n_frames, 3, 3))
+            rotation[:, 0] = np.c_[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)]
+            rotation[:, 1] = np.c_[2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)]
+            rotation[:, 2] = np.c_[2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]
+            inertia_world = np.einsum("fij,j,fkj->fik", rotation, inertia, rotation)
+            omega = v0[:, 3:]
+            torque = (-np.einsum("fij,fj->fi", inertia_world, acceleration[:, 3:])
+                      - np.cross(omega, np.einsum("fij,fj->fi", inertia_world, omega)))
+            wrench = np.c_[-mass * acceleration[:, :3], torque]
+            force_field.forces.value = wrench.tolist()
+            cable.convective_wrench = wrench
+
+    frames_node.addObject(ConvectiveInertia(name="convectiveInertiaUpdate"))
+    return force_field
+
+
 class CableHandles:
     """Live handles into the built scene used by the adapter/identification code."""
 
     def __init__(self, solver_node, base_mo, strain_mo, force_field, frames_mo, cfg,
                  grasp_target_mo=None, ode_solver=None, grasp_spring=None, mapping=None,
-                 modal_mo=None, mor_mapping=None, linear_systems=None):
+                 modal_mo=None, mor_mapping=None, linear_systems=None, damping=None):
         self.solver_node = solver_node
         self.base_mo = base_mo
         self.strain_mo = strain_mo
@@ -159,22 +292,29 @@ class CableHandles:
         self.mapping = mapping
         self.modal_mo = modal_mo
         self.mor_mapping = mor_mapping
+        self.damping = damping
+        self.kelvin_voigt_s = float(cfg["rayleigh_stiffness_s"])
         # {"A": MatrixLinearSystem, "M": ..., "B": ..., "K": ...} when built with expose_matrices
         self.linear_systems = linear_systems or {}
         self.marker_indices = marker_frame_indices(cfg)
+        self.grasp_index = len(frames_mo.position.value) - 1
+        # per-frame wrench of the convective inertia at the start of the last step (zeros if off)
+        self.convective_wrench = np.zeros((len(frames_mo.position.value), 6))
 
     def system_matrices(self):
         """The implicit system SOFA solved in the last step, as numpy/scipy.
 
         EulerImplicitSolver (v25.12 source): ``A dv = b`` with
         ``A = (1 + h rM) M - h B - h (h + rK) K`` and ``b = h (f + ((h + rK) K - rM M) v)``,
-        K = df/dq (negative for a spring). A force field's own ``rayleighStiffness``
-        (``rK_ff``, the Hooke law here) is added to its K factor in ``A`` only
-        (``kFactorIncludingRayleighDamping``; the RHS uses B(0)), so its factor is
-        ``-h (h + rK + rK_ff)``. Observers assemble one term each (pre-multiplied);
-        ``K_direct`` skips the mapped components (grasp spring, frame mass), which
-        splits K into the Hooke law (strain block), the base clamp (base block) and
-        the projected grasp spring ``J^T K_g J``. Needs ``expose_matrices=True`` + a step.
+        K = df/dq (negative for a spring), B = df/dv (the Kelvin-Voigt damping, negative
+        definite). The solver's ``rayleighStiffness`` and the Hooke law's own
+        ``rayleighStiffness`` are 0 in this model (all physical damping is the explicit
+        damping force field), so every K factor is ``-h^2``; the general factors are kept
+        so the identities hold for any setting. Observers assemble one term each
+        (pre-multiplied); ``K_direct`` skips the mapped components (grasp spring, frame
+        mass), which splits K into the Hooke law (strain block), the base clamp (base
+        block) and the projected grasp spring ``J^T K_g J``. Needs ``expose_matrices=True``
+        + a step.
         """
         if not self.linear_systems:
             raise RuntimeError("build the cable with expose_matrices=True")
@@ -232,19 +372,37 @@ class CableHandles:
             self.mapping.init()
 
     def set_grasp_pose(self, pose7):
-        """Move the kinematic target the cable tip is constrained to."""
+        """Move the kinematic target the grasped frame is attached to."""
         with self.grasp_target_mo.position.writeable() as p:
             p[0] = pose7
 
-    def set_grasp_spring_enabled(self, enabled):
-        """Engage/release the tip attachment spring.
+    def nearest_frame(self, point):
+        """Index of the centerline frame closest to a world point (the grasped material point)."""
+        positions = np.asarray(self.frames_mo.position.value)[:, :3]
+        return int(np.argmin(np.linalg.norm(positions - np.asarray(point, dtype=float)[:3], axis=1)))
 
-        While no gripper holds the cable the tip must be FREE: the spring acts
-        on the mapped Cosserat frames, whose geometric stiffness is not seen
-        by the implicit solver, and holding the tip with it for minutes pumps
-        energy into the rod until it coils up (headless A/B repro: chain
-        length 0.31 m vs 0.70 m after 600 s). Physically a detached cable end
-        is free anyway. Attached dynamics are unchanged.
+    def frame_pose(self, index):
+        return [float(v) for v in self.frames_mo.position.value[index]]
+
+    def set_grasp_point(self, index):
+        """Attach the grasp spring to frame ``index`` (the material point under the fingers).
+
+        The cable beyond that frame stays free, so the effective free length is the rest
+        arc length up to the grasped frame. Post-init only (the latch happens while
+        stepping); ``points`` is tracked by the spring and re-indexed on the next update.
+        """
+        self.grasp_index = int(index)
+        if self.grasp_spring is None:
+            return
+        self.grasp_spring.findData("points").value = [self.grasp_index]
+        if self.grasp_spring.findLink("mstate").getLinkedBase() is not None:
+            self.grasp_spring.reinit()
+
+    def set_grasp_spring_enabled(self, enabled):
+        """Engage/release the attachment spring.
+
+        While no gripper holds the cable its end must be FREE (a detached cable end
+        is free anyway): the spring only exists while the fingers are closed.
         """
         if self.grasp_spring is None:
             return
@@ -308,28 +466,43 @@ class CableHandles:
         """Read back a physical parameter (SI units)."""
         if name == "rayleigh_mass":
             return float(self.ode_solver.findData("rayleighMass").value)
-        field = _FORCE_FIELD_DATA[name]
-        return float(self.force_field.findData(field).value)
+        if name == "rayleigh_stiffness":
+            return self.kelvin_voigt_s
+        return float(self.force_field.findData(_FORCE_FIELD_DATA[name]).value)
 
     def set_parameter(self, name, value):
         """Update a physical parameter and reinit the affected components.
 
-        Rayleigh damping lives on BOTH the ODE solver and the force field, so
-        `rayleigh_stiffness` updates the two of them to stay consistent.
+        The Kelvin-Voigt damping is proportional to the Hooke stiffness, so every
+        stiffness update re-synchronises the damping coefficients as well.
         """
         value = float(value)
         if name == "rayleigh_mass":
             self.ode_solver.findData("rayleighMass").value = value
             return
-        field = _FORCE_FIELD_DATA[name]
-        self.force_field.findData(field).value = value
-        if name == "rayleigh_stiffness" and self.ode_solver is not None:
-            self.ode_solver.findData("rayleighStiffness").value = value
-        self.force_field.reinit()
+        if name == "rayleigh_stiffness":
+            self.kelvin_voigt_s = value
+        else:
+            self.force_field.findData(_FORCE_FIELD_DATA[name]).value = value
+            self.force_field.reinit()
+        self.sync_damping()
+
+    def hooke_diagonal(self):
+        """Current ``diag(GJ, EI, EI, EA, GA, GA)`` of the force field (follows Data links)."""
+        ff = self.force_field
+        return np.array([float(ff.GI.value), float(ff.EI.value), float(ff.EI.value),
+                         float(ff.EA.value), float(ff.GA.value), float(ff.GA.value)])
+
+    def sync_damping(self):
+        """Kelvin-Voigt coefficients ``rayleigh_stiffness_s * Sigma * l`` per section."""
+        if self.damping is None:
+            return
+        lengths = np.asarray(self.force_field.length.value, dtype=float)
+        coefficients = self.kelvin_voigt_s * np.outer(lengths, self.hooke_diagonal())
+        self.damping.findData("dampingCoefficient").value = coefficients.tolist()
 
 
-_FORCE_FIELD_DATA = {"EI": "EI", "GJ": "GI", "GI": "GI", "EA": "EA", "GA": "GA",
-                     "rayleigh_stiffness": "rayleighStiffness"}
+_FORCE_FIELD_DATA = {"EI": "EI", "GJ": "GI", "GI": "GI", "EA": "EA", "GA": "GA"}
 
 
 def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
@@ -347,10 +520,11 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
     show_scale = 0.03 if show else 0.0
 
     solver = parent.addChild(f"{name}_solver")
+    # All physical damping is the explicit Kelvin-Voigt force field below; the
+    # solver's Rayleigh factors would also damp the clamp and grasp springs.
     ode_solver = solver.addObject(
         "EulerImplicitSolver",
-        rayleighMass=float(cfg["rayleigh_mass_per_s"]),
-        rayleighStiffness=float(cfg["rayleigh_stiffness_s"]))
+        rayleighMass=float(cfg["rayleigh_mass_per_s"]), rayleighStiffness=0.0)
     linear_systems = {}
     if expose_matrices:
         # The typed binding (A()/b()/x()) is chosen at addObject time, so import first.
@@ -400,7 +574,7 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             position=[0.] * reduction.n_modes)
     coord = coord_parent.addChild("cosseratCoordinate")
     strain_mo = coord.addObject(
-        "MechanicalObject", template="Vec3d", name="cosseratCoordinateMO",
+        "MechanicalObject", template="Vec6d", name="cosseratCoordinateMO",
         position=strains, **({"rest_position": strains} if reduction is not None else {}))
     if reduction is not None:
         mor_mapping = coord.addObject(
@@ -408,19 +582,24 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             input=modal_mo.getLinkPath(), output=strain_mo.getLinkPath(),
             modesPath=modes_path)
     force_field = coord.addObject(
-        "BeamHookeLawForceField", name="hooke", crossSectionShape="circular",
+        "BeamHookeLawForceField", name="hooke", template="Vec6d", crossSectionShape="circular",
         length=section_lengths, radius=float(cfg["radius_m"]),
         useInertiaParams=True,
         EI=float(cfg["EI_Nm2"]), GI=float(cfg["GJ_Nm2"]),
         EA=float(cfg["EA_N"]), GA=float(cfg["GA_N"]),
-        rayleighStiffness=float(cfg["rayleigh_stiffness_s"]))
+        rayleighStiffness=0.0)
+    # Kelvin-Voigt internal damping as a real force (implicit through its B matrix).
+    damping = coord.addObject(
+        "DiagonalVelocityDampingForceField", name="kelvinVoigt", template="Vec6d",
+        dampingCoefficient=(float(cfg["rayleigh_stiffness_s"])
+                            * np.outer(section_lengths, hooke_diagonal(cfg))).tolist())
 
     frames_node = rigid_base.addChild("frames")
     coord.addChild(frames_node)
     frames_mo = frames_node.addObject(
         "MechanicalObject", template="Rigid3d", name="FramesMO",
         position=frames, showObject=show_flag, showObjectScale=show_scale)
-    frames_node.addObject("UniformMass", totalMass=float(cfg["mass_kg"]),
+    frames_node.addObject("UniformMass", vertexMass=frame_rigid_mass(cfg),
                           showAxisSizeFactor=0.0)
     mapping = frames_node.addObject(
         "DiscreteCosseratMapping", name="cosseratMapping",
@@ -432,9 +611,10 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
     grasp_target_mo = None
     grasp_spring = None
     if cfg.get("grasp_tip"):
-        # Kinematic pose the tip is clamped to (the gripper), initialized at
-        # the straight tip so the attachment starts at rest. Stiff external
-        # rest-shape springs = the standard attachment for mapped frames.
+        # Kinematic pose the grasped frame is attached to (the gripper), initialized
+        # at the straight tip so the attachment starts at rest. Stiff external
+        # rest-shape springs = the standard attachment for mapped frames; the
+        # coupling moves ``points`` to the grasped frame at latch time.
         target = parent.addChild(f"{name}_graspTarget")
         grasp_target_mo = target.addObject(
             "MechanicalObject", template="Rigid3d", name="TargetMO",
@@ -449,17 +629,22 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             external_points=[0])
 
     if cfg.get("planar") and reduction is None:
-        # Simplified table: the rod may only bend in the plane of its base.
+        # Simplified table: the rod may only deform in the plane of its base.
         # The constraint must sit on the INDEPENDENT dofs. FramesMO is a mapped
         # state, and SOFA rejects projective constraints there ("only main
         # mechanical states have an associated submatrix"), which makes the
-        # constraint a silent no-op. Strain = (torsion, bend_y, bend_z), so
-        # freeing bend_z alone keeps the centerline in the base xy-plane.
+        # constraint a silent no-op. Torsion, bending about y and the shear
+        # along z are locked; in-plane bending, extension and in-plane shear
+        # stay free. The ROM gets its planarity from the basis instead.
         coord.addObject(
             "PartialFixedProjectiveConstraint", name="planarConstraint",
             indices=list(range(len(strains))),
-            fixedDirections=[1, 1, 0])
+            fixedDirections=[0 if k in PLANAR_ACTIVE_COMPONENTS else 1
+                             for k in range(len(STRAIN_COMPONENTS))])
 
-    return CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
-                        grasp_target_mo, ode_solver, grasp_spring, mapping,
-                        modal_mo, mor_mapping, linear_systems)
+    cable = CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
+                         grasp_target_mo, ode_solver, grasp_spring, mapping,
+                         modal_mo, mor_mapping, linear_systems, damping)
+    if cfg.get("convective_inertia", False):
+        add_convective_inertia(cable, frames_node)
+    return cable

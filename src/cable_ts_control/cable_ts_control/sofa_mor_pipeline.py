@@ -12,7 +12,8 @@ import yaml
 from cable_identification import cosserat_model as cm
 from cable_identification.parameter_bounds import load_parameter_bounds
 from cable_identification.strain_basis import (
-    ReductionSpec, config_sha256, file_sha256, read_modes, read_state_file, validate_reduction,
+    INNER_PRODUCT, MAPPING_TEMPLATE, ReductionSpec, config_sha256, file_sha256, installed_plugin_patches,
+    read_modes, read_state_file, scale_state_file, validate_reduction, weighted_norm, write_modes,
 )
 from cable_ts_control.scripts.generate_sofa_dataset import parameter_vertices
 
@@ -20,7 +21,16 @@ from cable_ts_control.scripts.generate_sofa_dataset import parameter_vertices
 # settings may change without invalidating the snapshots.
 SNAPSHOT_KEYS = ("control_dt", "seed", "n_trajectories", "control_steps", "hold_control_steps",
                  "train_trajectories", "validation_trajectories", "test_trajectories",
-                 "radial_min", "radial_max", "angle_limit", "max_speed", "sweeps")
+                 "radial_min", "radial_max", "angle_limit", "max_speed", "sweeps",
+                 "yaw_limit", "max_yaw_rate", "radial_bend", "angle_limit_taut")
+# What the excitation declares about the intended operation (recorded with every artifact).
+ENVELOPE_KEYS = ("radial_min", "radial_max", "angle_limit", "max_speed", "yaw_limit", "max_yaw_rate",
+                 "radial_bend", "angle_limit_taut")
+
+
+def operating_envelope(cfg, settings, bounds):
+    return {**{key: settings[key] for key in ENVELOPE_KEYS}, "length_m": cfg["length_m"],
+            "parameter_bounds": bounds, "gripper_yaw_commanded": True}
 
 
 def snapshot_settings_sha256(settings):
@@ -59,7 +69,7 @@ def snapshots(directory, cfg, settings, bounds):
                              "mean_step_seconds": mean_step})
             offset += len(path)
             print(f"WriteState vertex={vertex_id} trajectory={trajectory_id} split={split}: "
-                  f"{len(path)} x {3 * cfg['number_of_sections']}, dt={settings['control_dt']}", flush=True)
+                  f"{len(path)} x {cm.strain_dimension(cfg)}, dt={settings['control_dt']}", flush=True)
     dataset = directory / "cable_mor_snapshots_fom.npz"
     np.savez_compressed(
         dataset, **{key: np.concatenate(values) for key, values in arrays.items()},
@@ -75,7 +85,10 @@ def snapshots(directory, cfg, settings, bounds):
             if episode["split"] == "train":
                 with (directory / episode["state_file"]).open("rb") as source:
                     shutil.copyfileobj(source, target)
-    manifest = {"schema_version": 1, "state_coordinates": "cosserat_strain",
+    manifest = {"schema_version": 2, "state_coordinates": "cosserat_strain",
+                "component_order": list(cm.STRAIN_COMPONENTS),
+                "operating_envelope": operating_envelope(cfg, settings, bounds),
+                "plugin_patches": installed_plugin_patches(),
                 "config": cfg, "config_sha256": config_sha256(cfg),
                 "settings": settings, "settings_sha256": snapshot_settings_sha256(settings),
                 "parameter_bounds": bounds, "repo_commit": os.environ.get("CABLE_REPO_COMMIT", "unknown"),
@@ -105,6 +118,8 @@ def compute_modes(directory, cfg, settings, bounds):
     from mor.reduction.script.ReadStateFilesAndComputeModes import readStateFilesAndComputeModes
 
     manifest = load_snapshot_manifest(directory, cfg, settings, bounds)
+    dimension = cm.strain_dimension(cfg)
+    weights = cm.strain_weights(cfg)
     positions, velocities = [], []
     reference = None
     for episode in manifest["episodes"]:
@@ -113,7 +128,7 @@ def compute_modes(directory, cfg, settings, bounds):
         path = directory / episode["state_file"]
         if file_sha256(path) != episode["state_sha256"]:
             raise ValueError("Native training state hash mismatch")
-        native = read_state_file(path, 3 * cfg["number_of_sections"])
+        native = read_state_file(path, dimension)
         if reference is not None and not np.array_equal(reference, native["reference"]):
             raise ValueError("Training trajectories use different neutral references")
         reference = native["reference"]
@@ -123,6 +138,11 @@ def compute_modes(directory, cfg, settings, bounds):
     strain_velocity = np.concatenate(velocities)
     if np.linalg.norm(strain) <= 1e-12:
         raise ValueError("No dynamic strain excitation in the training states")
+    # The official POD is Euclidean: run it on the energy-scaled snapshots W^1/2 q so the
+    # curvature [1/m] and extension [-] rows are compared in joules, then unscale.
+    sqrt_weights = np.sqrt(weights)
+    weighted_state = directory / "training_weighted.state"
+    scale_state_file(directory / "training.state", weighted_state, sqrt_weights)
     candidates_directory = directory / "candidates"
     candidates_directory.mkdir(exist_ok=True)
     candidates = []
@@ -130,28 +150,41 @@ def compute_modes(directory, cfg, settings, bounds):
         if not 0. < tolerance < 1.:
             raise ValueError("POD residual tolerance must lie strictly between zero and one")
         modes_path = candidates_directory / f"tol_{tolerance:g}.txt"
+        scaled_modes_path = candidates_directory / f"tol_{tolerance:g}_weighted.txt"
         order = int(readStateFilesAndComputeModes(
-            stateFilePath=str(directory / "training.state"), tol=float(tolerance),
-            modesFileName=str(modes_path), addRigidBodyModes=None, verbose=True))
+            stateFilePath=str(weighted_state), tol=float(tolerance),
+            modesFileName=str(scaled_modes_path), addRigidBodyModes=None, verbose=True))
         if order < 1:
             raise ValueError("Official SOFA-MOR POD failed")
+        modes = read_modes(scaled_modes_path) / sqrt_weights[:, None]
+        write_modes(modes_path, modes)
         modes = read_modes(modes_path)
         singular = np.loadtxt(directory / "Sdata.txt", ndmin=1)
         energies = np.cumsum(singular ** 2) / np.sum(singular ** 2)
+        projector = (weights[:, None] * modes) @ modes.T
         metadata = {
-            "schema_version": 1, "state_coordinates": "cosserat_modal",
+            "schema_version": 2, "state_coordinates": "cosserat_modal",
             "number_of_sections": cfg["number_of_sections"],
-            "full_dimension": 3 * cfg["number_of_sections"], "n_modes": order,
-            "component_order": ["kappa_x", "kappa_y", "kappa_z"],
-            "active_components": list(range(2, 3 * cfg["number_of_sections"], 3)),
-            "kappa_0": reference.tolist(), "singular_values": singular.tolist(),
-            "cumulative_energy": energies.tolist(), "pod_tolerance": tolerance,
+            "full_dimension": dimension, "n_modes": order,
+            "component_order": list(cm.STRAIN_COMPONENTS),
+            "active_components": cm.active_components(cfg),
+            "component_units": ["1/m", "1/m", "1/m", "-", "-", "-"],
+            "inner_product": INNER_PRODUCT, "pod_weights": weights.tolist(),
+            "pod_weights_units": "N.m (bending: EI l) / N.m (extension, shear: EA l, GA l)",
+            "mapping_template": MAPPING_TEMPLATE, "plugin_patches": installed_plugin_patches(),
+            "mechanics": {"convective_inertia": bool(cfg.get("convective_inertia", False)),
+                          "damping": "kelvin_voigt", "grasp_stiffness": cfg["grasp_stiffness"],
+                          "grasp_angular_stiffness": cfg["grasp_angular_stiffness"]},
+            "operating_envelope": manifest["operating_envelope"],
+            "q_0": reference.tolist(), "singular_values": singular.tolist(),
+            "cumulative_energy": energies.tolist(), "pod_tolerance": float(tolerance),
             "rank_relative_tolerance": settings["rank_relative_tolerance"],
             "orthogonality_tolerance": settings["basis_orthogonality_tolerance"],
-            "projection_position_relative": float(np.linalg.norm(strain - strain @ modes @ modes.T)
-                                                   / np.linalg.norm(strain)),
-            "projection_velocity_relative": float(np.linalg.norm(
-                strain_velocity - strain_velocity @ modes @ modes.T) / max(np.linalg.norm(strain_velocity), 1e-15)),
+            "projection_position_relative": float(weighted_norm(weights, strain - strain @ projector)
+                                                   / weighted_norm(weights, strain)),
+            "projection_velocity_relative": float(weighted_norm(
+                weights, strain_velocity - strain_velocity @ projector)
+                / max(weighted_norm(weights, strain_velocity), 1e-15)),
             "parameter_bounds": bounds, "train_trajectories": settings["train_trajectories"],
             "dataset_sha256": manifest["dataset_sha256"],
             "config_sha256": manifest["config_sha256"], "settings_sha256": manifest["settings_sha256"],

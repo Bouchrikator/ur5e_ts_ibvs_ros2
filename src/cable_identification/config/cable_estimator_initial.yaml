@@ -7,5 +7,5 @@ cable:
   base: cable_common.yaml
   EI_Nm2: 0.006
   GJ_Nm2: 0.012
-  rayleigh_mass_per_s: 0.10
-  rayleigh_stiffness_s: 0.02
+  rayleigh_mass_per_s: 0.0    # table friction neglected
+  rayleigh_stiffness_s: 0.02  # Kelvin-Voigt internal damping [s]

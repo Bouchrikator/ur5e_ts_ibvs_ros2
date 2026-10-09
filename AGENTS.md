@@ -76,14 +76,19 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 	the deferred 21.12 parity oracle are recorded there.
 - SOFA strain-POD chain (one modal coordinate `a` for ROM, TS, PDC and observer):
 	`./scripts/run.sh cable_sofa_mor_pipeline` or its phases; artifacts and gate
-	numbers in `artifacts/cable_mor/`, design, measured limits (r = 16 is the full
-	planar rank, no speed-up; 14 measurements < r so the observer is dynamic) in
-	[docs/sofa_mor_pipeline.md](docs/sofa_mor_pipeline.md). Settings/thresholds:
+	numbers in `artifacts/cable_mor/`, design, measured limits in
+	[docs/sofa_mor_pipeline.md](docs/sofa_mor_pipeline.md). Since 2026-10-09 the FOM
+	is the planar extensible `Vec6d` rod (48 active strains, energy-weighted POD,
+	selection on validation trajectories, one independent test); the order selection
+	was stopped before promotion (§3 there), and the 2026-09 "r = 16, 14 measurements
+	< r" results belong to the previous 3-strain plant. The FOM is verified by
+	`./scripts/run.sh cable_fom_test` (closed forms, Jacobian, energy, convergence). Settings/thresholds:
 	[cable_mor.yaml](src/cable_ts_control/config/cable_mor.yaml); never loosen them
 	to promote a smaller order.
 - `artifacts/`: datasets, modal bases, TS models, gains. The certified set is
 	`*_narrow` (`cable_modal_basis_narrow.yaml`, `cable_qs_model_narrow.yaml`,
-	`cable_qs_gains_narrow.yaml`). Never hand-edit or fabricate a basis/model/
+	`cable_qs_gains_narrow.yaml`), identified and certified on the pre-2026-10-09
+	plant and not re-validated on the current mechanics (status doc §1, §7). Never hand-edit or fabricate a basis/model/
 	gains file: they are synthesis outputs and the stability certificate travels
 	with them. The dynamic TS LMI is currently infeasible (docs §3.1, §4); never
 	"fix" that by loosening the verifier or the margin.
@@ -161,8 +166,10 @@ its header lists every subcommand. There is no root `run.sh`: always invoke
 	`OPTIMUS_PIPELINE_TEST_PASSED`; refuses to run over a live cable stack; run
 	it on an idle host, CPU starvation makes the truth plant drop steps and the
 	gate reject). Never loosen a gate threshold to make it pass; the numbers are
-	the evidence. Identifiability limits (GJ vs planar, EI vs the tip spring) are
-	in [docs/optimus_port.md](docs/optimus_port.md) §7.
+	the evidence. Identifiability limits (GJ: planar, and not observable from a
+	base roll with physical inertia; EI: not observable from markers in the table
+	setup with the no-slip grasp; gates G and I print `[LIMIT]`) are in
+	[docs/optimus_port.md](docs/optimus_port.md) §7.
 - Logs: controller CSVs in `~/ibvs_logs`; demo logs inside the container at
 	`/tmp/cable_sim.log`, `/tmp/servo.log`, `/tmp/relay.log`.
 
