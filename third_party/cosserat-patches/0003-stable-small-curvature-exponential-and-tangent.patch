@@ -1,0 +1,121 @@
+--- a/src/Cosserat/mapping/BaseCosseratMapping.inl	2026-10-10 16:39:32.075843903 +0100
++++ b/src/Cosserat/mapping/BaseCosseratMapping.inl	2026-10-10 16:43:52.839803497 +0100
+@@ -190,6 +190,59 @@
+     return Xi;
+ }
+ 
++/// Coefficients of the closed forms of Renda et al. 2016 as functions of z = x |kappa|:
++///   exp(x xi^)                  = I + x xi^ + c2 xi^2 + c3 xi^3                    (eq. 6)
++///   T(x) = int_0^x exp(s ad) ds = x I + a1 ad + a2 ad^2 + a3 ad^3 + a4 ad^4        (eq. 11)
++/// The closed forms divide by |kappa|^k and cancel catastrophically for small z (a3 and
++/// a4 keep no correct digit below z ~ 1e-4), so |z| < 2 uses their Taylor series in z,
++/// obtained by reducing sum_n x^n ad^n / n! with ad^5 = -2 |kappa|^2 ad^3 - |kappa|^4 ad.
++/// With 16 terms the truncation at |z| = 2 is below 1e-24 relative; the closed forms
++/// above the switch are within 4e-15 relative (cancellation ~ eps |z|^-2 for a3, a4).
++struct PcsCoefficients
++{
++    double c2, c3, a1, a2, a3, a4;
++};
++
++inline PcsCoefficients computePcsCoefficients(const double x, const double theta)
++{
++    const double z = x * theta;
++    PcsCoefficients c{};
++    if (std::abs(z) < 2.0)
++    {
++        const double s = -z * z;
++        double power = 1.0, previous = 0.0;    // (-z^2)^m and (-z^2)^(m-1)
++        double even = 0.5, odd = 1.0 / 6.0;    // 1/(2m+2)! and 1/(2m+3)!
++        double c2 = 0, c3 = 0, a1 = 0.5, a2 = 1.0 / 6.0, a3 = 0, a4 = 0;
++        for (int m = 0; m < 16; ++m)
++        {
++            c2 += power * even;
++            c3 += power * odd;
++            if (m >= 1)
++            {
++                a1 -= (m - 1) * power * even;
++                a2 -= (m - 1) * power * odd;
++                a3 += m * previous * even;
++                a4 += m * previous * odd;
++            }
++            previous = power;
++            power *= s;
++            even /= (2.0 * m + 3.0) * (2.0 * m + 4.0);
++            odd /= (2.0 * m + 4.0) * (2.0 * m + 5.0);
++        }
++        const double x2 = x * x;
++        c = PcsCoefficients{x2 * c2, x2 * x * c3, x2 * a1, x2 * x * a2, x2 * x2 * a3, x2 * x2 * x * a4};
++    }
++    else
++    {
++        const double sz = std::sin(z), cz = std::cos(z), half = std::sin(0.5 * z);
++        const double t2 = theta * theta, t3 = t2 * theta;
++        c = PcsCoefficients{2.0 * half * half / t2, (z - sz) / t3,
++             (4.0 - 4.0 * cz - z * sz) / (2.0 * t2), (4.0 * z - 5.0 * sz + z * cz) / (2.0 * t3),
++             (2.0 - 2.0 * cz - z * sz) / (2.0 * t2 * t2), (2.0 * z - 3.0 * sz + z * cz) / (2.0 * t2 * t3)};
++    }
++    return c;
++}
++
+ template <class TIn1, class TIn2, class TOut>
+ void BaseCosseratMapping<TIn1, TIn2, TOut>::computeExponentialSE3(const double &sub_section_length,
+                                                                   const Coord1 &strain_n,
+@@ -204,21 +257,9 @@
+     SE3 _g_X;
+     se3 Xi_hat_n = buildXiHat(strain_n);
+ 
+-    //todo: change double to Real
+-    if (theta <= std::numeric_limits<double>::epsilon())
+-    {
+-        _g_X = I4 + sub_section_length * Xi_hat_n;
+-    }
+-    else
+-    {
+-        double scalar1 =
+-                (1.0 - std::cos(sub_section_length * theta)) / std::pow(theta, 2);
+-        double scalar2 = (sub_section_length * theta - std::sin(sub_section_length * theta)) /
+-                         std::pow(theta, 3);
+-        // Taylor expansion of exponential
+-        _g_X = I4 + sub_section_length * Xi_hat_n + scalar1 * Xi_hat_n * Xi_hat_n +
+-               scalar2 * Xi_hat_n * Xi_hat_n * Xi_hat_n;
+-    }
++    const PcsCoefficients c = computePcsCoefficients(sub_section_length, theta);
++    const se3 Xi_hat_2 = Xi_hat_n * Xi_hat_n;
++    _g_X = I4 + sub_section_length * Xi_hat_n + c.c2 * Xi_hat_2 + c.c3 * Xi_hat_2 * Xi_hat_n;
+ 
+     Mat3x3 M;
+     _g_X.getsub(0, 0, M); // get the rotation matrix
+@@ -422,29 +463,10 @@
+     buildAdjoint(tilde_k, tilde_q, ad_Xi);
+ 
+     Mat6x6 Id6 = Mat6x6::Identity();
+-    if (theta <= std::numeric_limits<double>::epsilon()) {
+-        double scalar0 = std::pow(curv_abs_n, 2) / 2.0;
+-        TgX = curv_abs_n * Id6 + scalar0 * ad_Xi;
+-    } else {
+-        double scalar1 = (4.0 - 4.0 * cos(curv_abs_n * theta) -
+-                          curv_abs_n * theta * sin(curv_abs_n * theta)) /
+-                         (2.0 * theta * theta);
+-        double scalar2 = (4.0 * curv_abs_n * theta +
+-                          curv_abs_n * theta * cos(curv_abs_n * theta) -
+-                          5.0 * sin(curv_abs_n * theta)) /
+-                         (2.0 * theta * theta * theta);
+-        double scalar3 = (2.0 - 2.0 * cos(curv_abs_n * theta) -
+-                          curv_abs_n * theta * sin(curv_abs_n * theta)) /
+-                         (2.0 * theta * theta * theta * theta);
+-        double scalar4 = (2.0 * curv_abs_n * theta +
+-                          curv_abs_n * theta * cos(curv_abs_n * theta) -
+-                          3.0 * sin(curv_abs_n * theta)) /
+-                         (2.0 * theta * theta * theta * theta * theta);
+-
+-        TgX = curv_abs_n * Id6 + scalar1 * ad_Xi + scalar2 * ad_Xi * ad_Xi +
+-              scalar3 * ad_Xi * ad_Xi * ad_Xi +
+-              scalar4 * ad_Xi * ad_Xi * ad_Xi * ad_Xi;
+-    }
++    const PcsCoefficients c = computePcsCoefficients(curv_abs_n, theta);
++    const Mat6x6 ad_2 = ad_Xi * ad_Xi;
++    const Mat6x6 ad_3 = ad_2 * ad_Xi;
++    TgX = curv_abs_n * Id6 + c.a1 * ad_Xi + c.a2 * ad_2 + c.a3 * ad_3 + c.a4 * ad_3 * ad_Xi;
+ }
+ 
+ template <class TIn1, class TIn2, class TOut>

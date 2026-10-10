@@ -5,8 +5,12 @@ patched Cosserat plugin) with a closed form, a finite difference or a conservati
 
   1. axial traction     dL = F L0 / EA  (tip pulled through the grasp spring)
   2. pure bending       kappa = M / EI, tip on the circular arc of radius EI / M
-  3. kinematics/forces  applyJ == d apply/dq (FD) at a bent + stretched state, and
-                        J^T lambda == -grad V of the grasp potential (virtual work)
+  3. kinematics/forces  at zero, signed near-zero (1e-12..1e-3), bent, 3D and series/closed-form
+                        switch (|kappa| l = 2) curvatures with extension and shear: apply ==
+                        independent expm chain, applyJ == d apply/dq (FD, dimensionless
+                        scaling) and J^T lambda == -grad V of an end-spring potential
+     restore            save -> perturb -> restore bitwise exact; repeated and failing probes
+                        leave no drift
   4. grasp              latch, planar drag with a commanded yaw: position/orientation
                         tracking of the grasped frame, base reaction == -gripper force
   5. dynamics/energy    free oscillation: dE + h q'+^T D q'+ - W_conv = integrator dissipation
@@ -83,12 +87,6 @@ def energies(cable):
     return kinetic, 0.5 * float(np.sum(weights * strain ** 2))
 
 
-def grasp_potential(cable, target):
-    k, k_a = float(cable.cfg["grasp_stiffness"]), float(cable.cfg["grasp_angular_stiffness"])
-    delta = pose_delta(np.asarray(cable.tip_pose()), np.asarray(target))
-    return 0.5 * k * float(delta[:3] @ delta[:3]) + 0.5 * k_a * float(delta[3:] @ delta[3:])
-
-
 def convective_force(cable, eps=1e-6):
     """Generalized force of the mapping acceleration, -J^T m (dJ/dt q'), by FD along q'
     (independent of the scene's ConvectiveInertia controller: central difference, own eps)."""
@@ -97,15 +95,16 @@ def convective_force(cable, eps=1e-6):
     mass = [float(v) for v in cm.frame_rigid_mass(cable.cfg).split()]
     m, inertia = mass[0], mass[0] * np.array([mass[2], mass[6], mass[10]])
     saved = cable.save_state()
-    q_dot = np.asarray(saved["strain_velocity"])
+    q_dot = np.array(saved["strain_velocity"], copy=True)
     velocities = []
-    for sign in (1.0, -1.0):
-        with cable.strain_mo.position.writeable() as x:
-            x[:] = saved["strain"] + sign * eps * q_dot
-        cable.refresh_mapping()
-        velocities.append(np.asarray(cable.frames_mo.velocity.value).copy())
-    cable.restore_state(saved)
-    cable.refresh_mapping()
+    try:
+        for sign in (1.0, -1.0):
+            with cable.strain_mo.position.writeable() as x:
+                x[:] = saved["strain"] + sign * eps * q_dot
+            cable.refresh_mapping()
+            velocities.append(np.asarray(cable.frames_mo.velocity.value).copy())
+    finally:
+        cable.restore_state(saved)
     acceleration = (velocities[0] - velocities[1]) / (2 * eps)
     # planar: the rotation is about z, where the world inertia equals the body I_zz
     wrench = np.c_[-m * acceleration[:, :3], -inertia[2] * acceleration[:, 3:]]
@@ -154,46 +153,200 @@ def check_bending(cfg, results):
     Sofa.Simulation.unload(root)
 
 
-def check_jacobian(cfg, results):
+def special_states(cfg):
+    """Named strain states (ns x 6) exercising every branch of the PCS kinematics, all with
+    extension and in-plane shear: zero curvature, signed near-zero curvatures down to 1e-12,
+    a bent rod, the series/closed-form switch |kappa| l = 2 on both sides, and a 3D state."""
+    ns = int(cfg["number_of_sections"])
+    switch = 2.0 / (float(cfg["length_m"]) / ns)
+    rng = np.random.default_rng(7)
+    stretched = np.zeros((ns, 6))
+    stretched[:, 3] = rng.normal(0.0, 0.02, ns)
+    stretched[:, 4] = rng.normal(0.0, 0.02, ns)
+    near_zero = np.resize([0.0, 1e-12, -1e-12, 1e-9, -1e-9, 1e-6, -1e-6, 1e-3, -1e-3], ns)
+    states = {"zero curvature": stretched.copy()}
+    states["near-zero curvature (+/-1e-12 .. 1e-3)"] = stretched.copy()
+    states["near-zero curvature (+/-1e-12 .. 1e-3)"][:, 2] = near_zero
+    states["bent + stretched"] = stretched.copy()
+    states["bent + stretched"][:, 2] = rng.normal(0.0, 1.5, ns)
+    transition = states["bent + stretched"].copy()
+    transition[:4, 2] = switch * np.array([1 - 1e-9, -(1 + 1e-9), 1 + 1e-12, -(1 - 1e-12)])
+    states["series/closed-form switch |kappa| l = 2"] = transition
+    spatial = states["near-zero curvature (+/-1e-12 .. 1e-3)"].copy()
+    spatial[:, 0] = np.roll(near_zero, 1)
+    spatial[:, 1] = np.roll(near_zero, 2)
+    spatial[:, 5] = rng.normal(0.0, 0.01, ns)
+    states["3D near-zero curvature + shear"] = spatial
+    return states
+
+
+def reference_frames(cfg, base7, strains):
+    """Frames of the PCS kinematics evaluated independently of the plugin:
+    g(s) = g_base prod_j expm(l_j xi_j^) expm(x xi_k^), xi = (kappa, 1 + eps_x, eps_y, eps_z)."""
+    from scipy.linalg import expm
+    from scipy.spatial.transform import Rotation
+    from cable_identification import cosserat_model as cm
+
+    _, lengths, boundaries, _, abscissae = cm.build_geometry(cfg)
+
+    def twist(q):
+        xi = np.zeros((4, 4))
+        kx, ky, kz = q[:3]
+        xi[:3, :3] = [[0.0, -kz, ky], [kz, 0.0, -kx], [-ky, kx, 0.0]]
+        xi[:3, 3] = [1.0 + q[3], q[4], q[5]]
+        return xi
+
+    g0 = np.eye(4)
+    g0[:3, :3] = Rotation.from_quat(base7[3:7]).as_matrix()
+    g0[:3, 3] = base7[:3]
+    nodes = [g0]
+    for q, length in zip(strains, lengths):
+        nodes.append(nodes[-1] @ expm(length * twist(q)))
+    frames = []
+    for s in abscissae:
+        k = min(int(np.searchsorted(boundaries, s, side="right")) - 1, len(lengths) - 1)
+        g = nodes[k] @ expm((s - boundaries[k]) * twist(strains[k]))
+        frames.append(np.r_[g[:3, 3], Rotation.from_matrix(g[:3, :3]).as_quat()])
+    return np.array(frames)
+
+
+def scaled_jacobian_error(J, J_ref, length):
+    """max |J - J_ref| / max |J_ref| after making every row and column dimensionless:
+    rows (tip position / L, rotation [rad]); columns (base translation x L, base rotation
+    [rad], curvature x 1/L, extension/shear [-])."""
+    rows = np.r_[np.full(3, 1.0 / length), np.ones(3)]
+    columns = np.r_[np.full(3, length), np.ones(3),
+                    np.tile([1.0 / length] * 3 + [1.0] * 3, (J.shape[1] - NB) // 6)]
+    J, J_ref = rows[:, None] * J * columns, rows[:, None] * J_ref * columns
+    return np.abs(J - J_ref).max() / np.abs(J_ref).max()
+
+
+def check_kinematics(cfg, results):
+    """apply vs independent expm kinematics, applyJ vs d apply/dq and virtual work, at the
+    special states (cosserat-patches/0003: z = l |kappa| branch, full translational strain)."""
     import Sofa.Simulation
     root, cable = build(cfg)
     Sofa.Simulation.init(root)
-    rng = np.random.default_rng(7)
-    ns = cfg["number_of_sections"]
-    strains = np.zeros((ns, 6))
-    strains[:, 2] = rng.normal(0.0, 1.5, ns)
-    strains[:, 3] = rng.normal(0.0, 0.02, ns)
-    strains[:, 4] = rng.normal(0.0, 0.02, ns)
     base = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-    with cable.strain_mo.position.writeable() as x:
-        x[:] = strains
-    cable.refresh_mapping()
-    J = tip_jacobian_sofa(cable)
-    J_fd = tip_jacobian_fd(cable, base, strains, eps=1e-5)
-    jac_error = np.abs(J - J_fd).max() / np.abs(J_fd).max()
-    # virtual work: J^T lambda of the grasp spring must be -grad V (FD on the strains)
-    target = np.asarray(cable.tip_pose()) + np.r_[0.02, -0.03, 0.0, 0.0, 0.0, 0.0, 0.0]
-    target[3:] /= np.linalg.norm(target[3:])
-    k, k_a = cfg["grasp_stiffness"], cfg["grasp_angular_stiffness"]
-    delta = pose_delta(np.asarray(cable.tip_pose()), target)
-    lam = np.r_[-k * delta[:3], -k_a * delta[3:]]
-    generalized = (J.T @ lam)[NB:]
-    gradient = np.zeros(strains.size)
-    eps = 1e-6
-    for i in range(strains.size):
-        bump = np.zeros(strains.size)
-        bump[i] = eps
-        for sign in (1.0, -1.0):
-            with cable.strain_mo.position.writeable() as x:
-                x[:] = strains + sign * bump.reshape(strains.shape)
-            cable.refresh_mapping()
-            gradient[i] += sign * grasp_potential(cable, target) / (2 * eps)
-    work_error = np.linalg.norm(generalized + gradient) / np.linalg.norm(gradient)
-    results.append(("applyJ == d apply/dq (FD, rel < 1e-6) at a bent + stretched state",
-                    jac_error < 1e-6, f"max|J - J_fd|/max|J| = {jac_error:.2e}"))
-    results.append(("virtual work: J^T lambda == -grad V_grasp (FD, rel < 1e-5)", work_error < 1e-5,
-                    f"rel = {work_error:.2e}"))
+    L = float(cfg["length_m"])
+    k, k_a = 1.0e5, 10.0  # test potential of an end spring (any stiffness: the identity is linear)
+    for label, strains in special_states(cfg).items():
+        with cable.strain_mo.position.writeable() as x:
+            x[:] = strains
+        cable.refresh_mapping()
+        frames = np.asarray(cable.frame_poses())
+        expected = reference_frames(cfg, base, strains)
+        deltas = np.array([pose_delta(f, e) for f, e in zip(frames, expected)])
+        position_error, angle_error = np.abs(deltas[:, :3]).max(), np.abs(deltas[:, 3:]).max()
+        results.append((f"apply == independent expm kinematics [{label}] (< 1e-12 m, rad)",
+                        position_error < 1e-12 and angle_error < 1e-12,
+                        f"max |dp| {position_error:.1e} m, max |dtheta| {angle_error:.1e} rad"))
+        J = tip_jacobian_sofa(cable)
+        jac_error = scaled_jacobian_error(J, tip_jacobian_fd(cable, base, strains), L)
+        target = np.asarray(cable.tip_pose()) + np.r_[0.02, -0.03, 0.0, 0.0, 0.0, 0.0, 0.0]
+        target[3:] /= np.linalg.norm(target[3:])
+
+        def potential():
+            delta = pose_delta(np.asarray(cable.tip_pose()), target)
+            return 0.5 * k * float(delta[:3] @ delta[:3]) + 0.5 * k_a * float(delta[3:] @ delta[3:])
+
+        delta = pose_delta(np.asarray(cable.tip_pose()), target)
+        generalized = (J.T @ np.r_[-k * delta[:3], -k_a * delta[3:]])[NB:]
+        gradient = np.zeros(strains.size)
+        saved = cable.save_state()
+        try:
+            for i in range(strains.size):
+                bump = np.zeros(strains.size)
+                bump[i] = 1e-6
+                for sign in (1.0, -1.0):
+                    with cable.strain_mo.position.writeable() as x:
+                        x[:] = strains + sign * bump.reshape(strains.shape)
+                    cable.refresh_mapping()
+                    gradient[i] += sign * potential() / 2e-6
+        finally:
+            cable.restore_state(saved)
+        work_error = np.linalg.norm(generalized + gradient) / np.linalg.norm(gradient)
+        results.append((f"applyJ == d apply/dq (FD, scaled rel < 1e-6) [{label}]", jac_error < 1e-6,
+                        f"scaled max|J - J_fd|/max|J| = {jac_error:.2e}"))
+        results.append((f"virtual work J^T lambda == -grad V_end (FD, rel < 1e-5) [{label}]",
+                        work_error < 1e-5, f"rel = {work_error:.2e}"))
     Sofa.Simulation.unload(root)
+
+
+def mechanical_fields(cable):
+    """Every independent field save_state covers plus the mapped frames (for bitwise checks)."""
+    fields = {key: np.array(value, copy=True) for key, value in cable.save_state().items()}
+    fields["frames"] = np.array(cable.frames_mo.position.value, copy=True)
+    fields["frame_velocities"] = np.array(cable.frames_mo.velocity.value, copy=True)
+    return fields
+
+
+def round_trip(cable, rng):
+    """Fields that differ after save -> perturb every independent field -> restore."""
+    reference = mechanical_fields(cable)
+    saved = cable.save_state()
+    independent = cable.modal_mo if cable.modal_mo is not None else cable.strain_mo
+    for data in (independent.position, independent.velocity, cable.strain_mo.rest_position,
+                 cable.base_mo.position, cable.base_mo.velocity, cable.base_mo.rest_position):
+        with data.writeable() as values:
+            values[:] += rng.normal(0.0, 1e-3, values.shape)
+    cable.refresh_mapping()
+    cable.restore_state(saved)
+    after = mechanical_fields(cable)
+    return [key for key in reference if not np.array_equal(reference[key], after[key])]
+
+
+def check_restore(cfg, results):
+    """save -> perturb -> restore is exact (FOM and ROM), probes leave no trace (also when
+    they raise)."""
+    import tempfile
+    import Sofa.Core
+    import Sofa.Simulation
+    from cable_identification import cosserat_model as cm
+    from cable_identification.strain_basis import write_full_space_basis
+
+    root, cable = build(cfg)
+    Sofa.Simulation.init(root)
+    rng = np.random.default_rng(3)
+    with cable.strain_mo.position.writeable() as x:
+        x[:] = special_states(cfg)["bent + stretched"]
+    with cable.strain_mo.velocity.writeable() as v:
+        v[:] = rng.normal(0.0, 0.1, v.shape)
+    cable.refresh_mapping()
+    reference = mechanical_fields(cable)
+    mismatch = round_trip(cable, rng)
+    results.append(("FOM save -> perturb all fields -> restore is bitwise exact (incl. mapped frames)",
+                    not mismatch, f"fields differing: {mismatch or 'none'}"))
+    drift = []
+    for repeat in range(3):
+        tip_jacobian_fd(cable, cable.base_mo.position.value[0], cable.strain_mo.position.value)
+        frame_jacobians(cable)
+        convective_force(cable)
+        drift += [f"{key}@{repeat}" for key, value in mechanical_fields(cable).items()
+                  if not np.array_equal(value, reference[key])]
+    raised = False
+    try:  # a probe that fails half way (wrong strain shape after the base was perturbed)
+        tip_jacobian_fd(cable, cable.base_mo.position.value[0] + 1e-3, np.zeros(5))
+    except ValueError:
+        raised = True
+    drift += [f"{key}@raise" for key, value in mechanical_fields(cable).items()
+              if not np.array_equal(value, reference[key])]
+    results.append(("3x repeated FD/applyJ/convective probes and a failing probe leave no drift",
+                    raised and not drift, f"raised={raised}, drifted: {drift or 'none'}"))
+    Sofa.Simulation.unload(root)
+    with tempfile.TemporaryDirectory(prefix="cable-full-space-") as directory:
+        root = Sofa.Core.Node("cable_rom_restore")
+        cm.prepare_root(root, cfg, extra_plugins=["ModelOrderReduction"])
+        cable = cm.build_cable(root, cfg, reduction=write_full_space_basis(cfg, directory))
+        Sofa.Simulation.init(root)
+        for data in (cable.modal_mo.position, cable.modal_mo.velocity):
+            with data.writeable() as values:
+                values[:] = rng.normal(0.0, 0.01, values.shape)
+        cable.refresh_mapping()
+        mismatch = round_trip(cable, rng)
+        results.append(("ROM (full-space basis) save -> perturb -> restore is bitwise exact",
+                        not mismatch, f"fields differing: {mismatch or 'none'}"))
+        Sofa.Simulation.unload(root)
 
 
 def check_grasp(cfg, results):
@@ -357,18 +510,23 @@ def check_convergence(cfg, results):
                     + f" (ratio {steps[0] / max(steps[1], 1e-12):.1f}, first order ~2)"))
 
 
+CHECKS = {"traction": check_traction, "bending": check_bending, "kinematics": check_kinematics,
+          "restore": check_restore, "grasp": check_grasp, "energy": check_energy,
+          "convergence": check_convergence}
+
+
 def main(argv=None):
     import argparse
     from cable_identification import cosserat_model as cm
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=CONFIG)
+    parser.add_argument("--checks", nargs="+", choices=list(CHECKS), default=list(CHECKS))
     args = parser.parse_args(argv)
     cfg = cm.load_config(args.config)
     results = []
-    for check in (check_traction, check_bending, check_jacobian, check_grasp, check_energy,
-                  check_convergence):
-        check(cfg, results)
+    for name in args.checks:
+        CHECKS[name](cfg, results)
     print()
     failed = 0
     for name, ok, detail in results:

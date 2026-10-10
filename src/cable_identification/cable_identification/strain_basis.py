@@ -114,6 +114,33 @@ def write_modes(path, modes):
     np.savetxt(path, modes, header=f"{modes.shape[0]} {modes.shape[1]}", comments="", fmt="%.17g")
 
 
+def write_full_space_basis(cfg, directory):
+    """Diagnostic basis spanning every active strain, ``Phi = P W_a^-1/2`` (W-orthonormal,
+    independent of any snapshot): a ROM on it is a change of coordinates of the FOM, not a
+    reduction, and must reproduce the FOM to solver tolerance."""
+    directory = Path(directory)
+    weights = cm.strain_weights(cfg)
+    active = cm.active_components(cfg)
+    dimension = cm.strain_dimension(cfg)
+    modes = np.zeros((dimension, len(active)))
+    modes[active, np.arange(len(active))] = 1.0 / np.sqrt(weights[active])
+    modes_path = directory / "full_space_modes.txt"
+    metadata_path = directory / "full_space_modes.yaml"
+    write_modes(modes_path, modes)
+    metadata = {
+        "schema_version": 2, "state_coordinates": "cosserat_modal",
+        "basis_kind": "full_active_space_diagnostic", "number_of_sections": cfg["number_of_sections"],
+        "full_dimension": dimension, "n_modes": len(active), "component_order": list(cm.STRAIN_COMPONENTS),
+        "active_components": active, "inner_product": INNER_PRODUCT, "pod_weights": weights.tolist(),
+        "mapping_template": MAPPING_TEMPLATE, "plugin_patches": installed_plugin_patches(),
+        "q_0": [0.0] * dimension, "singular_values": [1.0] * len(active),
+        "rank_relative_tolerance": 1e-12, "orthogonality_tolerance": 1e-12,
+        "strain_basis_sha256": file_sha256(modes_path), "config_sha256": config_sha256(cfg)}
+    with open(metadata_path, "w") as stream:
+        yaml.safe_dump(metadata, stream, sort_keys=False)
+    return ReductionSpec(str(modes_path), str(metadata_path), len(active))
+
+
 def scale_state_file(source, target, factors):
     """Copy a WriteState file with every ``X0=/X=/V=`` vector multiplied by ``factors``."""
     factors = np.asarray(factors, dtype=float)

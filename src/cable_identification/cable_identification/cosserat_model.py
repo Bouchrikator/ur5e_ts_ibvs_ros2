@@ -245,16 +245,17 @@ def add_convective_inertia(cable, frames_node, eps=1e-6):
             cable.refresh_mapping()
             v0 = np.array(cable.frames_mo.velocity.value, dtype=float)
             state = cable.save_state()
-            if cable.modal_mo is not None:
-                with cable.modal_mo.position.writeable() as x:
-                    x[:] = state["modal"] + eps * state["modal_velocity"]
-            else:
-                with cable.strain_mo.position.writeable() as x:
-                    x[:] = state["strain"] + eps * state["strain_velocity"]
-            cable.refresh_mapping()
-            v1 = np.array(cable.frames_mo.velocity.value, dtype=float)
-            cable.restore_state(state)
-            cable.refresh_mapping()
+            try:
+                if cable.modal_mo is not None:
+                    with cable.modal_mo.position.writeable() as x:
+                        x[:] = state["modal"] + eps * state["modal_velocity"]
+                else:
+                    with cable.strain_mo.position.writeable() as x:
+                        x[:] = state["strain"] + eps * state["strain_velocity"]
+                cable.refresh_mapping()
+                v1 = np.array(cable.frames_mo.velocity.value, dtype=float)
+            finally:
+                cable.restore_state(state)
             acceleration = (v1 - v0) / eps
             poses = np.asarray(cable.frames_mo.position.value)
             x, y, z, w = poses[:, 3], poses[:, 4], poses[:, 5], poses[:, 6]
@@ -417,40 +418,39 @@ class CableHandles:
             self.grasp_spring.reinit()
 
     def save_state(self):
-        """Snapshot the independent DOFs so a what-if rollout can be undone.
+        """Deep copies of every independent mechanical field, so a probe or a what-if
+        rollout can be undone exactly.
 
-        Frames are mapped from the strains and the base, so those two plus the
-        strain velocity fully determine the configuration. Sigma-point
-        evaluation replays the cable under trial parameters and must leave the
-        estimator exactly where it found it.
+        Frames are mapped from the strains (or modal coordinates) and the base, so the
+        independent positions, velocities and rest references fully determine them.
         """
+        def copy(data):
+            return np.array(data.value, dtype=float, copy=True)
+
+        state = {"base": copy(self.base_mo.position), "base_velocity": copy(self.base_mo.velocity),
+                 "base_rest": copy(self.base_mo.rest_position),
+                 "strain_rest": copy(self.strain_mo.rest_position)}
         if self.modal_mo is not None:
-            return {
-                "modal": self.modal_mo.position.value.copy(),
-                "modal_velocity": self.modal_mo.velocity.value.copy(),
-                "base": self.base_mo.position.value.copy(),
-            }
-        return {
-            "strain": self.strain_mo.position.value.copy(),
-            "strain_velocity": self.strain_mo.velocity.value.copy(),
-            "base": self.base_mo.position.value.copy(),
-        }
+            state.update(modal=copy(self.modal_mo.position), modal_velocity=copy(self.modal_mo.velocity))
+        else:
+            state.update(strain=copy(self.strain_mo.position),
+                         strain_velocity=copy(self.strain_mo.velocity))
+        return state
 
     def restore_state(self, state):
+        """Write a ``save_state`` snapshot back directly and re-map the frames."""
+        fields = [(self.base_mo.position, "base"), (self.base_mo.velocity, "base_velocity"),
+                  (self.base_mo.rest_position, "base_rest"),
+                  (self.strain_mo.rest_position, "strain_rest")]
         if self.modal_mo is not None:
-            with self.modal_mo.position.writeable() as position:
-                position[:] = state["modal"]
-            with self.modal_mo.velocity.writeable() as velocity:
-                velocity[:] = state["modal_velocity"]
-            self.set_base_pose(state["base"][0])
-            self.refresh_mapping()
-            return
-        with self.strain_mo.position.writeable() as p:
-            p[:] = state["strain"]
-        with self.strain_mo.velocity.writeable() as v:
-            v[:] = state["strain_velocity"]
-        with self.base_mo.position.writeable() as p:
-            p[:] = state["base"]
+            fields += [(self.modal_mo.position, "modal"), (self.modal_mo.velocity, "modal_velocity")]
+        else:
+            fields += [(self.strain_mo.position, "strain"),
+                       (self.strain_mo.velocity, "strain_velocity")]
+        for data, key in fields:
+            with data.writeable() as values:
+                values[:] = state[key]
+        self.refresh_mapping()
 
     def frame_poses(self):
         return self.frames_mo.position.value.copy()

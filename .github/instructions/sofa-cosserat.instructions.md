@@ -28,6 +28,11 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
   3e-8) and `cable_dynamics`. The old energy pumping of forces on mapped frames (status
   doc 5.16) came from that inconsistent Jacobian: with it fixed, 600 s holds under
   bending and sustained tension are stable with a 1e5 N/m grasp spring.
+- Since `cosserat-patches/0003` the exponential and tangent coefficients are Taylor series
+  in `z = l |kappa|` for `|z| < 2`: the closed forms lost all digits near zero curvature
+  (2 % Jacobian error at `|kappa| ~ 1e-9`, status doc 5.18). `cable_fom_test --checks
+  kinematics restore` covers zero/near-zero/switch curvatures against an independent `expm`
+  chain and central differences; keep FD probes on `save_state` + `finally: restore_state`.
 - Frame mass: `UniformMass(vertexMass=frame_rigid_mass(cfg))`, never `totalMass` alone
   (that leaves `inertiaMatrix` at identity, a rotational inertia equal to the mass:
   1.7e-3 instead of 5e-8 kg m^2 per frame). Damping: `DiagonalVelocityDampingForceField`

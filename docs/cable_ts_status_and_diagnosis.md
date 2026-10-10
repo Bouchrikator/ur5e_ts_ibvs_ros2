@@ -899,6 +899,22 @@ POD). Each is a plugin or scene defect, verified by `cable_fom_test` and the
 The POD chain was rebuilt on this model with the strain-energy inner product and an
 independent test trajectory ([sofa_mor_pipeline.md](sofa_mor_pipeline.md)).
 
+### 5.18 The tangent operator was wrong near zero curvature (2026-10-10)
+
+`computeExponentialSE3` and `computeTangExpImplementation` switched to their straight-rod
+form only for `|kappa| <= machine epsilon` and otherwise divided `1 - cos z`, `z - sin z`, ...
+by `|kappa|^2 .. |kappa|^5` (`z = l |kappa|`). For `1e-12 <= |kappa| <= 1e-6` the tangent
+operator `T(l)` was off by 2e-2 .. 1e-3 relative (cancellation in the `ad^3`, `ad^4`
+coefficients), i.e. `applyJ`, `J^T lambda` and `J^T M J` were wrong wherever a section passes
+through zero curvature (straight rod, the inflection of every S-shape). `cosserat-patches/0003`
+evaluates the coefficients of both closed forms as Taylor series in `z` for `|z| < 2`
+(closed forms above, 3e-15 relative at the switch). `cable_fom_test --checks kinematics`
+compares `apply` with an independent `expm` chain and `applyJ` with central differences at
+zero, signed near-zero, bent, 3D and switch curvatures: all <= 1e-9 with the patch, 8 failures
+(FD 1.9e-3, virtual work 1.2e-2) on the plugin without it. `save_state`/`restore_state` now
+copy every independent field (base velocity and rest references included) and restore
+without `set_base_pose`; FD probes restore in `finally` (`--checks restore`).
+
 ---
 
 ## 6. Running it

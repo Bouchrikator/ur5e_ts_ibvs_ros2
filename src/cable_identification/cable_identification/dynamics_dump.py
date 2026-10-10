@@ -84,9 +84,12 @@ def tip_jacobian_fd(cable, base7, strains, eps=1e-6):
     """6 x (6 + 3 ns) derivative of SOFA's apply() at the tip frame, central differences.
 
     Base rotation columns perturb the base quaternion by a world-frame rotation
-    (SOFA Rigid3d convention: angular velocity/torque in world coordinates).
+    (SOFA Rigid3d convention: angular velocity/torque in world coordinates). The probe
+    works on copies and restores the full mechanical state, also on an exception.
     """
-    base7, strains = np.asarray(base7, dtype=float), np.asarray(strains, dtype=float)
+    base7 = np.array(base7, dtype=float, copy=True).ravel()
+    strains = np.array(strains, dtype=float, copy=True)
+    saved = cable.save_state()
 
     def tip_at(b7, s):
         with cable.base_mo.position.writeable() as p:
@@ -100,64 +103,48 @@ def tip_jacobian_fd(cable, base7, strains, eps=1e-6):
         return pose_delta(tip_at(*plus), tip_at(*minus)) / (2 * eps)
 
     cols = []
-    for i in range(3):
-        d = np.zeros(3); d[i] = eps
-        cols.append(column((np.r_[base7[:3] + d, base7[3:]], strains),
-                           (np.r_[base7[:3] - d, base7[3:]], strains)))
-    for i in range(3):
-        rv = np.zeros(3); rv[i] = eps
-        cols.append(column((np.r_[base7[:3], _q_mul(quat(rv), base7[3:])], strains),
-                           (np.r_[base7[:3], _q_mul(quat(-rv), base7[3:])], strains)))
-    flat = strains.ravel()
-    for k in range(flat.size):
-        d = np.zeros(flat.size); d[k] = eps
-        cols.append(column((base7, flat + d), (base7, flat - d)))
-    tip_at(base7, strains)
-    return np.array(cols).T
-
-
-def tip_jacobian_sofa(cable):
-    """6 x (6 + 3 ns) Jacobian SOFA uses: applyJ (run by mapping.init) on unit velocities."""
-    saved = (cable.base_mo.velocity.value.copy(), cable.strain_mo.velocity.value.copy())
-    n_strain = saved[1].size
-    cols = []
-    for k in range(NB + n_strain):
-        with cable.base_mo.velocity.writeable() as vb, cable.strain_mo.velocity.writeable() as vs:
-            vb[:] = 0.0
-            vs[:] = 0.0
-            if k < NB:
-                vb[0][k] = 1.0
-            else:
-                vs.reshape(-1)[k - NB] = 1.0
-        cable.refresh_mapping()
-        cols.append(np.array(cable.frames_mo.velocity.value[-1]))
-    with cable.base_mo.velocity.writeable() as vb, cable.strain_mo.velocity.writeable() as vs:
-        vb[:] = saved[0]
-        vs[:] = saved[1]
-    cable.refresh_mapping()
+    try:
+        for i in range(3):
+            d = np.zeros(3); d[i] = eps
+            cols.append(column((np.r_[base7[:3] + d, base7[3:]], strains),
+                               (np.r_[base7[:3] - d, base7[3:]], strains)))
+        for i in range(3):
+            rv = np.zeros(3); rv[i] = eps
+            cols.append(column((np.r_[base7[:3], _q_mul(quat(rv), base7[3:])], strains),
+                               (np.r_[base7[:3], _q_mul(quat(-rv), base7[3:])], strains)))
+        flat = strains.ravel()
+        for k in range(flat.size):
+            d = np.zeros(flat.size); d[k] = eps
+            cols.append(column((base7, flat + d), (base7, flat - d)))
+    finally:
+        cable.restore_state(saved)
     return np.array(cols).T
 
 
 def frame_jacobians(cable):
     """applyJ probed with unit velocities for every frame: array (frames, 6, 6 + strain dofs)."""
-    saved = (cable.base_mo.velocity.value.copy(), cable.strain_mo.velocity.value.copy())
-    n_strain = saved[1].size
+    saved = cable.save_state()
+    n_strain = cable.strain_mo.velocity.value.size
     columns = []
-    for k in range(NB + n_strain):
-        with cable.base_mo.velocity.writeable() as vb, cable.strain_mo.velocity.writeable() as vs:
-            vb[:] = 0.0
-            vs[:] = 0.0
-            if k < NB:
-                vb[0][k] = 1.0
-            else:
-                vs.reshape(-1)[k - NB] = 1.0
-        cable.refresh_mapping()
-        columns.append(np.array(cable.frames_mo.velocity.value))
-    with cable.base_mo.velocity.writeable() as vb, cable.strain_mo.velocity.writeable() as vs:
-        vb[:] = saved[0]
-        vs[:] = saved[1]
-    cable.refresh_mapping()
+    try:
+        for k in range(NB + n_strain):
+            with cable.base_mo.velocity.writeable() as vb, cable.strain_mo.velocity.writeable() as vs:
+                vb[:] = 0.0
+                vs[:] = 0.0
+                if k < NB:
+                    vb[0][k] = 1.0
+                else:
+                    vs.reshape(-1)[k - NB] = 1.0
+            cable.refresh_mapping()
+            columns.append(np.array(cable.frames_mo.velocity.value))
+    finally:
+        cable.restore_state(saved)
     return np.stack(columns, axis=2)
+
+
+def tip_jacobian_sofa(cable):
+    """6 x (6 + 3 ns) Jacobian SOFA uses: applyJ (run by mapping.init) on unit velocities."""
+    return frame_jacobians(cable)[-1]
 
 
 def mapped_wrench(jacobians, wrench):
@@ -225,12 +212,11 @@ def collect(cfg, drag_steps, tip_offset, export_dir):
     coupling = GraspCoupling(cable, attach_mode="explicit")
     Sofa.Simulation.init(root)
     coupling.on_fixture([0.0] * 6 + [1.0])
-    # straight rod: where the Jacobian has a closed form (lever l (L - s_i - l/2), stretch l).
-    # eps 1e-4: the plugin's closed-form exponential loses digits in (1 - cos x theta) / theta^2
-    # for theta ~ 1e-6, which a central difference with a tiny step would read as a J error.
+    # straight rod: where the Jacobian has a closed form (lever l (L - s_i - l/2), stretch l);
+    # the central difference straddles zero curvature (cosserat-patches/0003 series branch).
     straight = {"J_sofa": tip_jacobian_sofa(cable),
                 "J_fd": tip_jacobian_fd(cable, cable.base_mo.position.value[0],
-                                        cable.strain_mo.position.value, eps=1e-4)}
+                                        cable.strain_mo.position.value)}
     before, n_steps = drive(cable, coupling, cfg, drag_steps, tip_offset, exporters)
 
     # State at the START of the last step: that is where SOFA evaluates f, M, K and J.
