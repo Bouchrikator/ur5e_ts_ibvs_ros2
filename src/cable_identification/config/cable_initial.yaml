@@ -19,5 +19,4 @@ cable:
   # Table shaping: rod rests on the table -> zero effective gravity (planar)
   gravity: [0.0, 0.0, 0.0]
   grasp_tip: true
-  attach_distance_m: 0.15  # xy proximity to the free end for the snap
-  attach_height_m: 0.01    # gripper within 1 cm of the table plane to snap
+  attach_distance_m: 0.15  # 3D distance to the free end for the snap (legacy spring grip)

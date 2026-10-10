@@ -93,7 +93,7 @@ in_live() {
   live_up
   ensure_cosserat
   ensure_optimus
-  if [[ "$CMD" == cable_sofa_* ]]; then
+  if [[ "$CMD" == cable_sofa_* || "$CMD" == cable_fom_test ]]; then
     docker compose exec -T ur5e_ts_ibvs bash /ros2_ws/scripts/install_model_order_reduction.sh
   fi
   # exec bypasses the image entrypoint, so the ROS underlay must be sourced too

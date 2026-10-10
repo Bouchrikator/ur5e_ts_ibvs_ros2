@@ -117,6 +117,9 @@ def excitation_paths(cfg, settings):
 class CableMORSnapshotController(Sofa.Core.Controller):
     def __init__(self, cable, coupling, path, control_dt, **kwargs):
         super().__init__(**kwargs)
+        if cable.attachment is not None:
+            raise NotImplementedError("the recorder reads the penalty-grip spring; snapshot "
+                                      "generation for the Lagrange attachment is not implemented")
         self.cable = cable
         self.coupling = coupling
         self.path = np.asarray(path, dtype=float)

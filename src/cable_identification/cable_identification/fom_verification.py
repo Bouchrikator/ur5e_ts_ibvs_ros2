@@ -3,16 +3,21 @@
 Every check compares the SOFA model (``cosserat_model.build_cable``, Vec6d strains,
 patched Cosserat plugin) with a closed form, a finite difference or a conservation law:
 
-  1. axial traction     dL = F L0 / EA  (tip pulled through the grasp spring)
+  1. axial traction     dL = F L0 / EA with F = lambda / h of the end attachment, at h and h/2
   2. pure bending       kappa = M / EI, tip on the circular arc of radius EI / M
   3. kinematics/forces  at zero, signed near-zero (1e-12..1e-3), bent, 3D and series/closed-form
                         switch (|kappa| l = 2) curvatures with extension and shear: apply ==
                         independent expm chain, applyJ == d apply/dq (FD, dimensionless
                         scaling) and J^T lambda == -grad V of an end-spring potential
+     transpose          the force SOFA actually maps (ConstantForceField on the last frame ->
+                        applyJT -> base and strain force buffers) == J^T wrench, per load
      restore            save -> perturb -> restore bitwise exact; repeated and failing probes
                         leave no drift
-  4. grasp              latch, planar drag with a commanded yaw: position/orientation
-                        tracking of the grasped frame, base reaction == -gripper force
+     fixture            fixed base and planarity over the grasp episode; placement semantics
+  4. grasp              Lagrange attachment of s = L (FOM and full-space ROM): residuals,
+                        identity, actual rows vs FD (H_a == H_q Phi), W (q - q0) == H^T F,
+                        rejection, release, FOM == ROM
+     checkpoint         save -> advance -> restore -> replay of a moving-boundary rollout
   5. dynamics/energy    free oscillation: dE + h q'+^T D q'+ - W_conv = integrator dissipation
                         <= 0 every step (W_conv: discrete work of the explicit convective
                         wrench, ~0); the scene's convective wrench equals an independent
@@ -31,7 +36,7 @@ import sys
 import numpy as np
 
 from cable_identification.dynamics_dump import (
-    NB, frame_jacobians, mapped_wrench, pose_delta, tip_jacobian_fd, tip_jacobian_sofa,
+    NB, frame_jacobians, mapped_wrench, pose_delta, quat, tip_jacobian_fd, tip_jacobian_sofa,
 )
 
 CONFIG = "/ros2_ws/src/cable_identification/config/cable_truth.yaml"
@@ -109,23 +114,6 @@ def convective_force(cable, eps=1e-6):
     # planar: the rotation is about z, where the world inertia equals the body I_zz
     wrench = np.c_[-m * acceleration[:, :3], -inertia[2] * acceleration[:, 3:]]
     return mapped_wrench(frame_jacobians(cable), wrench)
-
-
-def check_traction(cfg, results):
-    import Sofa.Simulation
-    root, cable = build(cfg)
-    Sofa.Simulation.init(root)
-    L, EA, k, d = cfg["length_m"], cfg["EA_N"], cfg["grasp_stiffness"], 0.01
-    cable.set_grasp_pose([L + d, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-    settle(root, cable)
-    tip = cable.tip_pose()
-    force = k * (L + d - tip[0])
-    expected = force * L / EA
-    error = abs((tip[0] - L) / expected - 1.0)
-    results.append(("axial traction dL = F L0/EA (rel. error < 1e-3)", error < 1e-3,
-                    f"dL={1e3 * (tip[0] - L):.4f} mm, F={force:.3f} N, F L/EA={1e3 * expected:.4f} mm, "
-                    f"rel={error:.2e}, eps_x={cable.strain_mo.position.value[:, 3].mean():.3e}"))
-    Sofa.Simulation.unload(root)
 
 
 def check_bending(cfg, results):
@@ -273,6 +261,72 @@ def check_kinematics(cfg, results):
     Sofa.Simulation.unload(root)
 
 
+def check_transpose(cfg, results):
+    """SOFA's actual force path (ConstantForceField on the last frame -> mapping applyJT ->
+    base_mo.force, strain_mo.force) == J^T wrench with J from applyJ, at the special states.
+
+    Isolated 3D test scene (no grasp, no planarity, zero gravity, no convective term), not a
+    validation of the production dynamics. One step from rest: the force buffers hold the
+    forces of the step's starting state, where J is taken.
+    """
+    import Sofa.Simulation
+    from cable_identification import cosserat_model as cm
+
+    local = dict(cfg, grasp_tip=False, planar=False, gravity=[0.0, 0.0, 0.0],
+                 convective_inertia=False)
+    L, ns = float(local["length_m"]), int(local["number_of_sections"])
+    scale = np.r_[np.full(3, L), np.ones(3), np.tile([1 / L, 1 / L, 1 / L, 1, 1, 1], ns)]
+    weights = cm.strain_weights(local)
+    root, cable = build(local)
+    last = len(cable.frame_poses()) - 1
+    load = cable.frames_mo.getContext().addObject(
+        "ConstantForceField", template="Rigid3d", name="transposeLoad", indices=[last],
+        forces=[[0.0] * 6])
+    Sofa.Simulation.init(root)
+    anchor = np.array(cable.base_mo.rest_position.value[0], dtype=float, copy=True)
+    loads = {"Fx 0.1 N": np.r_[0.1, 0, 0, 0, 0, 0], "Fy 0.1 N": np.r_[0, 0.1, 0, 0, 0, 0],
+             "Mz 0.001 N.m": np.r_[0, 0, 0, 0, 0, 0.001]}
+    report = {name: [] for name in loads}
+    for label, strains in special_states(local).items():
+        for name, wrench in loads.items():
+            with cable.base_mo.position.writeable() as p:
+                p[0] = anchor
+            for data in (cable.base_mo.velocity, cable.strain_mo.velocity):
+                with data.writeable() as v:
+                    v[:] = 0.0
+            with cable.strain_mo.position.writeable() as x:
+                x[:] = strains
+            cable.refresh_mapping()
+            start = cable.save_state()
+            J = tip_jacobian_sofa(cable)
+            load.forces.value = [wrench.tolist()]
+            try:
+                Sofa.Simulation.animate(root, root.dt.value)
+                base_force = np.array(cable.base_mo.force.value, dtype=float, copy=True).ravel()
+                strain_force = np.array(cable.strain_mo.force.value, dtype=float, copy=True).ravel()
+                frame_force = np.array(cable.frames_mo.force.value, dtype=float, copy=True)[last]
+            finally:
+                load.forces.value = [[0.0] * 6]
+                cable.restore_state(start)
+            hooke = -weights * (start["strain"].ravel() - start["strain_rest"].ravel())
+            actual = scale * np.r_[base_force, strain_force - hooke]
+            expected = scale * (J.T @ wrench)
+            error = np.abs(actual - expected).max()
+            limit = 1e-12 + 1e-9 * np.abs(expected).max()
+            finite = np.all(np.isfinite(actual)) and np.all(np.isfinite(expected))
+            loaded = np.array_equal(frame_force, wrench)
+            report[name].append((label, finite and loaded and error <= limit, error, limit))
+    for name, rows in report.items():
+        worst = max(rows, key=lambda row: row[2] / row[3])
+        results.append((f"applyJT force path == J^T wrench, {name} at the last frame, 5 special "
+                        "states (scaled, <= 1e-12 + 1e-9 max|J^T w|)", all(row[1] for row in rows),
+                        "; ".join(f"{label}: {error:.1e} (lim {limit:.1e})"
+                                  for label, _, error, limit in rows)
+                        + f"; worst {worst[2] / worst[3]:.1e} of its limit, frame load == wrench, "
+                          "finite"))
+    Sofa.Simulation.unload(root)
+
+
 def mechanical_fields(cable):
     """Every independent field save_state covers plus the mapped frames (for bitwise checks)."""
     fields = {key: np.array(value, copy=True) for key, value in cable.save_state().items()}
@@ -349,53 +403,402 @@ def check_restore(cfg, results):
         Sofa.Simulation.unload(root)
 
 
-def check_grasp(cfg, results):
+def check_traction(cfg, results):
+    """Straight extension 0.7000 -> 0.7014 m held by the attachment: the measured reaction
+    lambda / h obeys dL = F L / EA (actual extension), at h and h / 2 (a wrong time-step factor
+    in the multiplier interpretation would show as a factor 2)."""
     import Sofa.Simulation
+    L = float(cfg["length_m"])
+    for dt in (STAGE_B_DT, STAGE_B_DT / 2):
+        c = nominal_attachment_cfg(cfg, dt)
+        root, cable, coupling = attached_scene(c, IDENTITY)
+        command = PlanarCommand(IDENTITY, [L, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dt)
+        coupling.request_attach()
+        latched = coupling.update_grasp(*command.at(0, 0.0))
+        command.move(0.0014, 0.0, 0.0)
+        command.hold(1.0)
+        for k in range(command.steps):
+            coupling.update_grasp(*command.at(k + 1, (k + 1) * dt))
+            Sofa.Simulation.animate(root, dt)
+        raw = np.asarray(cable.attachment.findData("lambda").value, dtype=float)
+        force = cable.attachment_reaction()
+        extension = cable.tip_pose()[0] - L
+        expected = force[0] * L / float(c["EA_N"])
+        error = abs(extension - expected) / abs(expected)
+        results.append((f"traction dL = F L/EA from the attachment reaction, h = {dt} s (rel <= 1e-3)",
+                        latched and error <= 1e-3,
+                        f"raw lambda = [{raw[0]:.6e}, {raw[1]:.1e}, {raw[2]:.1e}] N.s, F = lambda/h = "
+                        f"[{force[0]:.6f} N, {force[1]:.1e} N, {force[2]:.1e} N.m]; dL {1e3 * extension:.6f} mm"
+                        f" vs F L/EA {1e3 * expected:.6f} mm, rel {error:.2e}"))
+        Sofa.Simulation.unload(root)
+
+
+# Stage B: the approved nominal cable. Only the step is overridden (the production config
+# still says timestep_s 0.01; the step is a Stage C decision).
+NOMINAL = {"length_m": 0.7, "radius_m": 0.004, "mass_kg": 0.07, "EA_N": 5000.0, "EI_Nm2": 0.01,
+           "GA_N": 2000.0, "GJ_Nm2": 0.008, "rayleigh_stiffness_s": 0.02, "rayleigh_mass_per_s": 0.0,
+           "gravity": [0.0, 0.0, 0.0], "number_of_sections": 16, "number_of_frames": 40,
+           "planar": True, "grasp_tip": True}
+STAGE_B_DT = 0.0025
+# Rate limits of the plan's simulation experiment (not a measured robot envelope)
+COMMAND_LIMITS = {"speed": 0.030, "accel": 0.060, "yaw_rate": 0.150, "yaw_accel": 0.300}
+IDENTITY = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+# A tilted, shifted fixture: every plane axis is exercised (zero gravity, so legal)
+FIXTURE = [0.1, -0.05, 0.02, *quat(np.array([0.3, -0.2, 0.5]))]
+# Fingers-down gripper 5.4 mm from the straight end (fixture coordinates): latch offset + lever
+GRIPPER_LATCH = [0.703, 0.002, 0.004, 1.0, 0.0, 0.0, 0.0]
+# Declared limits (acceptance table of the Stage B instructions; solver-level for the replay)
+LIMITS = {"base_position": 1e-9, "base_angle": 1e-9, "plane": 1e-8, "end_position": 1e-5,
+          "end_yaw": 1e-4, "rows_fd": 1e-6, "rows_rom": 1e-12, "balance": 1e-3,
+          "rom_frames": 1e-8, "rom_reaction": 1e-6, "replay_position": 1e-12, "replay_reaction": 1e-12}
+
+
+def nominal_attachment_cfg(cfg, dt=STAGE_B_DT):
+    differing = {key: (cfg.get(key), value) for key, value in NOMINAL.items() if cfg.get(key) != value}
+    if differing:
+        raise ValueError(f"Stage B checks run on the approved nominal cable; config differs: {differing}")
+    return dict(cfg, timestep_s=dt)
+
+
+def compose(a7, b7):
+    from cable_identification.coupling import _q_mul, _q_rot
+    p = np.asarray(a7[:3]) + np.asarray(_q_rot(tuple(a7[3:7]), tuple(b7[:3])))
+    return [*p, *_q_mul(tuple(a7[3:7]), tuple(b7[3:7]))]
+
+
+class PlanarCommand:
+    """Gripper commands in the fixture plane about a latch pose (fixture coordinates):
+    rest-to-rest quintic segments (dx, dy, dyaw), each as short as COMMAND_LIMITS allow.
+    ``at(k, t)`` returns (pose7, time, twist6) in world coordinates for update_grasp."""
+
+    def __init__(self, fixture7, latch_local7, h):
+        self.fixture, self.latch, self.h = list(fixture7), list(latch_local7), float(h)
+        self.segments, self.end, self.steps = [], np.zeros(3), 0
+
+    def move(self, dx, dy, dyaw):
+        delta, peak = np.array([dx, dy, dyaw], dtype=float), 10.0 / math.sqrt(3.0)
+        D, Y = math.hypot(dx, dy), abs(dyaw)
+        T = max(1.875 * D / COMMAND_LIMITS["speed"], math.sqrt(peak * D / COMMAND_LIMITS["accel"]),
+                1.875 * Y / COMMAND_LIMITS["yaw_rate"], math.sqrt(peak * Y / COMMAND_LIMITS["yaw_accel"]))
+        n = math.ceil(T / self.h - 1e-9)
+        self.segments.append((self.steps, self.steps + n, self.end.copy(), self.end + delta))
+        self.end, self.steps = self.end + delta, self.steps + n
+
+    def hold(self, seconds):
+        self.steps += round(seconds / self.h)
+
+    def at(self, k, t):
+        from cable_identification.coupling import _q_mul, _q_rot
+        u, du = np.zeros(3), np.zeros(3)
+        for k0, k1, a, b in self.segments:
+            if k >= k1:
+                u = b
+                continue
+            if k > k0:
+                s, T = (k - k0) / (k1 - k0), (k1 - k0) * self.h
+                u = a + (10 * s ** 3 - 15 * s ** 4 + 6 * s ** 5) * (b - a)
+                du = (30 * s ** 2 - 60 * s ** 3 + 30 * s ** 4) / T * (b - a)
+            break
+        local = [self.latch[0] + u[0], self.latch[1] + u[1], self.latch[2],
+                 *_q_mul((0.0, 0.0, math.sin(u[2] / 2), math.cos(u[2] / 2)), tuple(self.latch[3:7]))]
+        q = tuple(self.fixture[3:7])
+        twist = np.r_[_q_rot(q, (du[0], du[1], 0.0)), _q_rot(q, (0.0, 0.0, du[2]))]
+        return compose(self.fixture, local), t, twist
+
+
+def attached_scene(cfg, fixture, reduction=None):
+    """Planar attachment scene (FOM, or ROM on ``reduction``), placed on the fixture post-init."""
+    import Sofa.Core
+    import Sofa.Simulation
+    from cable_identification import cosserat_model as cm
     from cable_identification.coupling import GraspCoupling
-    root, cable = build(cfg)
+    root = Sofa.Core.Node("cable_stage_b")
+    cm.prepare_root(root, cfg, extra_plugins=["ModelOrderReduction"] if reduction else [])
+    cable = cm.build_cable(root, cfg, reduction=reduction)
     coupling = GraspCoupling(cable, attach_mode="explicit")
     Sofa.Simulation.init(root)
-    coupling.on_fixture([0.0] * 6 + [1.0])
+    coupling.on_fixture(fixture)
+    return root, cable, coupling
+
+
+def constraint_rows(mo, n_rows):
+    """Constraint matrix SOFA propagated to ``mo`` in the last step, dense (rows x dofs), nnz."""
+    matrix = mo.constraint.value  # scipy CSR: rows = constraint ids, columns = scalar dofs
+    dense = np.zeros((n_rows, mo.position.value.size))
+    if matrix.shape[0] and matrix.shape[1]:
+        block = matrix.toarray()
+        dense[:block.shape[0], :block.shape[1]] = block
+    return dense, int(matrix.nnz)
+
+
+def residual_jacobian_fd(cable, independent, eps):
+    """dC/dx of the attachment residual (target fixed) by central differences over every
+    flat coordinate of ``independent`` with nonzero ``eps``, at the current state."""
+    saved = cable.save_state()
+    start = np.array(independent.position.value, dtype=float, copy=True)
+    H = np.zeros((3, start.size))
+    try:
+        for j in np.flatnonzero(eps):
+            for sign in (1.0, -1.0):
+                x = start.copy()
+                x.reshape(-1)[j] += sign * eps[j]
+                with independent.position.writeable() as p:
+                    p[:] = x
+                cable.refresh_mapping()
+                H[:, j] += sign * cable.attachment_residual() / (2 * eps[j])
+    finally:
+        cable.restore_state(saved)
+    return H
+
+
+def scaled_rows_error(H, H_ref, row_scale, column_scale):
+    H, H_ref = row_scale[:, None] * H * column_scale, row_scale[:, None] * H_ref * column_scale
+    return np.abs(H - H_ref).max() / np.abs(H_ref).max(), np.linalg.svd(H_ref, compute_uv=False)
+
+
+def grasp_episode(cfg, reduction=None, phi=None):
+    """Latch, translation + yaw, hold, yaw only, hold, release, free: per-step boundary
+    measurements, the actual attachment rows vs FD at both holds, release bookkeeping."""
+    import Sofa.Simulation
+    from cable_identification import cosserat_model as cm
+    from cable_identification.coupling import IncompatibleGraspCommand, _q_rot
+    h = float(cfg["timestep_s"])
+    L = float(cfg["length_m"])
+    root, cable, coupling = attached_scene(cfg, FIXTURE, reduction)
+    normal = np.asarray(_q_rot(tuple(FIXTURE[3:7]), (0.0, 0.0, 1.0)))
+    out = {"latch_rejected_far": False, "rows": [], "balance": [], "steps": 0}
+    command = PlanarCommand(FIXTURE, GRIPPER_LATCH, h)
     coupling.request_attach()
-    L, h = cfg["length_m"], cfg["timestep_s"]
-    latched = coupling.update_grasp([L, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], 0.0)
-    yaw = 0.5
-    goal = np.array([0.95 * L * math.cos(0.3), 0.95 * L * math.sin(0.3), 0.0])
-    pose = lambda p, a: [*p, 0.0, 0.0, math.sin(a / 2), math.cos(a / 2)]  # noqa: E731
-    start, t = np.array([L, 0.0, 0.0]), 0.0
-    n = round(3.0 / h)
-    for i in range(n):
-        f = (i + 1) / n
-        coupling.update_grasp(pose(start + f * (goal - start), f * yaw), t)
-        t += h
+    far = compose(FIXTURE, [0.712, 0.002, 0.004, 1.0, 0.0, 0.0, 0.0])   # 12.8 mm from the end
+    out["latch_rejected_far"] = not coupling.update_grasp(far, 0.0, np.zeros(6))
+    out["latched"] = coupling.update_grasp(*command.at(0, 0.0))
+    latch_offset = coupling.offset
+    last = len(cable.frames_mo.position.value) - 1
+    command.move(-0.04, 0.05, 0.3)
+    hold_1 = command.steps + round(3.0 / h)
+    command.hold(3.0)
+    command.move(0.0, 0.0, -0.4)
+    hold_2 = command.steps + round(3.0 / h)
+    command.hold(3.0)
+    independent = cable.modal_mo if cable.modal_mo is not None else cable.strain_mo
+    if reduction is None:
+        eps = np.zeros(independent.position.value.size)
+        eps[cm.active_components(cfg)] = 1e-6
+    else:
+        eps = 1e-6 / np.abs(phi).max(axis=0)
+    columns = np.tile([1.0 / L] * 3 + [1.0] * 3, int(cfg["number_of_sections"]))
+    frames, reactions, base, plane, end, identity = [], [], [], [], [], True
+    for k in range(command.steps):
+        if k + 1 in (hold_1, hold_2):
+            pre = cable.save_state()
+        coupling.update_grasp(*command.at(k + 1, (k + 1) * h))
         Sofa.Simulation.animate(root, h)
-    velocity_settle = settle(root, cable)
-    frame = np.asarray(cable.frame_pose(coupling.grasp_index))
-    target = np.asarray(cable.grasp_target_mo.position.value[0])
-    delta = pose_delta(frame, target)
-    position_error, angle_error = np.linalg.norm(delta[:3]), np.linalg.norm(delta[3:])
-    frame_yaw = 2.0 * math.atan2(frame[5], frame[6])
-    # static balance: the clamp reaction on the base equals minus the gripper force
-    lam = np.asarray(cable.frames_mo.force.value)[coupling.grasp_index]
-    base_force = np.asarray(cable.base_mo.force.value).ravel()
-    J = tip_jacobian_sofa(cable)
-    clamp = base_force[:3] - (J.T @ lam)[:3]
-    balance = np.linalg.norm(clamp + lam[:3]) / np.linalg.norm(lam[:3])
-    ok = (latched and coupling.grasp_index == len(cable.frame_poses()) - 1
-          and position_error < 2e-4 and angle_error < 5e-3 and abs(frame_yaw - yaw) < 5e-3
-          and balance < 1e-6 and velocity_settle < 1e-6)
-    results.append(("grasp: latch at the tip, planar drag + yaw tracked, base reaction = -F",
-                    ok, f"position err {1e3 * position_error:.3f} mm, orientation err "
-                        f"{1e3 * angle_error:.2f} mrad, yaw {frame_yaw:.4f} ({yaw}), |F|={np.linalg.norm(lam[:3]):.3f} N, "
-                        f"balance rel {balance:.1e}, settled |v|={velocity_settle:.1e}"))
-    # detach: the end is free again and the cable relaxes towards its rest length
+        poses = np.array(cable.frames_mo.position.value, dtype=float)
+        frames.append(poses[:, :3].copy())
+        reactions.append(cable.attachment_reaction())
+        delta = pose_delta(np.asarray(cable.base_mo.position.value[0], dtype=float), np.asarray(FIXTURE))
+        base.append((np.linalg.norm(delta[:3]), np.linalg.norm(delta[3:])))
+        plane.append(np.abs((poses[:, :3] - FIXTURE[:3]) @ normal).max())
+        end.append(cable.attachment_residual())
+        identity &= (int(cable.attachment.index.value) == last and coupling.offset == latch_offset
+                     and coupling.latched)
+        if k + 1 in (hold_1, hold_2):
+            post = cable.save_state()
+            H, nnz = constraint_rows(independent, 3)
+            cable.restore_state(pre)
+            H_fd = residual_jacobian_fd(cable, independent, eps)
+            cable.restore_state(post)
+            rows = np.array([1.0 / L, 1.0 / L, 1.0])
+            if reduction is None:
+                active = cm.active_components(cfg)
+                error, sigma = scaled_rows_error(H[:, active], H_fd[:, active], rows, columns[active])
+                force = cable.attachment_reaction()
+                strain = np.asarray(cable.strain_mo.position.value, dtype=float).ravel()
+                rest = np.asarray(cable.strain_mo.rest_position.value, dtype=float).ravel()
+                residual = cm.strain_weights(cfg) * (strain - rest) - H.T @ force
+                elastic = cm.strain_weights(cfg) * (strain - rest)
+                moments = [i for i in active if i % 6 < 3]
+                forces = [i for i in active if i % 6 >= 3]
+                out["balance"].append((np.abs(residual[moments]).max() / np.abs(elastic[moments]).max(),
+                                       np.abs(residual[forces]).max() / np.abs(elastic[forces]).max(),
+                                       np.abs(elastic[moments]).max(), np.abs(elastic[forces]).max()))
+                out["rows"].append((error, sigma, nnz, None))
+            else:
+                error, sigma = scaled_rows_error(H, H_fd, rows, np.ones(H.shape[1]))
+                H_q, _ = constraint_rows(cable.strain_mo, 3)
+                rom = np.abs(H - H_q @ phi).max() / np.abs(H).max()
+                out["rows"].append((error, sigma, nnz, rom))
+    out["steps"] = command.steps
+    # an out-of-plane command is refused and leaves the target untouched
+    target = cable.attachment_target()
+    lifted = list(command.at(command.steps, 0.0)[0])
+    lifted[:3] = list(np.asarray(lifted[:3]) + 0.02 * normal)
+    try:
+        coupling.update_grasp(lifted, command.steps * h + h, np.zeros(6))
+        out["rejected_lift"] = False
+    except IncompatibleGraspCommand:
+        out["rejected_lift"] = np.array_equal(target, cable.attachment_target())
+    # release: rows off, nothing reset, then free motion without any attachment force
+    before = mechanical_fields(cable)
     coupling.request_detach()
-    step(root, 30.0)
-    frames = np.asarray(cable.frame_poses())
-    chain = np.linalg.norm(np.diff(frames[:, :3], axis=0), axis=1).sum()
-    results.append(("detach releases the end (free cable relaxes)", coupling.state == 0
-                    and float(cable.grasp_spring.stiffness.value[0]) == 0.0 and abs(chain - L) < 2e-4,
-                    f"chain {chain:.5f} m after 30 s, state {coupling.state}"))
+    after = mechanical_fields(cable)
+    out["release_untouched"] = all(np.array_equal(before[key], after[key]) for key in before)
+    free_lambda, free_nnz = 0.0, 0
+    for _ in range(round(0.5 / h)):
+        Sofa.Simulation.animate(root, h)
+        free_lambda = max(free_lambda, np.abs(cable.attachment.findData("lambda").value).max())
+        free_nnz = max(free_nnz, constraint_rows(independent, 3)[1])
+    out.update(frames=np.array(frames), reactions=np.array(reactions), base=np.array(base),
+               plane=np.array(plane), end=np.array(end), identity=identity,
+               free_lambda=free_lambda, free_nnz=free_nnz, active_after=cable.attachment_active())
+    Sofa.Simulation.unload(root)
+    return out
+
+
+_EPISODES = {}
+
+
+def stage_b_episodes(cfg):
+    """The grasp episode on the FOM and on the full-space diagnostic ROM (run once)."""
+    import tempfile
+    from cable_identification.strain_basis import read_modes, write_full_space_basis
+    if "fom" not in _EPISODES:
+        c = nominal_attachment_cfg(cfg)
+        _EPISODES["fom"] = grasp_episode(c)
+        with tempfile.TemporaryDirectory(prefix="cable-full-space-") as directory:
+            reduction = write_full_space_basis(c, directory)
+            _EPISODES["rom"] = grasp_episode(c, reduction, read_modes(reduction.modes_path))
+    return _EPISODES["fom"], _EPISODES["rom"]
+
+
+def check_fixture(cfg, results):
+    """Fixed base and planarity over the grasp episode (FOM and ROM); fixture placement
+    semantics: once per run, identical repeats are no-ops, a move needs reset_fixture."""
+    import Sofa.Simulation
+    for name, run in zip(("FOM", "ROM"), stage_b_episodes(cfg)):
+        dp, dtheta = run["base"].max(axis=0)
+        results.append((f"{name}: fixed base over the run (<= 1e-9 m, 1e-9 rad)",
+                        dp <= LIMITS["base_position"] and dtheta <= LIMITS["base_angle"],
+                        f"max |dp| {dp:.1e} m, max |dtheta| {dtheta:.1e} rad over {len(run['base'])} steps"))
+        results.append((f"{name}: planarity over the run (frames within 1e-8 m of the fixture plane)",
+                        run["plane"].max() <= LIMITS["plane"], f"max distance {run['plane'].max():.1e} m"))
+    c = nominal_attachment_cfg(cfg)
+    root, cable, coupling = attached_scene(c, FIXTURE)
+    for _ in range(4):
+        Sofa.Simulation.animate(root, c["timestep_s"])
+    placed = np.array(cable.base_mo.position.value, copy=True)
+    coupling.on_fixture(list(FIXTURE))                   # same TF again: no-op
+    repeat_ok = np.array_equal(placed, cable.base_mo.position.value)
+    moved = list(FIXTURE)
+    moved[0] += 1e-3
+    try:
+        coupling.on_fixture(moved)
+        moved_refused = False
+    except ValueError:
+        moved_refused = np.array_equal(placed, cable.base_mo.position.value)
+    coupling.reset_fixture(moved)
+    Sofa.Simulation.animate(root, c["timestep_s"])
+    reset_ok = np.abs(pose_delta(np.asarray(cable.base_mo.position.value[0], dtype=float),
+                                 np.asarray(moved))).max() <= 1e-12
+    results.append(("fixture placed once per run: identical repeat is a no-op, a move raises, "
+                    "reset_fixture starts the new run", repeat_ok and moved_refused and reset_ok,
+                    f"repeat unchanged {repeat_ok}, move refused {moved_refused}, reset placed {reset_ok}"))
+    Sofa.Simulation.unload(root)
+
+
+def check_grasp(cfg, results):
+    """Equality attachment of s = L: residuals, identity, actual rows (FOM H_q, ROM H_a) vs FD,
+    transmission (static balance), rejection of incompatible commands, release, FOM == ROM."""
+    fom, rom = stage_b_episodes(cfg)
+    for name, run in (("FOM", fom), ("ROM", rom)):
+        dp = np.linalg.norm(run["end"][:, :2], axis=1).max()
+        dyaw = np.abs(run["end"][:, 2]).max()
+        results.append((f"{name}: latch only within 10 mm (12.8 mm refused, 5.4 mm latched); end "
+                        "residual over the run (<= 1e-5 m, 1e-4 rad)",
+                        run["latch_rejected_far"] and run["latched"] and dp <= LIMITS["end_position"]
+                        and dyaw <= LIMITS["end_yaw"],
+                        f"max |dp| {dp:.1e} m, max |dyaw| {dyaw:.1e} rad over {run['steps']} steps"))
+        results.append((f"{name}: same end section and bitwise-identical offset until release",
+                        run["identity"], f"identity held: {run['identity']}"))
+        for hold, (error, sigma, nnz, rom_error) in zip(("hold 1", "hold 2"), run["rows"]):
+            ok = error <= LIMITS["rows_fd"] and sigma[-1] > 1e-10 * sigma[0] and len(sigma) == 3
+            detail = (f"scaled max|H - dC/dx_fd| / max|H| = {error:.1e}, sigma {sigma[0]:.3g} .. "
+                      f"{sigma[-1]:.3g} (ratio {sigma[-1] / sigma[0]:.2e}), nnz {nnz}")
+            label = "H_q (strain MO)" if rom_error is None else "H_a (modal MO)"
+            if rom_error is not None:
+                ok &= rom_error <= LIMITS["rows_rom"]
+                detail += f"; max|H_a - H_q Phi| / max|H_a| = {rom_error:.1e}"
+            results.append((f"{name} {hold}: actual {label} == FD dC/dx (<= 1e-6), row rank 3", ok, detail))
+        results.append((f"{name}: plane-incompatible command (20 mm lift) refused, target untouched",
+                        run["rejected_lift"], f"refused {run['rejected_lift']}"))
+        results.append((f"{name}: release keeps positions/velocities bitwise, no rows or force after",
+                        run["release_untouched"] and run["free_lambda"] == 0.0 and run["free_nnz"] == 0
+                        and not run["active_after"],
+                        f"state untouched {run['release_untouched']}, max |lambda| after "
+                        f"{run['free_lambda']:.1e}, max nnz after {run['free_nnz']}"))
+    for hold, (moment, force, m_scale, f_scale) in zip(("hold 1", "hold 2"), fom["balance"]):
+        results.append((f"FOM {hold}: transmission W (q - q0) == H_q^T (lambda / h), moments and "
+                        "forces separately (rel <= 1e-3)",
+                        moment <= LIMITS["balance"] and force <= LIMITS["balance"],
+                        f"moment rows rel {moment:.1e} (max {m_scale:.3e} N.m), force rows rel "
+                        f"{force:.1e} (max {f_scale:.3e} N)"))
+    frames = np.abs(fom["frames"] - rom["frames"]).max()
+    reaction = [np.abs(fom["reactions"][:, rows] - rom["reactions"][:, rows]).max()
+                / np.abs(fom["reactions"][:, rows]).max() for rows in ([0, 1], [2])]
+    results.append(("full-space ROM == FOM over the episode: frames (<= 1e-8 m), reactions "
+                    "(<= 1e-6 rel, force and moment)",
+                    frames <= LIMITS["rom_frames"] and max(reaction) <= LIMITS["rom_reaction"],
+                    f"max |frames| diff {frames:.1e} m, force rel {reaction[0]:.1e}, moment rel "
+                    f"{reaction[1]:.1e} (max |F| {np.abs(fom['reactions'][:, :2]).max():.3f} N, max "
+                    f"|Mz| {np.abs(fom['reactions'][:, 2]).max():.2e} N.m)"))
+
+
+def check_checkpoint(cfg, results):
+    """Rollout checkpoint: save mid-ramp, advance N steps, restore, replay the same N steps."""
+    import Sofa.Simulation
+    c = nominal_attachment_cfg(cfg)
+    h = c["timestep_s"]
+    root, cable, coupling = attached_scene(c, FIXTURE)
+    command = PlanarCommand(FIXTURE, GRIPPER_LATCH, h)
+    coupling.request_attach()
+    coupling.update_grasp(*command.at(0, 0.0))
+    command.move(-0.04, 0.05, 0.3)
+    frames_node = cable.frames_mo.getContext()
+
+    def advance(k, n):
+        history = []
+        for k in range(k, k + n):
+            coupling.update_grasp(*command.at(k + 1, (k + 1) * h))
+            Sofa.Simulation.animate(root, h)
+            history.append((np.array(cable.frames_mo.position.value, dtype=float),
+                            np.array(cable.frames_mo.velocity.value, dtype=float),
+                            cable.attachment_reaction(), float(root.time.value)))
+        return k + 1, history
+
+    k, _ = advance(0, command.steps // 3)
+    saved = {"k": k, "coupling": coupling.checkpoint()}
+    n = 200
+    k_a, first = advance(saved["k"], n)
+    after_a = (k_a, float(root.time.value), float(frames_node.time.value),
+               int(cable.attachment.index.value), coupling.offset)
+    coupling.restore(saved["coupling"])
+    restored_time = float(root.time.value) == saved["coupling"]["time"] == float(frames_node.time.value)
+    k_b, second = advance(saved["k"], n)
+    after_b = (k_b, float(root.time.value), float(frames_node.time.value),
+               int(cable.attachment.index.value), coupling.offset)
+    position = max(np.abs(a[0] - b[0]).max() for a, b in zip(first, second))
+    velocity = max(np.abs(a[1] - b[1]).max() for a, b in zip(first, second))
+    reaction = max(np.abs(a[2] - b[2]).max() for a, b in zip(first, second))
+    times = all(a[3] == b[3] for a, b in zip(first, second))
+    moving = np.linalg.norm(first[-1][0][-1, :3] - first[0][0][-1, :3])
+    results.append((f"checkpoint mid-ramp -> {n} steps -> restore -> replay (<= 1e-12 m, 1e-12 N; "
+                    "time, command index, attachment index and offset exact)",
+                    position <= LIMITS["replay_position"] and reaction <= LIMITS["replay_reaction"]
+                    and times and restored_time and after_a == after_b,
+                    f"max |dx| {position:.1e} m, |dv| {velocity:.1e}, |dF| {reaction:.1e}; times equal "
+                    f"{times}, restored time (root and child) {restored_time}, end state (k, t, index, "
+                    f"offset) equal {after_a == after_b}; the end moved {1e3 * moving:.2f} mm during "
+                    f"the window"))
     Sofa.Simulation.unload(root)
 
 
@@ -511,7 +914,8 @@ def check_convergence(cfg, results):
 
 
 CHECKS = {"traction": check_traction, "bending": check_bending, "kinematics": check_kinematics,
-          "restore": check_restore, "grasp": check_grasp, "energy": check_energy,
+          "transpose": check_transpose, "restore": check_restore, "fixture": check_fixture,
+          "grasp": check_grasp, "checkpoint": check_checkpoint, "energy": check_energy,
           "convergence": check_convergence}
 
 

@@ -1,0 +1,293 @@
+diff -ruN a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt	2026-01-07 13:49:35.000000000 +0100
++++ b/CMakeLists.txt	2026-10-10 18:00:10.887934974 +0100
+@@ -50,6 +50,7 @@
+     ${SRC_ROOT_DIR}/mapping/LegendrePolynomialsMapping.inl
+     ${SRC_ROOT_DIR}/constraint/CosseratNeedleSlidingConstraint.h
+     ${SRC_ROOT_DIR}/constraint/CosseratNeedleSlidingConstraint.inl
++    ${SRC_ROOT_DIR}/constraint/PlanarAttachmentConstraint.h
+     )
+ set(SOURCE_FILES
+     ${SRC_ROOT_DIR}/initCosserat.cpp
+@@ -66,6 +67,7 @@
+     ${SRC_ROOT_DIR}/constraint/CosseratSlidingConstraint.cpp
+     ${SRC_ROOT_DIR}/mapping/LegendrePolynomialsMapping.cpp
+     ${SRC_ROOT_DIR}/constraint/CosseratNeedleSlidingConstraint.cpp
++    ${SRC_ROOT_DIR}/constraint/PlanarAttachmentConstraint.cpp
+     )
+ 
+ 
+diff -ruN a/src/Cosserat/constraint/PlanarAttachmentConstraint.cpp b/src/Cosserat/constraint/PlanarAttachmentConstraint.cpp
+--- a/src/Cosserat/constraint/PlanarAttachmentConstraint.cpp	1970-01-01 00:00:00.000000000 +0000
++++ b/src/Cosserat/constraint/PlanarAttachmentConstraint.cpp	2026-10-10 17:59:55.440321154 +0100
+@@ -0,0 +1,169 @@
++/******************************************************************************
++*                 SOFA, Simulation Open-Framework Architecture                *
++*                    (c) 2006 INRIA, USTL, UJF, CNRS, MGH                     *
++*                                                                             *
++* This program is free software; you can redistribute it and/or modify it     *
++* under the terms of the GNU Lesser General Public License as published by    *
++* the Free Software Foundation; either version 2.1 of the License, or (at     *
++* your option) any later version.                                             *
++******************************************************************************/
++#define SOFA_COSSERAT_CPP_PlanarAttachmentConstraint
++#include <Cosserat/constraint/PlanarAttachmentConstraint.h>
++
++#include <sofa/component/constraint/lagrangian/model/BilateralConstraintResolution.h>
++#include <sofa/core/ConstraintParams.h>
++#include <sofa/core/ObjectFactory.h>
++#include <sofa/linearalgebra/BaseVector.h>
++
++#include <cmath>
++
++namespace Cosserat::constraint
++{
++
++using sofa::type::Vec3;
++using Quat = sofa::type::Quat<SReal>;
++
++namespace
++{
++
++struct PlaneAxes
++{
++    Vec3 x, y, n;
++};
++
++PlaneAxes planeAxes(const Quat& q)
++{
++    return {q.rotate(Vec3(1, 0, 0)), q.rotate(Vec3(0, 1, 0)), q.rotate(Vec3(0, 0, 1))};
++}
++
++/// Twist of a relative rotation about the unit axis n, in (-pi, pi]: atan2 keeps the digits
++/// an acos of the scalar part loses near the identity.
++SReal twistAngle(Quat relative, const Vec3& n)
++{
++    if (relative[3] < 0)
++        for (int i = 0; i < 4; ++i)
++            relative[i] = -relative[i];
++    const SReal along = relative[0] * n[0] + relative[1] * n[1] + relative[2] * n[2];
++    return 2 * std::atan2(along, relative[3]);
++}
++
++} // namespace
++
++template <class DataTypes>
++PlanarAttachmentConstraint<DataTypes>::PlanarAttachmentConstraint()
++    : Inherit(nullptr)
++    , d_index(initData(&d_index, 0u, "index", "Index of the attached frame in the mechanical state"))
++    , d_target(initData(&d_target, "target", "Prescribed pose of the attached frame (world)"))
++    , d_targetVelocity(initData(&d_targetVelocity, "targetVelocity",
++                                "Prescribed twist [v, omega] of the target (world), used when the "
++                                "solver works on velocity violations"))
++    , d_planeOrientation(initData(&d_planeOrientation, Quat(0, 0, 0, 1), "planeOrientation",
++                                  "Fixture orientation: its x and y axes span the plane, z is the normal"))
++    , d_active(initData(&d_active, false, "active", "The three rows exist only while true (attach/release)"))
++    , d_violation(initData(&d_violation, "violation",
++                           "OUTPUT: [dx, dy, dyaw] of the free motion in the last solve"))
++    , d_lambda(initData(&d_lambda, "lambda", "OUTPUT: Lagrange multipliers of the last solve, as the "
++                                             "constraint solver returns them"))
++{
++    d_violation.setReadOnly(true);
++    d_lambda.setReadOnly(true);
++}
++
++template <class DataTypes>
++void PlanarAttachmentConstraint<DataTypes>::buildConstraintMatrix(
++    const sofa::core::ConstraintParams*, DataMatrixDeriv& c_d, unsigned int& cIndex,
++    const DataVecCoord& x)
++{
++    m_built = false;
++    if (!d_active.getValue())
++        return;
++    const unsigned int index = d_index.getValue();
++    if (index >= x.getValue().size())
++    {
++        msg_error() << "index " << index << " is outside the mechanical state ("
++                    << x.getValue().size() << " frames)";
++        return;
++    }
++    const PlaneAxes axes = planeAxes(d_planeOrientation.getValue());
++    auto c = sofa::helper::getWriteAccessor(c_d);
++    m_cid = cIndex;
++    auto rowX = c->writeLine(m_cid);
++    rowX.addCol(index, Deriv(axes.x, Vec3()));
++    auto rowY = c->writeLine(m_cid + 1);
++    rowY.addCol(index, Deriv(axes.y, Vec3()));
++    auto rowYaw = c->writeLine(m_cid + 2);
++    rowYaw.addCol(index, Deriv(Vec3(), axes.n));
++    cIndex += 3;
++    m_built = true;
++}
++
++template <class DataTypes>
++void PlanarAttachmentConstraint<DataTypes>::getConstraintViolation(
++    const sofa::core::ConstraintParams* cParams, sofa::linearalgebra::BaseVector* resV,
++    const DataVecCoord& x, const DataVecDeriv& v)
++{
++    if (!m_built)
++        return;
++    const unsigned int index = d_index.getValue();
++    const PlaneAxes axes = planeAxes(d_planeOrientation.getValue());
++    Vec3 violation;
++    if (cParams->constOrder() == sofa::core::ConstraintOrder::VEL)
++    {
++        const Deriv& velocity = v.getValue()[index];
++        const Deriv& target = d_targetVelocity.getValue();
++        const Vec3 dv = velocity.getVCenter() - target.getVCenter();
++        const Vec3 dw = velocity.getVOrientation() - target.getVOrientation();
++        violation = Vec3(dv * axes.x, dv * axes.y, dw * axes.n);
++    }
++    else
++    {
++        const Coord& frame = x.getValue()[index];
++        const Coord& target = d_target.getValue();
++        const Vec3 dp = frame.getCenter() - target.getCenter();
++        violation = Vec3(dp * axes.x, dp * axes.y,
++                         twistAngle(frame.getOrientation() * target.getOrientation().inverse(), axes.n));
++    }
++    for (unsigned int i = 0; i < 3; ++i)
++        resV->set(m_cid + i, violation[i]);
++    d_violation.setValue(violation);
++}
++
++template <class DataTypes>
++void PlanarAttachmentConstraint<DataTypes>::getConstraintResolution(
++    const sofa::core::ConstraintParams*,
++    std::vector<sofa::core::behavior::ConstraintResolution*>& resTab, unsigned int& offset)
++{
++    if (!m_built)
++        return;
++    // No stored forces: the 3x3 block starts cold every step, so a replay is deterministic.
++    resTab[offset] = new sofa::component::constraint::lagrangian::model::BilateralConstraintResolution3Dof();
++    offset += 3;
++}
++
++template <class DataTypes>
++void PlanarAttachmentConstraint<DataTypes>::storeLambda(
++    const sofa::core::ConstraintParams* cParams, sofa::core::MultiVecDerivId res,
++    const sofa::linearalgebra::BaseVector* lambda)
++{
++    Inherit::storeLambda(cParams, res, lambda);
++    d_lambda.setValue(m_built ? Vec3(lambda->element(m_cid), lambda->element(m_cid + 1),
++                                     lambda->element(m_cid + 2))
++                              : Vec3());
++}
++
++template class SOFA_COSSERAT_API PlanarAttachmentConstraint<sofa::defaulttype::Rigid3Types>;
++
++} // namespace Cosserat::constraint
++
++namespace Cosserat
++{
++
++void registerPlanarAttachmentConstraint(sofa::core::ObjectFactory* factory)
++{
++    factory->registerObjects(sofa::core::ObjectRegistrationData(
++        "Bilateral attachment of one Rigid3 frame to a prescribed pose in the three in-plane "
++        "directions [x, y, yaw] of a fixture plane (Lagrange multipliers).")
++        .add<constraint::PlanarAttachmentConstraint<sofa::defaulttype::Rigid3Types>>(true));
++}
++
++} // namespace Cosserat
+diff -ruN a/src/Cosserat/constraint/PlanarAttachmentConstraint.h b/src/Cosserat/constraint/PlanarAttachmentConstraint.h
+--- a/src/Cosserat/constraint/PlanarAttachmentConstraint.h	1970-01-01 00:00:00.000000000 +0000
++++ b/src/Cosserat/constraint/PlanarAttachmentConstraint.h	2026-10-10 17:59:02.549642937 +0100
+@@ -0,0 +1,78 @@
++/******************************************************************************
++*                 SOFA, Simulation Open-Framework Architecture                *
++*                    (c) 2006 INRIA, USTL, UJF, CNRS, MGH                     *
++*                                                                             *
++* This program is free software; you can redistribute it and/or modify it     *
++* under the terms of the GNU Lesser General Public License as published by    *
++* the Free Software Foundation; either version 2.1 of the License, or (at     *
++* your option) any later version.                                             *
++******************************************************************************/
++#pragma once
++
++#include <Cosserat/config.h>
++
++#include <sofa/core/behavior/LagrangianConstraint.h>
++#include <sofa/defaulttype/RigidTypes.h>
++#include <sofa/type/Quat.h>
++#include <sofa/type/Vec.h>
++
++namespace Cosserat::constraint
++{
++
++/**
++ * Bilateral attachment of one Rigid3 frame to a prescribed pose, restricted to the three
++ * in-plane directions of a fixture plane. The rows are the planar residuals
++ *
++ *   C = [ (p - p_target) . e_x,  (p - p_target) . e_y,  yaw(q q_target^-1) about n ]
++ *
++ * with (e_x, e_y, n) the axes of `planeOrientation`, so the solver sees exactly three rows
++ * (matrix, violation, 3x3 block resolution and stored multipliers all use the same three).
++ * `lambda` holds the multipliers of the last solve as SOFA's constraint solver returns them.
++ */
++template <class DataTypes>
++class PlanarAttachmentConstraint : public sofa::core::behavior::LagrangianConstraint<DataTypes>
++{
++public:
++    SOFA_CLASS(SOFA_TEMPLATE(PlanarAttachmentConstraint, DataTypes),
++               SOFA_TEMPLATE(sofa::core::behavior::LagrangianConstraint, DataTypes));
++
++    using Inherit = sofa::core::behavior::LagrangianConstraint<DataTypes>;
++    using Coord = typename DataTypes::Coord;
++    using Deriv = typename DataTypes::Deriv;
++    using Real = typename DataTypes::Real;
++    using DataVecCoord = typename Inherit::DataVecCoord;
++    using DataVecDeriv = typename Inherit::DataVecDeriv;
++    using DataMatrixDeriv = typename Inherit::DataMatrixDeriv;
++    using Vec3 = sofa::type::Vec3;
++
++    sofa::Data<unsigned int> d_index;
++    sofa::Data<Coord> d_target;
++    sofa::Data<Deriv> d_targetVelocity;
++    sofa::Data<sofa::type::Quat<SReal>> d_planeOrientation;
++    sofa::Data<bool> d_active;
++    sofa::Data<Vec3> d_violation;
++    sofa::Data<Vec3> d_lambda;
++
++    void buildConstraintMatrix(const sofa::core::ConstraintParams* cParams, DataMatrixDeriv& c,
++                               unsigned int& cIndex, const DataVecCoord& x) override;
++    void getConstraintViolation(const sofa::core::ConstraintParams* cParams,
++                                sofa::linearalgebra::BaseVector* resV, const DataVecCoord& x,
++                                const DataVecDeriv& v) override;
++    void getConstraintResolution(const sofa::core::ConstraintParams* cParams,
++                                 std::vector<sofa::core::behavior::ConstraintResolution*>& resTab,
++                                 unsigned int& offset) override;
++    void storeLambda(const sofa::core::ConstraintParams* cParams, sofa::core::MultiVecDerivId res,
++                     const sofa::linearalgebra::BaseVector* lambda) override;
++
++protected:
++    PlanarAttachmentConstraint();
++
++    unsigned int m_cid{0};
++    bool m_built{false};
++};
++
++#if !defined(SOFA_COSSERAT_CPP_PlanarAttachmentConstraint)
++extern template class SOFA_COSSERAT_API PlanarAttachmentConstraint<sofa::defaulttype::Rigid3Types>;
++#endif
++
++} // namespace Cosserat::constraint
+diff -ruN a/src/Cosserat/initCosserat.cpp b/src/Cosserat/initCosserat.cpp
+--- a/src/Cosserat/initCosserat.cpp	2026-01-07 13:49:35.000000000 +0100
++++ b/src/Cosserat/initCosserat.cpp	2026-10-10 18:00:10.895934775 +0100
+@@ -43,6 +43,7 @@
+ 
+ extern void registerCosseratNeedleSlidingConstraint(sofa::core::ObjectFactory* factory);
+ extern void registerCosseratSlidingConstraint(sofa::core::ObjectFactory* factory);
++extern void registerPlanarAttachmentConstraint(sofa::core::ObjectFactory* factory);
+ extern void registerPointsManager(sofa::core::ObjectFactory* factory);
+ extern void registerProjectionEngine(sofa::core::ObjectFactory* factory);
+ extern void registerBeamHookeLawForceField(sofa::core::ObjectFactory* factory);
+@@ -94,6 +95,7 @@
+ #endif
+   registerCosseratNeedleSlidingConstraint(factory);
+   registerCosseratSlidingConstraint(factory);
++  registerPlanarAttachmentConstraint(factory);
+   registerPointsManager(factory);
+   registerProjectionEngine(factory);
+   registerBeamHookeLawForceField(factory);

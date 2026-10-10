@@ -121,8 +121,12 @@ class RosCouplingController(Sofa.Core.Controller):
                 print("[cable_scene] cable clamped at cable_fixture_frame")
             g = self._lookup("cable_grasp_frame")
             now_s = self.node.get_clock().now().nanoseconds * 1e-9
-            if g is not None and self.coupling.update_grasp(g, now_s):
-                print("[cable_scene] gripper latched onto the cable end")
+            from cable_identification.coupling import IncompatibleGraspCommand
+            try:
+                if g is not None and self.coupling.update_grasp(g, now_s):
+                    print("[cable_scene] gripper latched onto the cable end")
+            except IncompatibleGraspCommand as exc:
+                print(f"[cable_scene] gripper command rejected, end target held: {exc}")
         else:  # hanging mode: gripper drives the base
             g = self._lookup("cable_grasp_frame")
             if g is not None:

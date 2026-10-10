@@ -24,6 +24,7 @@ from being circular. Only the truth instance owns the grasp state.
 
 import time
 
+from cable_identification.coupling import IncompatibleGraspCommand
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
@@ -166,8 +167,12 @@ class CableSofaNode(Node):
                     f"[{fixture[0]:.3f} {fixture[1]:.3f} {fixture[2]:.3f}]")
             grasp = self._lookup(self.grasp_frame)
             if grasp is not None:
-                if self.coupling.update_grasp(grasp, now.nanoseconds * 1e-9):
-                    self.get_logger().info("gripper latched onto the cable end")
+                try:
+                    if self.coupling.update_grasp(grasp, now.nanoseconds * 1e-9):
+                        self.get_logger().info("gripper latched onto the cable end")
+                except IncompatibleGraspCommand as exc:
+                    self.get_logger().error(
+                        f"gripper command rejected, end target held: {exc}", throttle_duration_sec=1.0)
         else:
             grasp = self._lookup(self.grasp_frame)
             if grasp is None:

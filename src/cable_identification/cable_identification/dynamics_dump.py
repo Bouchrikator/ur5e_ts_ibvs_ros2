@@ -177,6 +177,9 @@ def read_exports(cable, export_dir):
 def drive(cable, coupling, cfg, drag_steps, tip_offset, exporters):
     """Attach and drag; returns (state before the last step, n_steps) after that step."""
     import Sofa.Simulation
+    if cable.attachment is not None:
+        raise NotImplementedError("the dump reads the penalty-grip and base-spring terms; the planar "
+                                  "scene uses the Lagrange attachment (dump rework: Stage C)")
     root = cable.solver_node.getRoot()
     coupling.request_attach()
     h = float(cfg["timestep_s"])

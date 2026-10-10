@@ -19,13 +19,12 @@ cable:
   gravity: [0.0, 0.0, 0.0]
   planar: true
   grasp_tip: true
-  # No-slip grasp (no measurement of the real mounting yet): stiff penalty
-  # springs on the grasped frame so the attachment error stays far below the
-  # 1 mm / 0.02 rad identifiability budget (1e5 N/m: 0.1 mm per 10 N of cable
-  # tension; 10 N.m/rad: 4 mrad per EI*kappa = 0.04 N.m end moment). Lower
-  # these only to a measured grasp compliance.
+  # planar + grasp_tip: fixed fixture and the exact (Lagrange) planar attachment of the
+  # end s = L; the penalty-grip stiffnesses below only apply to non-planar grasp scenes.
   grasp_stiffness: 100000.0
   grasp_angular_stiffness: 10.0
   attach_mode: explicit    # a supervisor requests the grasp; no proximity magic
-  attach_distance_m: 0.15  # xy proximity to the free end for the snap
-  attach_height_m: 0.01    # gripper within 1 cm of the table plane to snap
+  # latch within this 3D distance of the end; while attached the commanded end must stay
+  # within it of the fixture plane, and its section normal within attach_tilt_rad
+  attach_distance_m: 0.010
+  attach_tilt_rad: 0.05

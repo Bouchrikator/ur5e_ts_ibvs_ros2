@@ -8,6 +8,12 @@ Canonical node structure (mirrors the Cosserat v25.12 plugin examples):
         cosseratCoordinate  Vec6d strains + BeamHookeLawForceField + Kelvin-Voigt damping
         frames              Rigid3d centerline frames + UniformMass + DiscreteCosseratMapping
 
+Planar table scene (``planar`` and ``grasp_tip``): the base is the fixed fixture
+(``FixedProjectiveConstraint``, no anchor spring) and the material end s = L is held by the
+three bilateral rows ``[x, y, yaw]`` of ``PlanarAttachmentConstraint`` (cosserat-patches/0004)
+in fixture axes, solved by FreeMotionAnimationLoop + GenericConstraintCorrection. Its
+multiplier is an impulse: the reaction on the cable is ``lambda / h``.
+
 Strain state per section: ``(kappa_x, kappa_y, kappa_z, eps_x, eps_y, eps_z)`` = torsion,
 bending about y and z, axial extension and the two shears, all as increments over the
 straight rest configuration: the plugin's exponential adds the unit axial stretch itself,
@@ -58,14 +64,15 @@ DEFAULT_CONFIG = {
     # False: base driven by the gripper, tip free (hanging cable)
     # True:  base clamped at the fixture, tip attached to gripper on latch
     "grasp_tip": False,
-    "attach_distance_m": 0.15,   # xy proximity to the free end
-    "attach_height_m": 0.01,     # gripper must be this close to the table plane
+    # latch: gripper within this 3D distance of the cable end; while attached, the
+    # commanded end target must stay within it of the fixture plane
+    "attach_distance_m": 0.010,
+    "attach_tilt_rad": 0.05,     # commanded end-section normal vs plane normal
     # "proximity" latches on its own; "explicit" waits for a supervisor request
     "attach_mode": "proximity",
-    # No-slip grasp assumption (no measurement of the real mounting yet): penalty
-    # springs stiff enough that the attachment error stays far below the 1 mm /
-    # 0.02 rad identifiability budget under the rod's mN / mN.m loads. Any real
-    # grasp compliance goes here once it is measured.
+    # Legacy penalty grip (non-planar grasp_tip only; the planar scene uses the exact
+    # Lagrange attachment): springs stiff enough that the attachment error stays far
+    # below the 1 mm / 0.02 rad identifiability budget under the rod's mN / mN.m loads.
     "grasp_stiffness": 1.0e5,
     "grasp_angular_stiffness": 10.0,
     # Constrain the cable to the z = base plane (table shaping without contact)
@@ -88,6 +95,8 @@ REQUIRED_PLUGINS = [
     "Sofa.Component.StateContainer",
     "Sofa.Component.SolidMechanics.Spring",
     "Sofa.Component.Constraint.Projective",
+    "Sofa.Component.Constraint.Lagrangian.Solver",
+    "Sofa.Component.Constraint.Lagrangian.Correction",
     "Sofa.Component.Mass",
     "Sofa.Component.MechanicalLoad",
     "Cosserat",
@@ -181,14 +190,31 @@ def add_required_plugins(root):
     root.addObject("DefaultAnimationLoop")
 
 
-def prepare_root(root, cfg, animation_loop="DefaultAnimationLoop", extra_plugins=()):
-    """Plugins + gravity/dt + animation loop (None: the caller adds its own loop)."""
+def uses_planar_attachment(cfg):
+    """Planar table scene: fixed fixture + Lagrange end attachment (needs FreeMotionAnimationLoop)."""
+    return bool(cfg.get("planar") and cfg.get("grasp_tip"))
+
+
+def prepare_root(root, cfg, animation_loop="auto", extra_plugins=()):
+    """Plugins + gravity/dt + exactly one animation loop.
+
+    "auto": FreeMotionAnimationLoop and its constraint solver for the Lagrange end
+    attachment, DefaultAnimationLoop for force-only scenes; None: the caller adds its own.
+    """
     root.gravity = [float(g) for g in cfg["gravity"]]
     root.dt = float(cfg["timestep_s"])
     root.addObject("RequiredPlugin", name="cable_plugins",
                    pluginName=REQUIRED_PLUGINS + list(extra_plugins))
+    if animation_loop == "auto":
+        animation_loop = ("FreeMotionAnimationLoop" if uses_planar_attachment(cfg)
+                          else "DefaultAnimationLoop")
     if animation_loop:
         root.addObject(animation_loop)
+    if animation_loop == "FreeMotionAnimationLoop":
+        # One 3x3 bilateral block, inverted exactly per Gauss-Seidel sweep; the tolerance
+        # only stops the second sweep. Cold start every step (no stored multipliers).
+        root.addObject("BlockGaussSeidelConstraintSolver", name="constraintSolver",
+                       maxIterations=100, tolerance=1e-14, computeConstraintForces=True)
 
 
 def build_geometry(cfg):
@@ -280,7 +306,8 @@ class CableHandles:
 
     def __init__(self, solver_node, base_mo, strain_mo, force_field, frames_mo, cfg,
                  grasp_target_mo=None, ode_solver=None, grasp_spring=None, mapping=None,
-                 modal_mo=None, mor_mapping=None, linear_systems=None, damping=None):
+                 modal_mo=None, mor_mapping=None, linear_systems=None, damping=None,
+                 attachment=None, fixture=None):
         self.solver_node = solver_node
         self.base_mo = base_mo
         self.strain_mo = strain_mo
@@ -294,6 +321,9 @@ class CableHandles:
         self.modal_mo = modal_mo
         self.mor_mapping = mor_mapping
         self.damping = damping
+        # planar table scene: PlanarAttachmentConstraint on the last frame, fixture projection
+        self.attachment = attachment
+        self.fixture = fixture
         self.kelvin_voigt_s = float(cfg["rayleigh_stiffness_s"])
         # {"A": MatrixLinearSystem, "M": ..., "B": ..., "K": ...} when built with expose_matrices
         self.linear_systems = linear_systems or {}
@@ -372,10 +402,46 @@ class CableHandles:
         if self.mapping is not None:
             self.mapping.init()
 
-    def set_grasp_pose(self, pose7):
-        """Move the kinematic target the grasped frame is attached to."""
+    def set_grasp_pose(self, pose7, twist6=None):
+        """Prescribe the pose (and twist [v, omega], world) of the grasped frame's target.
+
+        The legacy spring target is a pose only; the attachment also takes the twist (used
+        when the constraint solver works on velocities).
+        """
+        if self.attachment is not None:
+            self.attachment.target.value = [float(v) for v in pose7]
+            self.attachment.targetVelocity.value = [float(v) for v in (
+                np.zeros(6) if twist6 is None else twist6)]
+            return
         with self.grasp_target_mo.position.writeable() as p:
             p[0] = pose7
+
+    def set_attachment_active(self, active):
+        """Create/remove the three attachment rows; the cable state is not touched."""
+        if active and not any(obj.getClassName() == "FreeMotionAnimationLoop"
+                              for obj in self.solver_node.getRoot().objects):
+            raise RuntimeError("the Lagrange end attachment needs FreeMotionAnimationLoop at the "
+                               "root (prepare_root(..., animation_loop='auto'))")
+        self.attachment.active.value = bool(active)
+
+    def attachment_active(self):
+        return bool(self.attachment.active.value)
+
+    def attachment_target(self):
+        return np.array(self.attachment.target.value, dtype=float)
+
+    def attachment_residual(self):
+        """Current ``[dx, dy, dyaw]`` of the attached frame vs its target, in fixture axes."""
+        from cable_identification.coupling import planar_residual
+        frame = np.asarray(self.frames_mo.position.value[int(self.attachment.index.value)], dtype=float)
+        return planar_residual(frame, self.attachment_target(),
+                               np.asarray(self.attachment.planeOrientation.value, dtype=float))
+
+    def attachment_reaction(self):
+        """Force/moment ``[Fx, Fy, Mz]`` (fixture axes) the attachment applied on the cable in
+        the last step: the solver's multipliers are impulses (x += h dx, v += dx), so lambda / h."""
+        return np.asarray(self.attachment.findData("lambda").value, dtype=float) / float(
+            self.solver_node.getRoot().dt.value)
 
     def nearest_frame(self, point):
         """Index of the centerline frame closest to a world point (the grasped material point)."""
@@ -550,19 +616,36 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
             linearSystems=[s.getLinkPath() for s in linear_systems.values()],
             solverLinearSystem=linear_systems["A"].getLinkPath(),
             factorizationInvalidation="@systemA.factorizationInvalidation")
-        solver.addObject("SparseLDLSolver", name="solver", template=template,
-                         linearSystem=composite.getLinkPath())
+        linear_solver = solver.addObject("SparseLDLSolver", name="solver", template=template,
+                                         linearSystem=composite.getLinkPath())
     else:
-        solver.addObject("SparseLDLSolver", name="solver",
-                         template="CompressedRowSparseMatrixd")
+        linear_solver = solver.addObject("SparseLDLSolver", name="solver",
+                                         template="CompressedRowSparseMatrixd")
+
+    attached_scene = uses_planar_attachment(cfg)
+    if attached_scene:
+        # compliance of the coupled system (base + strains or modes) from the solver's own
+        # factorisation: LinearSolverConstraintCorrection has no Vec6 template and only
+        # covers its own mechanical state
+        solver.addObject("GenericConstraintCorrection", name="constraintCorrection",
+                         linearSolver=linear_solver.getLinkPath(),
+                         ODESolver=ode_solver.getLinkPath())
 
     rigid_base = solver.addChild("rigidBase")
     base_mo = rigid_base.addObject(
         "MechanicalObject", template="Rigid3d", name="RigidBaseMO",
-        position=[list(base_pose)], showObject=0)
-    rigid_base.addObject(
-        "RestShapeSpringsForceField", name="baseSpring", template="Rigid3d",
-        stiffness=1e8, angularStiffness=1e8, points=0, mstate="@RigidBaseMO")
+        position=[list(base_pose)], velocity=[[0.0] * 6], showObject=0)
+    fixture = None
+    if attached_scene:
+        # Fixed fixture: response and velocity projected to zero. The projection never resets
+        # positions, so the pose is only ever written by set_base_pose (GraspCoupling.on_fixture).
+        fixture = rigid_base.addObject(
+            "FixedProjectiveConstraint", name="fixture", template="Rigid3d", indices=[0],
+            activate_projectVelocity=True)
+    else:
+        rigid_base.addObject(
+            "RestShapeSpringsForceField", name="baseSpring", template="Rigid3d",
+            stiffness=1e8, angularStiffness=1e8, points=0, mstate="@RigidBaseMO")
 
     modal_mo = None
     mor_mapping = None
@@ -610,7 +693,20 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
 
     grasp_target_mo = None
     grasp_spring = None
-    if cfg.get("grasp_tip"):
+    attachment = None
+    if attached_scene:
+        # Ideal planar grip of the end section s = L: rows [x, y, yaw] in fixture axes, off
+        # until the coupling latches. Target = the straight end until then.
+        x, y, z, w = (float(v) for v in base_pose[3:7])
+        length = float(cfg["length_m"])
+        end = [float(base_pose[0]) + length * (1 - 2 * (y * y + z * z)),
+               float(base_pose[1]) + length * 2 * (x * y + z * w),
+               float(base_pose[2]) + length * 2 * (x * z - y * w), x, y, z, w]
+        attachment = frames_node.addObject(
+            "PlanarAttachmentConstraint", name="attachment", template="Rigid3d",
+            index=len(frames) - 1, active=False, target=end, targetVelocity=[0.0] * 6,
+            planeOrientation=[x, y, z, w])
+    elif cfg.get("grasp_tip"):
         # Kinematic pose the grasped frame is attached to (the gripper), initialized
         # at the straight tip so the attachment starts at rest. Stiff external
         # rest-shape springs = the standard attachment for mapped frames; the
@@ -644,7 +740,7 @@ def build_cable(parent, cfg, name="cable", base_pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0
 
     cable = CableHandles(solver, base_mo, strain_mo, force_field, frames_mo, cfg,
                          grasp_target_mo, ode_solver, grasp_spring, mapping,
-                         modal_mo, mor_mapping, linear_systems, damping)
+                         modal_mo, mor_mapping, linear_systems, damping, attachment, fixture)
     if cfg.get("convective_inertia", False):
         add_convective_inertia(cable, frames_node)
     return cable

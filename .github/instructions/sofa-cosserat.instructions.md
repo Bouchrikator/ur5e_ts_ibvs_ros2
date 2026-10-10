@@ -9,7 +9,10 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
 §5 before changing anything in the scene; do not reintroduce a listed bug.
 
 ## Scene construction ([cosserat_model.py](../../src/cable_identification/cable_identification/cosserat_model.py))
-- Root needs an explicit `DefaultAnimationLoop` (v25.12 errors in `animate()` without it).
+- Root needs exactly one explicit animation loop (v25.12 errors in `animate()` without
+  one): `FreeMotionAnimationLoop` + `BlockGaussSeidelConstraintSolver` for the Lagrange end
+  attachment (`planar` + `grasp_tip`), `DefaultAnimationLoop` for force-only legacy scenes.
+  `prepare_root(animation_loop="auto")` picks it; `None` = the caller adds its own. Never both.
 - v25.12 renamed `GenericConstraintSolver` to `BlockGaussSeidelConstraintSolver`.
 - The strain MO is `Vec6d`, section-major `(kappa_x, kappa_y, kappa_z, eps_x, eps_y,
   eps_z)` as increments over the straight rod (the plugin adds the unit axial stretch
@@ -17,11 +20,15 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
   `Vec6d` with `useInertiaParams` (EI, GI, EA, GA); the pinned release's Vec6 route is
   only usable with `cosserat-patches/0002` (uninitialised `d_EIy/d_EIz`, `applyJ` index
   bug, `applyJT` copying its outputs and zeroing the linear-strain rows).
-- Constraints act on the **independent** Cosserat strain MO, never on the mapped
+- Projective constraints act on the **independent** Cosserat strain MO, never on the mapped
   `FramesMO`: a `PartialFixedProjectiveConstraint` on mapped dofs is a silent no-op
   ("only main mechanical states have an associated submatrix"). Planar =
   `fixedDirections [1,1,0,0,0,1]` on the strain MO (torsion, bend_y, shear_z locked;
   bend_z, extension, in-plane shear free); the ROM gets planarity from the basis.
+  Lagrange rows may originate on mapped frames when their propagation to the independent
+  dofs is implemented and tested: `PlanarAttachmentConstraint` on `FramesMO` reaches the
+  strains/modes through the mappings' `applyJT(MatrixDeriv)` (`cable_fom_test --checks
+  grasp`: actual `H_q` and `H_a` vs FD, `H_a == H_q Phi`).
 - `DiscreteCosseratMapping.applyJ` IS the derivative of `apply()` since
   `cosserat-patches/0002` (the tangent operator is built from the full twist, rest axial
   strain 1); `applyJT == applyJ^T`. Checked by `cable_fom_test` (FD 1e-10, virtual work
@@ -42,10 +49,19 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
   frame wrench (`convective_inertia`, `add_convective_inertia`), off by default: at
   h = 0.01 s it diverged when the softest cable snapped taut (stable at 0.005 s);
   enable it only with `timestep_s <= 0.005`. The dump and `cable_fom_test` account for it.
-- Grasp = `RestShapeSpringsForceField` (`grasp_stiffness` 1e5 N/m, angular 10 N m/rad:
-  the no-slip assumption until the real mounting is measured) on the grasped frame,
-  moved with `set_grasp_point` at latch. `BilateralLagrangianConstraint` through
-  `DiscreteCosseratMapping` dragged the base (400 mm error): do not go back to it.
+- Planar table scene (`planar` + `grasp_tip`): the base is the fixed fixture
+  (`FixedProjectiveConstraint`, no anchor spring; it never projects positions, so only
+  `GraspCoupling.on_fixture`/`reset_fixture` write the pose) and the end s = L is held by
+  the three bilateral rows `[x, y, yaw]` of `PlanarAttachmentConstraint`
+  (`cosserat-patches/0004`), solved with `GenericConstraintCorrection` linked to the
+  cable's solvers (`LinearSolverConstraintCorrection` has no Vec6 template and covers one
+  MO only). Its multiplier is an impulse: reaction = `lambda / h` (checked at h and h/2).
+  History and regression condition: a six-row `BilateralLagrangianConstraint` through
+  `DiscreteCosseratMapping` with a spring-held base dragged the base (400 mm error);
+  `cable_fom_test --checks fixture grasp` must keep base drift <= 1e-9 m / rad.
+- Legacy branch only (non-planar `grasp_tip`): the penalty grip `RestShapeSpringsForceField`
+  (`grasp_stiffness` 1e5 N/m, angular 10 N m/rad) on the grasped frame, moved with
+  `set_grasp_point` at latch. It is not an exact attachment.
 - Never call `reinit()` on a component before `Simulation.init` has resolved its
   links: runSofa segfaults (exit code -11), it does not raise. Guard as
   `set_grasp_spring_enabled` does (`findLink("mstate").getLinkedBase() is not None`).
@@ -67,9 +83,17 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
   RHS; the Kelvin-Voigt damping is a real force (`B = df/dv` in the damping observer).
 
 ## Grasp coupling ([coupling.py](../../src/cable_identification/cable_identification/coupling.py))
-- The spring is disabled while DETACHED. On the latch edge the frame nearest to the
-  gripper becomes the grasped frame (`set_grasp_point`; the cable beyond it is free)
-  and the relative pose gripper -> frame is captured, so the target
+- Planar table scene: latch only within `attach_distance_m` (0.010 m, 3D) of the end
+  s = L (mapping refreshed first); `T_offset = T_g^-1 T_end` is captured once and the
+  target is `T_g T_offset` with twist `v_g + w_g x (R_g p_offset), w_g` until release.
+  Commands leaving the plane (> `attach_distance_m`) or tilting the section normal
+  (> `attach_tilt_rad`) raise `IncompatibleGraspCommand` (the live nodes log it, the
+  target is held); never project them silently. Release only removes the rows. The
+  fixture is placed once per run; a moved fixture needs `reset_fixture`.
+  `checkpoint()`/`restore()` is the rollout replay state (mechanics, time, attachment).
+- Legacy spring grip: the spring is disabled while DETACHED. On the latch edge the frame
+  nearest to the gripper becomes the grasped frame (`set_grasp_point`; the cable beyond it
+  is free) and the relative pose gripper -> frame is captured, so the target
   `gripper (+) offset` starts exactly at rest: no ramp, no reach clamp. Pulling past
   the rest length stretches the rod (EA), it is not slip. On clamp use the analytic
   straight tip (fixture + `[L,0,0]`), not the stale mapped frame.
@@ -161,5 +185,5 @@ assembled-matrix identities.
   a hold).
 - LMIs above ~20 states: `solve_cable_ts_lmi --backend sparse` (SCS); cvxpy and
   Clarabel are OOM-killed. The verifier is the gate, not the solver status.
-- `cable_sofa_*` commands install the pinned MOR plugin through `in_live`; the
-  FOM commands do not need it.
+- `cable_sofa_*` and `cable_fom_test` (its restore and grasp checks build the full-space
+  diagnostic ROM) install the pinned MOR plugin through `in_live`.
