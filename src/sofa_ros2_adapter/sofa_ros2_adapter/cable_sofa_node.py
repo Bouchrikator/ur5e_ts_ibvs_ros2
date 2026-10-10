@@ -22,6 +22,7 @@ Running two instances with different configs is what keeps the identification
 from being circular. Only the truth instance owns the grasp state.
 """
 
+import math
 import time
 
 from cable_identification.coupling import IncompatibleGraspCommand
@@ -56,7 +57,7 @@ class CableSofaNode(Node):
         self.declare_parameter("grasp_frame", "cable_grasp_frame")
         self.declare_parameter("fixture_frame", "cable_fixture_frame")
         self.declare_parameter("publish_rate_hz", 30.0)
-        self.declare_parameter("max_steps_per_cycle", 20)
+        self.declare_parameter("max_steps_per_cycle", 0)  # 0: derived from timestep and rate
 
         self.base_frame = self.get_parameter("base_frame").value
         self.grasp_frame = self.get_parameter("grasp_frame").value
@@ -115,8 +116,15 @@ class CableSofaNode(Node):
                 Trigger, "/cable/detach", self._on_detach)
 
         self._sim_ns = None
+        self._first_grasp_ns = None
         self._logged_track = False
         rate = float(self.get_parameter("publish_rate_hz").value)
+        # real-time clock (ibvs_world real_time_factor 1): 1/rate s of steps per callback
+        required = math.ceil(1.0 / (rate * self.root.dt.value))
+        self.max_steps = self.max_steps or 2 * required  # derived: 2x real-time catch-up
+        if self.max_steps < required:
+            raise ValueError(f"max_steps_per_cycle {self.max_steps} < {required} steps per callback "
+                             f"needed at timestep {self.root.dt.value} s and {rate} Hz")
         self.timer = self.create_timer(1.0 / rate, self._cycle)
 
     # ------------------------------------------------------------------
@@ -162,9 +170,10 @@ class CableSofaNode(Node):
         self._advance(now.nanoseconds)
 
     def _advance(self, now_ns):
-        """Integrate from the ROS time of the SOFA state (``_sim_ns``) towards ``now_ns``, at most
-        max_steps substeps. Each substep takes the gripper boundary TF interpolates over it; an
-        interval TF cannot evaluate yet stays pending (backlog kept, never extrapolated)."""
+        """Integrate from the ROS time of the SOFA state (``_sim_ns``: set once by _start_epoch,
+        then advanced by executed steps only) towards ``now_ns``, at most max_steps substeps. Each
+        substep takes the gripper boundary TF interpolates over it; an interval TF cannot evaluate
+        yet stays pending (backlog kept, never extrapolated)."""
         if self.table_mode and not self.coupling.fixture_set:
             fixture = self._lookup(self.fixture_frame)
             if fixture is None:
@@ -176,7 +185,9 @@ class CableSofaNode(Node):
         dt = self.root.dt.value
         dt_ns = round(dt * 1e9)
         if self._sim_ns is None:
-            self._sim_ns = now_ns  # ROS time of the SOFA state, advanced by executed steps only
+            self._sim_ns = self._start_epoch(now_ns, dt_ns)
+            if self._sim_ns is None:
+                return
         stepped = 0
         started = time.perf_counter()
         while stepped < self.max_steps and self._sim_ns + dt_ns <= now_ns:
@@ -192,6 +203,24 @@ class CableSofaNode(Node):
         self.solver_pub.publish(Float64MultiArray(
             data=[compute_ms, float((now_ns - self._sim_ns) // dt_ns), float(stepped)]))
         self._publish(Time(nanoseconds=self._sim_ns).to_msg())
+
+    def _start_epoch(self, now_ns, dt_ns):
+        """ROS time of the SOFA state before any step: the stamp of the first gripper transform
+        seen, once TF evaluates both ends of the first interval and it ends by ``now_ns``."""
+        if self._first_grasp_ns is None:
+            try:
+                first = self.tf_buffer.lookup_transform(self.base_frame, self.grasp_frame, Time())
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
+                    tf2_ros.ExtrapolationException):
+                return None
+            self._first_grasp_ns = Time.from_msg(first.header.stamp).nanoseconds
+        start = self._first_grasp_ns
+        if self._lookup(self.grasp_frame, start) is None:
+            self._first_grasp_ns = None  # aged out of the TF cache: pick the next stamp seen
+            return None
+        if start + dt_ns > now_ns or self._lookup(self.grasp_frame, start + dt_ns) is None:
+            return None
+        return start
 
     def _apply_boundary(self, start, end, end_ns, dt):
         """Gripper pose at the substep end and its twist over the substep, from one TF motion."""

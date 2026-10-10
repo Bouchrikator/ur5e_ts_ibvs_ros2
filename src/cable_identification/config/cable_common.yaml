@@ -9,7 +9,8 @@ cable:
   GA_N: 2000.0          # shear rigidity (in-plane shear is a free planar strain)
   number_of_sections: 16
   number_of_frames: 40
-  timestep_s: 0.01
+  # qualified with the convective inertia by cable_fom_test --checks dynamics energy timing
+  timestep_s: 0.0003125
   # -m (dJ/dt) q' of the mapped frame masses (cosserat_model.add_convective_inertia)
   convective_inertia: true
   # Normalized curvilinear coordinates of the virtual markers

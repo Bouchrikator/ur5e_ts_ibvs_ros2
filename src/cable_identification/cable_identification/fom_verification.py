@@ -436,8 +436,8 @@ def check_traction(cfg, results):
         Sofa.Simulation.unload(root)
 
 
-# Stage B: the approved nominal cable. Only the step is overridden (the production config
-# still says timestep_s 0.01; the step is a Stage C decision).
+# Qualification override: the approved nominal cable with an explicit time step and the
+# convective inertia enabled (never taken from the shared production settings).
 NOMINAL = {"length_m": 0.7, "radius_m": 0.004, "mass_kg": 0.07, "EA_N": 5000.0, "EI_Nm2": 0.01,
            "GA_N": 2000.0, "GJ_Nm2": 0.008, "rayleigh_stiffness_s": 0.02, "rayleigh_mass_per_s": 0.0,
            "gravity": [0.0, 0.0, 0.0], "number_of_sections": 16, "number_of_frames": 40,
@@ -465,7 +465,7 @@ def nominal_attachment_cfg(cfg, dt=STAGE_B_DT):
     differing = {key: (cfg.get(key), value) for key, value in NOMINAL.items() if cfg.get(key) != value}
     if differing:
         raise ValueError(f"Stage B checks run on the approved nominal cable; config differs: {differing}")
-    return dict(cfg, timestep_s=dt)
+    return dict(cfg, timestep_s=dt, convective_inertia=True)
 
 
 def compose(a7, b7):
@@ -859,73 +859,115 @@ def refinement(coarse, fine):
     return out
 
 
-def check_dynamics(cfg, results):
-    """Moving-boundary qualification of the production model: the grasp episode at STAGE_B_DT and
-    STAGE_B_DT / 2, plus STAGE_B_DT / 4 only when that comparison fails, compared at matching
-    physical times and material coordinates (finer run = reference); the energy balance with the
-    boundary work and the attached frame's velocity vs the prescribed derivative (POS_AND_VEL
-    enforces positions; targetVelocity is not read) under the same refinement."""
-    keys = ("frames", "reactions", "energy", "dissipation", "boundary", "velocity", "length")
-    runs, selected = {STAGE_B_DT: stage_b_episodes(cfg)[0]}, None
-    for factor in (2, 4):
-        h = STAGE_B_DT / factor
-        if h not in _EPISODES:
-            _EPISODES[h] = grasp_episode(nominal_attachment_cfg(cfg, h))
-        runs[h] = _EPISODES[h]
-        c = refinement(runs[2 * h], runs[h])
-        finite = all(np.all(np.isfinite(runs[step][key])) for step in (2 * h, h) for key in keys)
-        results.append((f"time refinement h = {2 * h} vs {h} (reference), whole grasp episode at matched "
-                        "times: centerline RMS <= 2.5e-4 m, max <= 5e-4 m, physical length <= 1e-4 m",
-                        finite and c["geometry_ok"],
-                        f"{c['samples'][0]} matched samples x {c['samples'][1]} frames: worst-sample RMS "
-                        f"{c['rms']:.2e} m, max {c['max']:.2e} m, physical length {c['length']:.2e} m; finite {finite}"))
-        peak, worst = int(np.argmax(np.linalg.norm(c["F_ref"][:, :2], axis=1))), int(np.argmax(c["force"]))
-        results.append((f"time refinement h = {2 * h} vs {h}: reaction force <= 2e-4 N + 0.01 |F_ref| and "
-                        "moment <= 2e-5 N m + 0.01 |tau_ref| at every matched sample",
-                        finite and c["reaction_ok"],
-                        f"worst force {c['force'].max():.2f} of its bound at t = {(worst + 1) * 2 * h:.4f} s "
-                        f"({np.count_nonzero(c['force'] > 1)} samples over), worst moment {c['moment'].max():.2f} "
-                        f"of its bound ({np.count_nonzero(c['moment'] > 1)} over); force peak at t = "
-                        f"{(peak + 1) * 2 * h:.4f} s: F {np.array2string(c['F'][peak], precision=4)}, F_ref "
-                        f"{np.array2string(c['F_ref'][peak], precision=4)} ({c['force'][peak]:.2f} of its bound)"))
-        if finite and c["geometry_ok"] and c["reaction_ok"]:
-            selected = 2 * h
+def stage_b_limits(run):
+    """Fixture, plane and attachment limits and attachment identity over one grasp episode."""
+    dp, dyaw = np.linalg.norm(run["end"][:, :2], axis=1).max(), np.abs(run["end"][:, 2]).max()
+    base_dp, base_dtheta = run["base"].max(axis=0)
+    ok = (base_dp <= LIMITS["base_position"] and base_dtheta <= LIMITS["base_angle"]
+          and run["plane"].max() <= LIMITS["plane"] and dp <= LIMITS["end_position"]
+          and dyaw <= LIMITS["end_yaw"] and run["identity"])
+    return ok, (f"base {base_dp:.1e} m / {base_dtheta:.1e} rad, plane {run['plane'].max():.1e} m, "
+                f"end {dp:.1e} m / {dyaw:.1e} rad, identity {run['identity']}")
+
+
+def select_timestep(steps, evaluate):
+    """Coarser member of the first (h, h_ref) pair of consecutive ``steps`` whose
+    ``evaluate(h, h_ref) -> (finite, reasons)`` has no rejection reason, and every attempt.
+    A non-finite pair ends the search as a failure (None), never as a rejected candidate."""
+    attempts = []
+    for h, h_ref in zip(steps, steps[1:]):
+        finite, reasons = evaluate(h, h_ref)
+        attempts.append((h, h_ref, finite, reasons))
+        if not finite:
             break
-    steps = sorted(runs, reverse=True)
-    errors = [runs[s]["energy"][-1] - runs[s]["energy"][0] + runs[s]["dissipation"].sum()
-              - runs[s]["boundary"].sum() for s in steps]
-    results.append(("moving-boundary energy: |dE + sum h q'^T D q' - sum h F.u| (numerical) shrinks with h",
-                    all(np.isfinite(errors)) and all(abs(b) < abs(a) for a, b in zip(errors, errors[1:])),
-                    "; ".join(f"h {s}: dE {runs[s]['energy'][-1] - runs[s]['energy'][0]:.4e} J, physical (KV) "
-                              f"{runs[s]['dissipation'].sum():.4e} J, boundary work {runs[s]['boundary'].sum():.4e} J, "
-                              f"numerical {e:.4e} J" for s, e in zip(steps, errors))))
-    velocity = [np.abs(runs[s]["velocity"]).max(axis=0) for s in steps]
-    results.append(("attached frame velocity vs the prescribed boundary derivative converges with h "
-                    "(in-plane components and normal rate)",
-                    all(np.all(b < a) for a, b in zip(velocity, velocity[1:])),
-                    "; ".join(f"h {s}: |dv_x| {v[0]:.2e}, |dv_y| {v[1]:.2e} m/s, |d omega_n| {v[2]:.2e} rad/s"
-                              for s, v in zip(steps, velocity))))
-    for s in steps[1:]:
-        run = runs[s]
-        dp, dyaw = np.linalg.norm(run["end"][:, :2], axis=1).max(), np.abs(run["end"][:, 2]).max()
-        base_dp, base_dtheta = run["base"].max(axis=0)
-        results.append((f"h = {s} run within the Stage B fixture, plane and attachment limits",
-                        base_dp <= LIMITS["base_position"] and base_dtheta <= LIMITS["base_angle"]
-                        and run["plane"].max() <= LIMITS["plane"] and dp <= LIMITS["end_position"]
-                        and dyaw <= LIMITS["end_yaw"] and run["identity"],
-                        f"base {base_dp:.1e} m / {base_dtheta:.1e} rad, plane {run['plane'].max():.1e} m, end "
-                        f"{dp:.1e} m / {dyaw:.1e} rad, identity {run['identity']}"))
-    results.append(("production config runs the coarsest demonstrated time step and the convective inertia",
-                    selected is not None and cfg["timestep_s"] == selected and bool(cfg.get("convective_inertia")),
-                    f"demonstrated step {selected}, config timestep_s = {cfg['timestep_s']}, convective_inertia = "
-                    f"{cfg.get('convective_inertia')}"))
+        if not reasons:
+            return h, attempts
+    return None, attempts
+
+
+def qualify_timestep(cfg):
+    """Bounded halving search for the production step, once per process: grasp episodes at
+    STAGE_B_DT / 2^k (k <= 4) under the qualification override, each (h, h/2) pair judged on the
+    refinement budgets, the moving-boundary energy and attached-frame velocity convergence and
+    the Stage B limits of both runs. Returns (selected, attempts, measurements per h)."""
+    if "selection" not in _EPISODES:
+        keys = ("frames", "reactions", "energy", "dissipation", "boundary", "velocity", "length")
+        measured = {}
+
+        def episode(h):
+            if h == STAGE_B_DT and "fom" in _EPISODES:
+                return _EPISODES["fom"]
+            if h not in _EPISODES:
+                _EPISODES[h] = grasp_episode(nominal_attachment_cfg(cfg, h))
+            return _EPISODES[h]
+
+        def evaluate(h, h_ref):
+            runs = (episode(h), episode(h_ref))
+            finite = all(np.all(np.isfinite(run[key])) for run in runs for key in keys)
+            c = refinement(*runs)
+            energy = [run["energy"][-1] - run["energy"][0] + run["dissipation"].sum() - run["boundary"].sum()
+                      for run in runs]
+            velocity = [np.abs(run["velocity"]).max(axis=0) for run in runs]
+            limits = [stage_b_limits(run) for run in runs]
+            reasons = [] if c["geometry_ok"] else ["centerline/length budget"]
+            reasons += [f"reaction {name} {c[name].max():.2f} of its bound ({np.count_nonzero(c[name] > 1)} "
+                        f"samples)" for name in ("force", "moment") if c[name].max() > 1]
+            if not abs(energy[1]) < abs(energy[0]):
+                reasons.append("moving-boundary energy error does not shrink")
+            if not np.all(velocity[1] < velocity[0]):
+                reasons.append("attached-frame velocity error does not shrink")
+            reasons += [f"Stage B limits at h = {s}" for s, (ok, _) in zip((h, h_ref), limits) if not ok]
+            measured[h] = (c, energy, velocity, limits)
+            return finite, reasons
+
+        _EPISODES["selection"] = (*select_timestep([STAGE_B_DT / 2 ** k for k in range(5)], evaluate),
+                                  measured)
+    return _EPISODES["selection"]
+
+
+def check_dynamics(cfg, results):
+    """Production time step: every attempted (h, h/2) pair of the bounded search is printed with
+    its measurements and rejection reasons; the result is the selected pair's qualification and
+    the saved production configuration against it."""
+    selected, attempts, measured = qualify_timestep(cfg)
+    lines = []
+    for h, h_ref, finite, reasons in attempts:
+        c, energy, velocity, _ = measured[h]
+        line = (f"h = {h} vs {h_ref}: centerline RMS {c['rms']:.2e} m, max {c['max']:.2e} m, length "
+                f"{c['length']:.2e} m; reaction force {c['force'].max():.2f} and moment {c['moment'].max():.2f} "
+                f"of their bounds; numerical energy {energy[0]:.3e} -> {energy[1]:.3e} J; velocity error "
+                f"{velocity[0][:2].max():.2e} -> {velocity[1][:2].max():.2e} m/s, {velocity[0][2]:.2e} -> "
+                f"{velocity[1][2]:.2e} rad/s; " + ("NON-FINITE history" if not finite else
+                                                     "rejected: " + "; ".join(reasons) if reasons else "qualified"))
+        print(f"[timestep candidate] {line}")
+        lines.append(line)
+        if not finite:
+            results.append((f"timestep candidate h = {h} vs {h_ref}: finite histories", False, line))
+    detail = "no pair qualified up to STAGE_B_DT / 16: " + " | ".join(lines)
+    if selected is not None:
+        c, energy, velocity, limits = measured[selected]
+        peak = int(np.argmax(np.linalg.norm(c["F_ref"][:, :2], axis=1)))
+        worst = int(np.argmax(c["force"]))
+        detail = (f"selected h = {selected} (reference {selected / 2}): {lines[-1]}; force peak at t = "
+                  f"{(peak + 1) * selected:.4f} s F {np.array2string(c['F'][peak], precision=4)} vs "
+                  f"{np.array2string(c['F_ref'][peak], precision=4)} ({c['force'][peak]:.2f} of its bound), worst "
+                  f"force sample t = {(worst + 1) * selected:.4f} s; Stage B limits h: {limits[0][1]}; h/2: "
+                  f"{limits[1][1]}; rejected before: {len(attempts) - 1} pair(s)")
+    results.append(("time step qualification: coarser member of the first (h, h/2) pair meeting the "
+                    "refinement, energy, velocity and Stage B budgets, searched to STAGE_B_DT / 16",
+                    selected is not None, detail))
+    results.append(("saved production config runs the qualified time step with the convective inertia",
+                    selected is not None and cfg["timestep_s"] == selected and cfg.get("convective_inertia") is True,
+                    f"production timestep_s = {cfg['timestep_s']}, convective_inertia = "
+                    f"{cfg.get('convective_inertia')}; qualified step {selected}"))
 
 
 def check_timing(cfg, results):
-    """ROS adapter on a deterministic clock (no robot): gripper TF samples fed to the node's
-    buffer, a clock jump larger than max_steps_per_cycle and an interval TF cannot evaluate yet.
-    Checks executed step times, retained backlog, substep boundary samples against the sampled
-    motion, publication stamps, SOFA time vs ROS time, and the held boundary after a rejection."""
+    """ROS adapter on a deterministic clock (no robot): a callback before any gripper TF, a first
+    transform arriving later, then bracketing samples; a clock jump larger than the step cap and
+    an interval TF cannot evaluate yet. Checks the epoch, executed step times, retained backlog,
+    substep poses and twists against the sampled motion, publication stamps, SOFA time vs ROS
+    time, the cap against the real-time requirement, and the held boundary after a rejection."""
     import os
     import tempfile
     import yaml
@@ -941,11 +983,14 @@ def check_timing(cfg, results):
     node = CableSofaNode()
     try:
         dt_ns, cap = round(node.root.dt.value * 1e9), node.max_steps
+        rate = float(node.get_parameter("publish_rate_hz").value)
         t0, L = 100 * 10 ** 9, float(cfg["length_m"])
+        t1 = t0 + 7 * dt_ns  # stamp of the first gripper transform, later than the first callback
+        speed, yaw_rate = 0.01, 0.05
 
-        def gripper(t_ns):  # at the straight end, sliding along y and yawing (planar)
-            s = (t_ns - t0) * 1e-9
-            return [L, 0.01 * s, 0.0, 0.0, 0.0, math.sin(0.025 * s), math.cos(0.025 * s)]
+        def gripper(t_ns):  # at the straight end from t1, sliding along y and yawing (planar)
+            s = (t_ns - t1) * 1e-9
+            return [L, speed * s, 0.0, 0.0, 0.0, math.sin(yaw_rate * s / 2), math.cos(yaw_rate * s / 2)]
 
         def transform(child, pose, t_ns):
             msg = TransformStamped()
@@ -957,59 +1002,79 @@ def check_timing(cfg, results):
             return msg
 
         sample = 4 * dt_ns  # TF samples coarser than the step: every substep is interpolated
-        available = -(-(cap + 12) // 4) * 4  # steps whose end TF can evaluate before the gap
+        available = -(-(cap + 1) // 4) * 4  # TF ends past the cap, inside the second call's reach
 
-        def feed(last_step):
-            for j in range(-2, last_step // 4 + 1):
-                node.tf_buffer.set_transform(transform(node.grasp_frame, gripper(t0 + j * sample),
-                                                       t0 + j * sample), "timing_check")
+        def feed(first_sample, last_step):
+            for j in range(first_sample, last_step // 4 + 1):
+                node.tf_buffer.set_transform(transform(node.grasp_frame, gripper(t1 + j * sample),
+                                                       t1 + j * sample), "timing_check")
 
         node.tf_buffer.set_transform_static(transform(node.fixture_frame, IDENTITY, t0), "timing_check")
-        feed(available)
         applied, stamps, stats = [], [], []
         apply_boundary = node._apply_boundary
+        twist = np.array([0.0, speed, 0.0, 0.0, 0.0, yaw_rate])
 
         def record(start, end, end_ns, dt):
-            applied.append((end_ns, list(end), float(node.root.time.value)))
             apply_boundary(start, end, end_ns, dt)
+            expected = node.coupling.target_twist(gripper(end_ns), twist)
+            applied.append((end_ns, max(np.abs(np.asarray(start) - gripper(end_ns - dt_ns)).max(),
+                                        np.abs(np.asarray(end) - gripper(end_ns)).max()),
+                            np.abs(np.asarray(node.cable.attachment.targetVelocity.value) - expected).max(),
+                            float(node.root.time.value)))
 
         node._apply_boundary = record
         node.frames_pub.publish = lambda msg: stamps.append(Time.from_msg(msg.header.stamp).nanoseconds)
-        node.solver_pub.publish = lambda msg: stats.append([int(v) for v in msg.data[1:]])
+        node.solver_pub.publish = lambda msg: stats.append(list(msg.data))
         node.coupling.request_attach()
         sofa_t0 = float(node.root.time.value)
-        expected = []  # (backlog, stepped, stamp) after each call
-        node._advance(t0)
-        expected.append((0, 0, t0))
-        node._advance(t0 + (cap + 10) * dt_ns)          # clock jump beyond the step cap
-        expected.append((10, cap, t0 + cap * dt_ns))
-        node._advance(t0 + (available + 4) * dt_ns)     # TF ends at step `available`: pending
-        expected.append((4, available - cap, t0 + available * dt_ns))
-        feed(available + 40)
-        node._advance(t0 + (available + 4) * dt_ns)     # samples arrived: the backlog is integrated
-        expected.append((0, 4, t0 + (available + 4) * dt_ns))
-        total = available + 4
-        steps_ok = [a[0] for a in applied] == [t0 + (i + 1) * dt_ns for i in range(total)]
-        calls_ok = [(s[0], s[1], st) for s, st in zip(stats, stamps)] == expected
-        sofa_ok = all(abs(a[2] - sofa_t0 - i * dt_ns * 1e-9) <= 1e-12 for i, a in enumerate(applied))
+        node._advance(t0)                                # no gripper TF yet
+        feed(0, 0)                                       # the first transform, alone
+        node._advance(t1 + 2 * dt_ns)                    # first interval not evaluable yet
+        startup_ok = node._sim_ns is None and not stats and not stamps
+        feed(1, available)
+        expected, done = [], 0
+
+        def call(now_steps, tf_steps):  # expected (backlog, stepped, stamp) from cap, clock and TF
+            nonlocal done
+            stepped = max(0, min(cap, min(now_steps, tf_steps) - done))
+            done += stepped
+            expected.append((now_steps - done, stepped, t1 + done * dt_ns))
+            node._advance(t1 + now_steps * dt_ns)
+
+        call(cap + 10, available)                        # epoch t1, clock jump beyond the step cap
+        call(available + 4, available)                   # TF ends at step `available`: pending
+        feed(available // 4 + 1, available + 40)
+        call(available + 4, available + 40)              # samples arrived: the backlog is integrated
+        total = done
+        steps_ok = [a[0] for a in applied] == [t1 + (i + 1) * dt_ns for i in range(total)]
+        calls_ok = [(int(s[1]), int(s[2]), st) for s, st in zip(stats, stamps)] == expected
+        sofa_ok = all(abs(a[3] - sofa_t0 - i * dt_ns * 1e-9) <= 1e-12 for i, a in enumerate(applied))
         sofa_ok &= abs(float(node.root.time.value) - sofa_t0 - total * dt_ns * 1e-9) <= 1e-12
-        boundary = max(np.abs(np.asarray(a[1]) - gripper(a[0])).max() for a in applied)
+        pose, twist_error = max(a[1] for a in applied), max(a[2] for a in applied)
         latched = node.coupling.latched
+        required = math.ceil(1.0 / (rate * dt_ns * 1e-9))
+        per_step_ms = sum(s[0] for s in stats) / sum(s[2] for s in stats)
         # a rejected command holds the last accepted target pose with zero prescribed motion
         target = node.cable.attachment_target()
-        lifted = gripper(t0 + (total + 1) * dt_ns)
+        lifted = gripper(t1 + (total + 1) * dt_ns)
         lifted[2] += 0.005
-        apply_boundary(lifted, lifted, t0 + (total + 1) * dt_ns, dt_ns * 1e-9)
+        apply_boundary(lifted, lifted, t1 + (total + 1) * dt_ns, dt_ns * 1e-9)
         held = (np.array_equal(target, node.cable.attachment_target())
                 and not np.any(node.cable.attachment.targetVelocity.value))
-        results.append((f"adapter timing (dt {dt_ns * 1e-9} s, cap {cap} steps/cycle): contiguous step times, "
-                        "backlog kept, pending without TF, stamps = integrated time, boundary = TF motion, "
-                        "held boundary after a rejection",
-                        steps_ok and calls_ok and sofa_ok and boundary <= 1e-9 and latched and held,
-                        f"{total} steps at t0 + k dt {steps_ok}; per call (backlog, stepped, stamp - t0 [steps]) "
-                        f"{[(s[0], s[1], (st - t0) // dt_ns) for s, st in zip(stats, stamps)]} == expected "
-                        f"{calls_ok}; SOFA time == integrated ROS time {sofa_ok}; max |boundary - sampled "
-                        f"motion| {boundary:.1e}; latched {latched}; held pose, zero twist {held}"))
+        results.append((f"adapter timing (dt {dt_ns * 1e-9} s, cap {cap} steps/callback at {rate} Hz): late "
+                        "first gripper TF starts the epoch at its stamp, contiguous step times, backlog kept, "
+                        "pending without TF, stamps = integrated time, substep pose/twist = TF motion, cap >= "
+                        "real-time requirement, held boundary after a rejection",
+                        startup_ok and steps_ok and calls_ok and sofa_ok and pose <= 1e-9 and twist_error <= 1e-9
+                        and latched and held and cap >= required,
+                        f"no epoch before a usable interval {startup_ok}, epoch t0 + {(t1 - t0) // dt_ns} dt; {total} "
+                        f"steps at epoch + k dt {steps_ok}; per call (backlog, stepped, stamp - epoch [steps]) "
+                        f"{[(int(s[1]), int(s[2]), (st - t1) // dt_ns) for s, st in zip(stats, stamps)]} == expected "
+                        f"{calls_ok}; SOFA time == integrated ROS time {sofa_ok}; max |pose - sampled motion| "
+                        f"{pose:.1e}, max |target twist - analytic| {twist_error:.1e}; latched {latched}; held pose, "
+                        f"zero twist {held}; cap {cap} >= {required} steps per callback {cap >= required}; measured "
+                        f"compute {per_step_ms:.2f} ms per {dt_ns * 1e-6:.4f} ms step (synthetic run, not a "
+                        f"real-time capacity test)"))
     finally:
         node.destroy_node()
         Sofa.Simulation.unload(node.root)
@@ -1055,19 +1120,19 @@ def free_oscillation(cfg, seconds, kappa=1.0):
 
 
 def check_energy(cfg, results):
-    """Fixed fixture, free end: the integrated balance dE + sum h q'^T D q' is the integrator's
-    energy error, measured at h and h/2 with the configured Kelvin-Voigt damping and in a
-    separately labelled zero-damping (conservative) run; the convective wrench of the scene vs
-    the reference probe at a moving, bent state."""
-    results.append(("qualification config enables the convective inertia explicitly",
-                    bool(cfg.get("convective_inertia")), f"convective_inertia = {cfg.get('convective_inertia')}"))
-    # the conservative run adds h/4: at h and h/2 its error fell only 1.18x (no trend established)
-    for label, overrides, steps in (
-            ("configured Kelvin-Voigt damping", {}, (STAGE_B_DT, STAGE_B_DT / 2)),
-            ("zero damping, conservative energy error only", {"rayleigh_stiffness_s": 0.0},
-             (STAGE_B_DT, STAGE_B_DT / 2, STAGE_B_DT / 4))):
+    """Fixed fixture, free end, at the qualified step h and h/2: the integrated balance
+    dE + sum h q'^T D q' is the integrator's energy error, with the configured Kelvin-Voigt damping
+    and in a separately labelled zero-damping run; the scene's convective wrench vs the reference
+    probe at a moving, bent state."""
+    selected = qualify_timestep(cfg)[0]
+    if selected is None:
+        results.append(("energy at the qualified time step and its half", False,
+                        "no time step qualified (see the dynamics check)"))
+        return
+    for label, overrides in (("configured Kelvin-Voigt damping", {}),
+                             ("zero damping, conservative energy error only", {"rayleigh_stiffness_s": 0.0})):
         errors, details, convective, finite = [], [], None, True
-        for dt in steps:
+        for dt in (selected, selected / 2):
             energy, dissipation, probe, _ = free_oscillation(dict(nominal_attachment_cfg(cfg, dt), **overrides), 4.0)
             convective = convective or probe
             finite &= bool(np.all(np.isfinite(energy)) and np.all(np.isfinite(dissipation)))
@@ -1075,10 +1140,9 @@ def check_energy(cfg, results):
             errors.append(error)
             details.append(f"h {dt}: E0 {energy[0]:.5e} J, dE {energy[-1] - energy[0]:.4e} J, physical "
                            f"(KV) {dissipation.sum():.4e} J, numerical {error:.4e} J ({error / energy[0]:.2e} E0)")
-        ok = finite and all(abs(b) < abs(a) for a, b in zip(errors, errors[1:]))
-        results.append((f"energy, fixed fixture + free end, {label}: |dE + sum h q'^T D q'| shrinks with h",
-                        ok, "; ".join(details) + "; ratios " + ", ".join(
-                            f"{a / b:.2f}" for a, b in zip(errors, errors[1:]))))
+        results.append((f"energy at h = {selected} and h/2, fixed fixture + free end, {label}: "
+                        "|dE + sum h q'^T D q'| shrinks with h", finite and abs(errors[1]) < abs(errors[0]),
+                        "; ".join(details) + f"; ratio {errors[0] / errors[1]:.2f}"))
         if overrides or convective is None:
             continue
         results.append(("convective wrench of the scene == reference probe at a moving, bent state "

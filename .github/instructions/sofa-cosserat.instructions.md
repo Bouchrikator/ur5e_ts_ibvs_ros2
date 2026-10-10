@@ -49,6 +49,8 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
   frame wrench (`convective_inertia`, `add_convective_inertia`), off by default: at
   h = 0.01 s it diverged when the softest cable snapped taut (stable at 0.005 s);
   enable it only with `timestep_s <= 0.005`. The dump and `cable_fom_test` account for it.
+  The planar table config (`cable_common.yaml`) enables it at the step qualified by
+  `cable_fom_test --checks dynamics energy timing` (0.0003125 s).
 - Planar table scene (`planar` + `grasp_tip`): the base is the fixed fixture
   (`FixedProjectiveConstraint`, no anchor spring; it never projects positions, so only
   `GraspCoupling.on_fixture`/`reset_fixture` write the pose) and the end s = L is held by
