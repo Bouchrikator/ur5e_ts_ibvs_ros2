@@ -10,6 +10,8 @@ cable:
   number_of_sections: 16
   number_of_frames: 40
   timestep_s: 0.01
+  # -m (dJ/dt) q' of the mapped frame masses (cosserat_model.add_convective_inertia)
+  convective_inertia: true
   # Normalized curvilinear coordinates of the virtual markers
   marker_s_over_l: [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0]
   # Table shaping: the rod rests on the table -> no effective gravity, and the
@@ -24,7 +26,10 @@ cable:
   grasp_stiffness: 100000.0
   grasp_angular_stiffness: 10.0
   attach_mode: explicit    # a supervisor requests the grasp; no proximity magic
-  # latch within this 3D distance of the end; while attached the commanded end must stay
-  # within it of the fixture plane, and its section normal within attach_tilt_rad
+  # attach_distance_m: 3D latch distance to the end (latch decision only). While attached,
+  # the composed cable target T_gripper T_offset may leave the fixture plane by at most
+  # attach_plane_tolerance_m and tilt its section normal by at most attach_tilt_rad:
+  # numerical tolerances of the ideal planar benchmark, not gripper clearances.
   attach_distance_m: 0.010
-  attach_tilt_rad: 0.05
+  attach_plane_tolerance_m: 1.0e-8
+  attach_tilt_rad: 1.0e-8

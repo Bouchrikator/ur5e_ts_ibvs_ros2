@@ -36,7 +36,8 @@ import sys
 import numpy as np
 
 from cable_identification.dynamics_dump import (
-    NB, frame_jacobians, mapped_wrench, pose_delta, quat, tip_jacobian_fd, tip_jacobian_sofa,
+    NB, constraint_rows, frame_jacobians, mapped_wrench, pose_delta, quat, tip_jacobian_fd,
+    tip_jacobian_sofa,
 )
 
 CONFIG = "/ros2_ws/src/cable_identification/config/cable_truth.yaml"
@@ -71,7 +72,8 @@ def settle(root, cable, seconds=20.0):
 
 
 def energies(cable):
-    """Kinetic energy of the frames (translation + rotation) and elastic energy of the strains."""
+    """Kinetic energy of the frames (translation + rotation, the solver's frame_rigid_mass) and
+    elastic energy 0.5 (q - q_rest)^T W (q - q_rest) of the strains."""
     from cable_identification import cosserat_model as cm
 
     cfg = cable.cfg
@@ -89,7 +91,8 @@ def energies(cable):
         kinetic += 0.5 * float(body_omega @ (inertia * body_omega))
     weights = cm.strain_weights(cfg)
     strain = np.asarray(cable.strain_mo.position.value).ravel()
-    return kinetic, 0.5 * float(np.sum(weights * strain ** 2))
+    rest = np.asarray(cable.strain_mo.rest_position.value).ravel()
+    return kinetic, 0.5 * float(np.sum(weights * (strain - rest) ** 2))
 
 
 def convective_force(cable, eps=1e-6):
@@ -450,7 +453,12 @@ GRIPPER_LATCH = [0.703, 0.002, 0.004, 1.0, 0.0, 0.0, 0.0]
 # Declared limits (acceptance table of the Stage B instructions; solver-level for the replay)
 LIMITS = {"base_position": 1e-9, "base_angle": 1e-9, "plane": 1e-8, "end_position": 1e-5,
           "end_yaw": 1e-4, "rows_fd": 1e-6, "rows_rom": 1e-12, "balance": 1e-3,
-          "rom_frames": 1e-8, "rom_reaction": 1e-6, "replay_position": 1e-12, "replay_reaction": 1e-12}
+          "rom_frames": 1e-8, "rom_reaction": 1e-6, "replay_position": 1e-12, "replay_velocity": 1e-12,
+          "replay_reaction": 1e-12,
+          # FOM refinement budgets (plan, Stage E table): centerline RMS / max, physical length,
+          # reaction force and moment (absolute + relative to the finer run, per matched sample)
+          "refine_rms": 2.5e-4, "refine_max": 5e-4, "refine_length": 1e-4,
+          "refine_force": (2e-4, 0.01), "refine_moment": (2e-5, 0.01)}
 
 
 def nominal_attachment_cfg(cfg, dt=STAGE_B_DT):
@@ -468,11 +476,13 @@ def compose(a7, b7):
 
 class PlanarCommand:
     """Gripper commands in the fixture plane about a latch pose (fixture coordinates):
-    rest-to-rest quintic segments (dx, dy, dyaw), each as short as COMMAND_LIMITS allow.
+    rest-to-rest quintic segments (dx, dy, dyaw), each as short as COMMAND_LIMITS allow, rounded up
+    to multiples of ``grid`` (runs at h and h/2 then follow one path in time).
     ``at(k, t)`` returns (pose7, time, twist6) in world coordinates for update_grasp."""
 
-    def __init__(self, fixture7, latch_local7, h):
+    def __init__(self, fixture7, latch_local7, h, grid=None):
         self.fixture, self.latch, self.h = list(fixture7), list(latch_local7), float(h)
+        self.grid = float(grid or h)
         self.segments, self.end, self.steps = [], np.zeros(3), 0
 
     def move(self, dx, dy, dyaw):
@@ -480,7 +490,7 @@ class PlanarCommand:
         D, Y = math.hypot(dx, dy), abs(dyaw)
         T = max(1.875 * D / COMMAND_LIMITS["speed"], math.sqrt(peak * D / COMMAND_LIMITS["accel"]),
                 1.875 * Y / COMMAND_LIMITS["yaw_rate"], math.sqrt(peak * Y / COMMAND_LIMITS["yaw_accel"]))
-        n = math.ceil(T / self.h - 1e-9)
+        n = round(math.ceil(T / self.grid - 1e-9) * self.grid / self.h)
         self.segments.append((self.steps, self.steps + n, self.end.copy(), self.end + delta))
         self.end, self.steps = self.end + delta, self.steps + n
 
@@ -521,16 +531,6 @@ def attached_scene(cfg, fixture, reduction=None):
     return root, cable, coupling
 
 
-def constraint_rows(mo, n_rows):
-    """Constraint matrix SOFA propagated to ``mo`` in the last step, dense (rows x dofs), nnz."""
-    matrix = mo.constraint.value  # scipy CSR: rows = constraint ids, columns = scalar dofs
-    dense = np.zeros((n_rows, mo.position.value.size))
-    if matrix.shape[0] and matrix.shape[1]:
-        block = matrix.toarray()
-        dense[:block.shape[0], :block.shape[1]] = block
-    return dense, int(matrix.nnz)
-
-
 def residual_jacobian_fd(cable, independent, eps):
     """dC/dx of the attachment residual (target fixed) by central differences over every
     flat coordinate of ``independent`` with nonzero ``eps``, at the current state."""
@@ -558,16 +558,20 @@ def scaled_rows_error(H, H_ref, row_scale, column_scale):
 
 def grasp_episode(cfg, reduction=None, phi=None):
     """Latch, translation + yaw, hold, yaw only, hold, release, free: per-step boundary
-    measurements, the actual attachment rows vs FD at both holds, release bookkeeping."""
+    measurements, energy bookkeeping (E, Kelvin-Voigt dissipation, boundary work h F.u), the
+    attached frame's velocity vs the prescribed derivative, physical length, the actual
+    attachment rows vs FD at both holds, release bookkeeping."""
     import Sofa.Simulation
     from cable_identification import cosserat_model as cm
-    from cable_identification.coupling import IncompatibleGraspCommand, _q_rot
+    from cable_identification.cable_mor_training_scene import physical_length
+    from cable_identification.coupling import IncompatibleGraspCommand, _q_mul, _q_rot
     h = float(cfg["timestep_s"])
     L = float(cfg["length_m"])
     root, cable, coupling = attached_scene(cfg, FIXTURE, reduction)
     normal = np.asarray(_q_rot(tuple(FIXTURE[3:7]), (0.0, 0.0, 1.0)))
+    axes = np.array([_q_rot(tuple(FIXTURE[3:7]), e) for e in ((1, 0, 0), (0, 1, 0), (0, 0, 1))])
     out = {"latch_rejected_far": False, "rows": [], "balance": [], "steps": 0}
-    command = PlanarCommand(FIXTURE, GRIPPER_LATCH, h)
+    command = PlanarCommand(FIXTURE, GRIPPER_LATCH, h, STAGE_B_DT)
     coupling.request_attach()
     far = compose(FIXTURE, [0.712, 0.002, 0.004, 1.0, 0.0, 0.0, 0.0])   # 12.8 mm from the end
     out["latch_rejected_far"] = not coupling.update_grasp(far, 0.0, np.zeros(6))
@@ -587,7 +591,10 @@ def grasp_episode(cfg, reduction=None, phi=None):
     else:
         eps = 1e-6 / np.abs(phi).max(axis=0)
     columns = np.tile([1.0 / L] * 3 + [1.0] * 3, int(cfg["number_of_sections"]))
+    damping = cable.kelvin_voigt_s * cm.strain_weights(cfg)
+    lengths = np.asarray(cable.force_field.length.value, dtype=float)
     frames, reactions, base, plane, end, identity = [], [], [], [], [], True
+    energy, dissipation, boundary, velocity, length = [sum(energies(cable))], [], [], [], []
     for k in range(command.steps):
         if k + 1 in (hold_1, hold_2):
             pre = cable.save_state()
@@ -596,6 +603,16 @@ def grasp_episode(cfg, reduction=None, phi=None):
         poses = np.array(cable.frames_mo.position.value, dtype=float)
         frames.append(poses[:, :3].copy())
         reactions.append(cable.attachment_reaction())
+        strain = np.asarray(cable.strain_mo.position.value, dtype=float).ravel()
+        q_dot = np.asarray(cable.strain_mo.velocity.value, dtype=float).ravel()
+        twist = np.asarray(cable.frames_mo.velocity.value[last], dtype=float)
+        prescribed = np.asarray(cable.attachment.targetVelocity.value, dtype=float)
+        u = np.r_[axes[:2] @ twist[:3], axes[2] @ twist[3:]]
+        energy.append(sum(energies(cable)))
+        dissipation.append(h * float(np.sum(damping * q_dot ** 2)))
+        boundary.append(h * float(reactions[-1] @ u))
+        velocity.append(u - np.r_[axes[:2] @ prescribed[:3], axes[2] @ prescribed[3:]])
+        length.append(physical_length(strain, lengths)[0])
         delta = pose_delta(np.asarray(cable.base_mo.position.value[0], dtype=float), np.asarray(FIXTURE))
         base.append((np.linalg.norm(delta[:3]), np.linalg.norm(delta[3:])))
         plane.append(np.abs((poses[:, :3] - FIXTURE[:3]) @ normal).max())
@@ -629,15 +646,28 @@ def grasp_episode(cfg, reduction=None, phi=None):
                 rom = np.abs(H - H_q @ phi).max() / np.abs(H).max()
                 out["rows"].append((error, sigma, nnz, rom))
     out["steps"] = command.steps
-    # an out-of-plane command is refused and leaves the target untouched
-    target = cable.attachment_target()
-    lifted = list(command.at(command.steps, 0.0)[0])
-    lifted[:3] = list(np.asarray(lifted[:3]) + 0.02 * normal)
-    try:
-        coupling.update_grasp(lifted, command.steps * h + h, np.zeros(6))
-        out["rejected_lift"] = False
-    except IncompatibleGraspCommand:
-        out["rejected_lift"] = np.array_equal(target, cable.attachment_target())
+    # plane-incompatible commands are refused before anything is written
+    valid = list(command.at(command.steps, 0.0)[0])
+    axis = np.asarray(_q_rot(tuple(FIXTURE[3:7]), (1.0, 0.0, 0.0)))
+    cases = {"20 mm lift": [*(np.asarray(valid[:3]) + 0.02 * normal), *valid[3:7]],
+             "5 mm lift": [*(np.asarray(valid[:3]) + 0.005 * normal), *valid[3:7]],
+             "0.02 rad tilt": [*valid[:3], *_q_mul(tuple(quat(0.02 * axis)), tuple(valid[3:7]))]}
+
+    def attachment_snapshot():
+        return (cable.attachment_target(), np.array(cable.attachment.targetVelocity.value, copy=True),
+                coupling.offset, int(cable.attachment.index.value), cable.attachment_active())
+
+    out["rejected"] = {}
+    for label, pose in cases.items():
+        pre_command = attachment_snapshot()
+        try:
+            coupling.update_grasp(pose, command.steps * h + h, np.zeros(6))
+            out["rejected"][label] = False
+        except IncompatibleGraspCommand:
+            post_command = attachment_snapshot()
+            out["rejected"][label] = (np.array_equal(pre_command[0], post_command[0])
+                                      and np.array_equal(pre_command[1], post_command[1])
+                                      and pre_command[2:] == post_command[2:])
     # release: rows off, nothing reset, then free motion without any attachment force
     before = mechanical_fields(cable)
     coupling.request_detach()
@@ -650,6 +680,8 @@ def grasp_episode(cfg, reduction=None, phi=None):
         free_nnz = max(free_nnz, constraint_rows(independent, 3)[1])
     out.update(frames=np.array(frames), reactions=np.array(reactions), base=np.array(base),
                plane=np.array(plane), end=np.array(end), identity=identity,
+               energy=np.array(energy), dissipation=np.array(dissipation), boundary=np.array(boundary),
+               velocity=np.array(velocity), length=np.array(length),
                free_lambda=free_lambda, free_nnz=free_nnz, active_after=cable.attachment_active())
     Sofa.Simulation.unload(root)
     return out
@@ -729,8 +761,11 @@ def check_grasp(cfg, results):
                 ok &= rom_error <= LIMITS["rows_rom"]
                 detail += f"; max|H_a - H_q Phi| / max|H_a| = {rom_error:.1e}"
             results.append((f"{name} {hold}: actual {label} == FD dC/dx (<= 1e-6), row rank 3", ok, detail))
-        results.append((f"{name}: plane-incompatible command (20 mm lift) refused, target untouched",
-                        run["rejected_lift"], f"refused {run['rejected_lift']}"))
+        rejected = run["rejected"]
+        results.append((f"{name}: plane-incompatible commands refused ({', '.join(rejected)}); target, "
+                        "target velocity, offset, index and active flag unchanged",
+                        all(rejected.values()),
+                        ", ".join(f"{label}: {ok}" for label, ok in rejected.items())))
         results.append((f"{name}: release keeps positions/velocities bitwise, no rows or force after",
                         run["release_untouched"] and run["free_lambda"] == 0.0 and run["free_nnz"] == 0
                         and not run["active_after"],
@@ -791,75 +826,266 @@ def check_checkpoint(cfg, results):
     reaction = max(np.abs(a[2] - b[2]).max() for a, b in zip(first, second))
     times = all(a[3] == b[3] for a, b in zip(first, second))
     moving = np.linalg.norm(first[-1][0][-1, :3] - first[0][0][-1, :3])
-    results.append((f"checkpoint mid-ramp -> {n} steps -> restore -> replay (<= 1e-12 m, 1e-12 N; "
-                    "time, command index, attachment index and offset exact)",
+    results.append((f"checkpoint mid-ramp -> {n} steps -> restore -> replay (<= 1e-12 m, 1e-12 m/s and "
+                    "rad/s, 1e-12 N; time, command index, attachment index and offset exact)",
                     position <= LIMITS["replay_position"] and reaction <= LIMITS["replay_reaction"]
+                    and np.isfinite(velocity) and velocity <= LIMITS["replay_velocity"]
                     and times and restored_time and after_a == after_b,
-                    f"max |dx| {position:.1e} m, |dv| {velocity:.1e}, |dF| {reaction:.1e}; times equal "
+                    f"max |dx| {position:.1e} m, |dv| {velocity:.1e} (limit {LIMITS['replay_velocity']:.0e}), "
+                    f"|dF| {reaction:.1e}; times equal "
                     f"{times}, restored time (root and child) {restored_time}, end state (k, t, index, "
                     f"offset) equal {after_a == after_b}; the end moved {1e3 * moving:.2f} mm during "
                     f"the window"))
     Sofa.Simulation.unload(root)
 
 
+def refinement(coarse, fine):
+    """Matched-time comparison of two grasp episodes at h and h/2 (fine = reference: its odd
+    samples end at the coarse sample times, same frames = same material coordinates)."""
+    ref = {key: fine[key][1::2] for key in ("frames", "reactions", "length")}
+    if len(ref["frames"]) != len(coarse["frames"]):
+        raise ValueError("refinement runs do not share one path in time")
+    distance = np.linalg.norm(coarse["frames"] - ref["frames"], axis=2)
+    F, F_ref = coarse["reactions"], ref["reactions"]
+    (fa, fr), (ma, mr) = LIMITS["refine_force"], LIMITS["refine_moment"]
+    force = np.linalg.norm(F[:, :2] - F_ref[:, :2], axis=1) / (fa + fr * np.linalg.norm(F_ref[:, :2], axis=1))
+    moment = np.abs(F[:, 2] - F_ref[:, 2]) / (ma + mr * np.abs(F_ref[:, 2]))
+    out = {"samples": distance.shape, "rms": np.sqrt((distance ** 2).mean(axis=1)).max(),
+           "max": distance.max(), "length": np.abs(coarse["length"] - ref["length"]).max(),
+           "force": force, "moment": moment, "F": F, "F_ref": F_ref}
+    out["geometry_ok"] = (out["rms"] <= LIMITS["refine_rms"] and out["max"] <= LIMITS["refine_max"]
+                          and out["length"] <= LIMITS["refine_length"])
+    out["reaction_ok"] = force.max() <= 1 and moment.max() <= 1
+    return out
+
+
+def check_dynamics(cfg, results):
+    """Moving-boundary qualification of the production model: the grasp episode at STAGE_B_DT and
+    STAGE_B_DT / 2, plus STAGE_B_DT / 4 only when that comparison fails, compared at matching
+    physical times and material coordinates (finer run = reference); the energy balance with the
+    boundary work and the attached frame's velocity vs the prescribed derivative (POS_AND_VEL
+    enforces positions; targetVelocity is not read) under the same refinement."""
+    keys = ("frames", "reactions", "energy", "dissipation", "boundary", "velocity", "length")
+    runs, selected = {STAGE_B_DT: stage_b_episodes(cfg)[0]}, None
+    for factor in (2, 4):
+        h = STAGE_B_DT / factor
+        if h not in _EPISODES:
+            _EPISODES[h] = grasp_episode(nominal_attachment_cfg(cfg, h))
+        runs[h] = _EPISODES[h]
+        c = refinement(runs[2 * h], runs[h])
+        finite = all(np.all(np.isfinite(runs[step][key])) for step in (2 * h, h) for key in keys)
+        results.append((f"time refinement h = {2 * h} vs {h} (reference), whole grasp episode at matched "
+                        "times: centerline RMS <= 2.5e-4 m, max <= 5e-4 m, physical length <= 1e-4 m",
+                        finite and c["geometry_ok"],
+                        f"{c['samples'][0]} matched samples x {c['samples'][1]} frames: worst-sample RMS "
+                        f"{c['rms']:.2e} m, max {c['max']:.2e} m, physical length {c['length']:.2e} m; finite {finite}"))
+        peak, worst = int(np.argmax(np.linalg.norm(c["F_ref"][:, :2], axis=1))), int(np.argmax(c["force"]))
+        results.append((f"time refinement h = {2 * h} vs {h}: reaction force <= 2e-4 N + 0.01 |F_ref| and "
+                        "moment <= 2e-5 N m + 0.01 |tau_ref| at every matched sample",
+                        finite and c["reaction_ok"],
+                        f"worst force {c['force'].max():.2f} of its bound at t = {(worst + 1) * 2 * h:.4f} s "
+                        f"({np.count_nonzero(c['force'] > 1)} samples over), worst moment {c['moment'].max():.2f} "
+                        f"of its bound ({np.count_nonzero(c['moment'] > 1)} over); force peak at t = "
+                        f"{(peak + 1) * 2 * h:.4f} s: F {np.array2string(c['F'][peak], precision=4)}, F_ref "
+                        f"{np.array2string(c['F_ref'][peak], precision=4)} ({c['force'][peak]:.2f} of its bound)"))
+        if finite and c["geometry_ok"] and c["reaction_ok"]:
+            selected = 2 * h
+            break
+    steps = sorted(runs, reverse=True)
+    errors = [runs[s]["energy"][-1] - runs[s]["energy"][0] + runs[s]["dissipation"].sum()
+              - runs[s]["boundary"].sum() for s in steps]
+    results.append(("moving-boundary energy: |dE + sum h q'^T D q' - sum h F.u| (numerical) shrinks with h",
+                    all(np.isfinite(errors)) and all(abs(b) < abs(a) for a, b in zip(errors, errors[1:])),
+                    "; ".join(f"h {s}: dE {runs[s]['energy'][-1] - runs[s]['energy'][0]:.4e} J, physical (KV) "
+                              f"{runs[s]['dissipation'].sum():.4e} J, boundary work {runs[s]['boundary'].sum():.4e} J, "
+                              f"numerical {e:.4e} J" for s, e in zip(steps, errors))))
+    velocity = [np.abs(runs[s]["velocity"]).max(axis=0) for s in steps]
+    results.append(("attached frame velocity vs the prescribed boundary derivative converges with h "
+                    "(in-plane components and normal rate)",
+                    all(np.all(b < a) for a, b in zip(velocity, velocity[1:])),
+                    "; ".join(f"h {s}: |dv_x| {v[0]:.2e}, |dv_y| {v[1]:.2e} m/s, |d omega_n| {v[2]:.2e} rad/s"
+                              for s, v in zip(steps, velocity))))
+    for s in steps[1:]:
+        run = runs[s]
+        dp, dyaw = np.linalg.norm(run["end"][:, :2], axis=1).max(), np.abs(run["end"][:, 2]).max()
+        base_dp, base_dtheta = run["base"].max(axis=0)
+        results.append((f"h = {s} run within the Stage B fixture, plane and attachment limits",
+                        base_dp <= LIMITS["base_position"] and base_dtheta <= LIMITS["base_angle"]
+                        and run["plane"].max() <= LIMITS["plane"] and dp <= LIMITS["end_position"]
+                        and dyaw <= LIMITS["end_yaw"] and run["identity"],
+                        f"base {base_dp:.1e} m / {base_dtheta:.1e} rad, plane {run['plane'].max():.1e} m, end "
+                        f"{dp:.1e} m / {dyaw:.1e} rad, identity {run['identity']}"))
+    results.append(("production config runs the coarsest demonstrated time step and the convective inertia",
+                    selected is not None and cfg["timestep_s"] == selected and bool(cfg.get("convective_inertia")),
+                    f"demonstrated step {selected}, config timestep_s = {cfg['timestep_s']}, convective_inertia = "
+                    f"{cfg.get('convective_inertia')}"))
+
+
+def check_timing(cfg, results):
+    """ROS adapter on a deterministic clock (no robot): gripper TF samples fed to the node's
+    buffer, a clock jump larger than max_steps_per_cycle and an interval TF cannot evaluate yet.
+    Checks executed step times, retained backlog, substep boundary samples against the sampled
+    motion, publication stamps, SOFA time vs ROS time, and the held boundary after a rejection."""
+    import os
+    import tempfile
+    import yaml
+    import rclpy
+    import Sofa.Simulation
+    from geometry_msgs.msg import TransformStamped
+    from rclpy.time import Time
+    from sofa_ros2_adapter.cable_sofa_node import CableSofaNode
+
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as stream:
+        yaml.safe_dump({"cable": cfg}, stream)
+    rclpy.init(args=["--ros-args", "-p", f"cable_config:={stream.name}"])
+    node = CableSofaNode()
+    try:
+        dt_ns, cap = round(node.root.dt.value * 1e9), node.max_steps
+        t0, L = 100 * 10 ** 9, float(cfg["length_m"])
+
+        def gripper(t_ns):  # at the straight end, sliding along y and yawing (planar)
+            s = (t_ns - t0) * 1e-9
+            return [L, 0.01 * s, 0.0, 0.0, 0.0, math.sin(0.025 * s), math.cos(0.025 * s)]
+
+        def transform(child, pose, t_ns):
+            msg = TransformStamped()
+            msg.header.frame_id, msg.child_frame_id = node.base_frame, child
+            msg.header.stamp = Time(nanoseconds=t_ns).to_msg()
+            t, q = msg.transform.translation, msg.transform.rotation
+            t.x, t.y, t.z = pose[:3]
+            q.x, q.y, q.z, q.w = pose[3:7]
+            return msg
+
+        sample = 4 * dt_ns  # TF samples coarser than the step: every substep is interpolated
+        available = -(-(cap + 12) // 4) * 4  # steps whose end TF can evaluate before the gap
+
+        def feed(last_step):
+            for j in range(-2, last_step // 4 + 1):
+                node.tf_buffer.set_transform(transform(node.grasp_frame, gripper(t0 + j * sample),
+                                                       t0 + j * sample), "timing_check")
+
+        node.tf_buffer.set_transform_static(transform(node.fixture_frame, IDENTITY, t0), "timing_check")
+        feed(available)
+        applied, stamps, stats = [], [], []
+        apply_boundary = node._apply_boundary
+
+        def record(start, end, end_ns, dt):
+            applied.append((end_ns, list(end), float(node.root.time.value)))
+            apply_boundary(start, end, end_ns, dt)
+
+        node._apply_boundary = record
+        node.frames_pub.publish = lambda msg: stamps.append(Time.from_msg(msg.header.stamp).nanoseconds)
+        node.solver_pub.publish = lambda msg: stats.append([int(v) for v in msg.data[1:]])
+        node.coupling.request_attach()
+        sofa_t0 = float(node.root.time.value)
+        expected = []  # (backlog, stepped, stamp) after each call
+        node._advance(t0)
+        expected.append((0, 0, t0))
+        node._advance(t0 + (cap + 10) * dt_ns)          # clock jump beyond the step cap
+        expected.append((10, cap, t0 + cap * dt_ns))
+        node._advance(t0 + (available + 4) * dt_ns)     # TF ends at step `available`: pending
+        expected.append((4, available - cap, t0 + available * dt_ns))
+        feed(available + 40)
+        node._advance(t0 + (available + 4) * dt_ns)     # samples arrived: the backlog is integrated
+        expected.append((0, 4, t0 + (available + 4) * dt_ns))
+        total = available + 4
+        steps_ok = [a[0] for a in applied] == [t0 + (i + 1) * dt_ns for i in range(total)]
+        calls_ok = [(s[0], s[1], st) for s, st in zip(stats, stamps)] == expected
+        sofa_ok = all(abs(a[2] - sofa_t0 - i * dt_ns * 1e-9) <= 1e-12 for i, a in enumerate(applied))
+        sofa_ok &= abs(float(node.root.time.value) - sofa_t0 - total * dt_ns * 1e-9) <= 1e-12
+        boundary = max(np.abs(np.asarray(a[1]) - gripper(a[0])).max() for a in applied)
+        latched = node.coupling.latched
+        # a rejected command holds the last accepted target pose with zero prescribed motion
+        target = node.cable.attachment_target()
+        lifted = gripper(t0 + (total + 1) * dt_ns)
+        lifted[2] += 0.005
+        apply_boundary(lifted, lifted, t0 + (total + 1) * dt_ns, dt_ns * 1e-9)
+        held = (np.array_equal(target, node.cable.attachment_target())
+                and not np.any(node.cable.attachment.targetVelocity.value))
+        results.append((f"adapter timing (dt {dt_ns * 1e-9} s, cap {cap} steps/cycle): contiguous step times, "
+                        "backlog kept, pending without TF, stamps = integrated time, boundary = TF motion, "
+                        "held boundary after a rejection",
+                        steps_ok and calls_ok and sofa_ok and boundary <= 1e-9 and latched and held,
+                        f"{total} steps at t0 + k dt {steps_ok}; per call (backlog, stepped, stamp - t0 [steps]) "
+                        f"{[(s[0], s[1], (st - t0) // dt_ns) for s, st in zip(stats, stamps)]} == expected "
+                        f"{calls_ok}; SOFA time == integrated ROS time {sofa_ok}; max |boundary - sampled "
+                        f"motion| {boundary:.1e}; latched {latched}; held pose, zero twist {held}"))
+    finally:
+        node.destroy_node()
+        Sofa.Simulation.unload(node.root)
+        rclpy.shutdown()
+        os.remove(stream.name)
+
+
 def free_oscillation(cfg, seconds, kappa=1.0):
-    """Release a uniformly bent rod; returns the per-step energy bookkeeping and the tip trace."""
+    """A uniformly bent rod released from rest on the fixed fixture, attachment inactive (free
+    end): energy E = T + V after every step and the Kelvin-Voigt dissipation h q'^T D q' of the
+    step; at the last (moving, bent) state, the scene's convective wrench and the reference
+    probe at its step and at half of it."""
     import Sofa.Simulation
     from cable_identification import cosserat_model as cm
-    cfg = dict(cfg, grasp_tip=False)
-    root, cable = build(cfg)
-    Sofa.Simulation.init(root)
+    root, cable, _ = attached_scene(cfg, IDENTITY)
     with cable.strain_mo.position.writeable() as x:
         x[:, 2] = kappa
     cable.refresh_mapping()
-    weights = cm.strain_weights(cfg)
-    damping = cable.kelvin_voigt_s * weights
+    damping = cable.kelvin_voigt_s * cm.strain_weights(cfg)
     h = root.dt.value
-    T0, V0 = energies(cable)
-    rows, tips = [], []
+    energy, dissipation, tips = [sum(energies(cable))], [], []
     for _ in range(round(seconds / h)):
         before = cable.save_state()
         Sofa.Simulation.animate(root, h)
         q_dot = np.asarray(cable.strain_mo.velocity.value).ravel()
-        T1, V1 = energies(cable)
-        dissipated = h * float(np.sum(damping * q_dot ** 2))
-        # discrete work of the explicit convective wrench (start-of-step value) over the step
-        convective_work = h * float(np.sum(np.asarray(cable.convective_wrench)
-                                           * np.asarray(cable.frames_mo.velocity.value)))
-        rows.append((T1 + V1 - (T0 + V0), dissipated, convective_work))
-        T0, V0 = T1, V1
+        energy.append(sum(energies(cable)))
+        dissipation.append(h * float(np.sum(damping * q_dot ** 2)))
         tips.append(cable.tip_pose()[:3])
-    # the scene's convective wrench (computed at the start of the last step) vs an independent
-    # FD at that same state
-    after = cable.save_state()
-    cable.restore_state(before)
-    cable.refresh_mapping()
-    convective = convective_force(cable)
-    scene = mapped_wrench(frame_jacobians(cable), np.asarray(cable.convective_wrench))
-    elastic = -weights * np.asarray(before["strain"]).ravel()
-    ratio = (np.linalg.norm(convective[NB:]) / np.linalg.norm(elastic),
-             np.linalg.norm(scene[NB:] - convective[NB:]) / np.linalg.norm(convective[NB:]))
-    cable.restore_state(after)
-    cable.refresh_mapping()
+    convective = None
+    if cfg.get("convective_inertia"):
+        # the scene's wrench was computed at the start of the last step: compare at that state
+        after = cable.save_state()
+        cable.restore_state(before)
+        scene = mapped_wrench(frame_jacobians(cable), np.asarray(cable.convective_wrench))[NB:]
+        reference = [convective_force(cable, cable.convective_eps * f)[NB:] for f in (1.0, 0.5)]
+        elastic = cm.strain_weights(cfg) * (before["strain"].ravel() - before["strain_rest"].ravel())
+        convective = (np.linalg.norm(scene - reference[0]) / np.linalg.norm(reference[0]),
+                      np.linalg.norm(reference[0] - reference[1]) / np.linalg.norm(reference[0]),
+                      np.linalg.norm(reference[0]) / np.linalg.norm(elastic))
+        cable.restore_state(after)
     Sofa.Simulation.unload(root)
-    return np.asarray(rows), np.asarray(tips), ratio
+    return np.asarray(energy), np.asarray(dissipation), convective, np.asarray(tips)
 
 
 def check_energy(cfg, results):
-    # the energy balance and the wrench check exercise the optional convective term
-    rows, _, ratio = free_oscillation(dict(cfg, convective_inertia=True), 4.0)
-    # dE + physical dissipation - convective work = what the integrator removed
-    numerical = rows[:, 0] + rows[:, 1] - rows[:, 2]
-    total_kv, convective_work = rows[:, 1].sum(), rows[:, 2].sum()
-    ok = np.all(numerical <= 1e-12) and total_kv > 0.0 and abs(convective_work) < 1e-2 * total_kv
-    results.append(("energy: dE + h q'^T D q' - W_conv <= 0 every step (implicit Euler dissipates)", ok,
-                    f"KV dissipation {total_kv:.3e} J, integrator dissipation {-numerical.sum():.3e} J "
-                    f"({-numerical.sum() / total_kv:.2f} x KV), convective work {convective_work:.1e} J "
-                    f"over 4 s, max positive residual {numerical.max():.1e} J"))
-    results.append(("convective inertia wrench of the scene == independent FD (rel < 1e-3)",
-                    ratio[1] < 1e-3, f"rel {ratio[1]:.2e}; |J^T m dJ/dt q'| / |f_int| = {ratio[0]:.2e} "
-                    f"at the end of the oscillation (measured; the plant runs with convective_inertia="
-                    f"{cfg.get('convective_inertia', False)})"))
+    """Fixed fixture, free end: the integrated balance dE + sum h q'^T D q' is the integrator's
+    energy error, measured at h and h/2 with the configured Kelvin-Voigt damping and in a
+    separately labelled zero-damping (conservative) run; the convective wrench of the scene vs
+    the reference probe at a moving, bent state."""
+    results.append(("qualification config enables the convective inertia explicitly",
+                    bool(cfg.get("convective_inertia")), f"convective_inertia = {cfg.get('convective_inertia')}"))
+    # the conservative run adds h/4: at h and h/2 its error fell only 1.18x (no trend established)
+    for label, overrides, steps in (
+            ("configured Kelvin-Voigt damping", {}, (STAGE_B_DT, STAGE_B_DT / 2)),
+            ("zero damping, conservative energy error only", {"rayleigh_stiffness_s": 0.0},
+             (STAGE_B_DT, STAGE_B_DT / 2, STAGE_B_DT / 4))):
+        errors, details, convective, finite = [], [], None, True
+        for dt in steps:
+            energy, dissipation, probe, _ = free_oscillation(dict(nominal_attachment_cfg(cfg, dt), **overrides), 4.0)
+            convective = convective or probe
+            finite &= bool(np.all(np.isfinite(energy)) and np.all(np.isfinite(dissipation)))
+            error = energy[-1] - energy[0] + dissipation.sum()
+            errors.append(error)
+            details.append(f"h {dt}: E0 {energy[0]:.5e} J, dE {energy[-1] - energy[0]:.4e} J, physical "
+                           f"(KV) {dissipation.sum():.4e} J, numerical {error:.4e} J ({error / energy[0]:.2e} E0)")
+        ok = finite and all(abs(b) < abs(a) for a, b in zip(errors, errors[1:]))
+        results.append((f"energy, fixed fixture + free end, {label}: |dE + sum h q'^T D q'| shrinks with h",
+                        ok, "; ".join(details) + "; ratios " + ", ".join(
+                            f"{a / b:.2f}" for a, b in zip(errors, errors[1:]))))
+        if overrides or convective is None:
+            continue
+        results.append(("convective wrench of the scene == reference probe at a moving, bent state "
+                        "(rel < 1e-3), insensitive to halving the probe step (rel < 1e-3)",
+                        convective[0] < 1e-3 and convective[1] < 1e-3,
+                        f"scene vs probe {convective[0]:.2e}, probe eps vs eps/2 {convective[1]:.2e}; "
+                        f"|J^T m dJ/dt q'| / |W (q - q0)| = {convective[2]:.2e}"))
 
 
 def check_convergence(cfg, results):
@@ -905,7 +1131,7 @@ def check_convergence(cfg, results):
                     "markers move < 1 mm", change < budget,
                     f"marker change {1e3 * change:.3f} mm; tension {taut[0][2]:.1f} N; peak |kappa| "
                     f"{taut[0][1]:.1f} -> {taut[1][1]:.1f} /m (boundary layer, not converged: reported)"))
-    tips = [free_oscillation(dict(cfg, timestep_s=dt), 2.0)[1][-1] for dt in (0.02, 0.01, 0.005)]
+    tips = [free_oscillation(dict(cfg, timestep_s=dt), 2.0)[3][-1] for dt in (0.02, 0.01, 0.005)]
     steps = [np.linalg.norm(tips[i + 1] - tips[i]) for i in range(2)]
     results.append(("convergence in timestep (0.02, 0.01, 0.005): tip after 2 s of free oscillation",
                     steps[-1] < 5e-3, "tip change per halving: "
@@ -915,8 +1141,8 @@ def check_convergence(cfg, results):
 
 CHECKS = {"traction": check_traction, "bending": check_bending, "kinematics": check_kinematics,
           "transpose": check_transpose, "restore": check_restore, "fixture": check_fixture,
-          "grasp": check_grasp, "checkpoint": check_checkpoint, "energy": check_energy,
-          "convergence": check_convergence}
+          "grasp": check_grasp, "checkpoint": check_checkpoint, "dynamics": check_dynamics,
+          "timing": check_timing, "energy": check_energy, "convergence": check_convergence}
 
 
 def main(argv=None):

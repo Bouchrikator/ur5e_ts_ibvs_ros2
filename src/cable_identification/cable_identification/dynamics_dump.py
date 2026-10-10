@@ -1,4 +1,4 @@
-"""Every term of  M(q) q'' + C(q,q') q' + f_int(q; EA,EI,GJ) = f_g + J_g(q)^T lambda
+"""Every term of  M(q) q'' + C(q,q') q' + f_int(q; EA,EI,GJ) = f_g + H(q)^T F
 as SOFA assembles it for the Cosserat truth cable.
 
 Builds the cable with ``expose_matrices=True`` (MatrixLinearSystem observers on the
@@ -13,13 +13,16 @@ matrices and Jacobian SOFA evaluates at the state q, q' of its start:
                 SOFA computes no Coriolis/centrifugal term for mapped masses
   f_int         BeamHookeLawForceField: -K_int (q - q0), K_int from
                 MatrixLinearSystem(assembleStiffness, applyMappedComponents=0)
-  f_g           UniformMass x root.gravity (0: table model) + base clamp reaction
-  lambda        FramesMO.force[tip] minus the convective wrench: RestShapeSpringsForceField (F, tau)
+  f_g           UniformMass x root.gravity (0: table model); the fixed base (FixedProjectiveConstraint)
+                and the planar-locked strains are projected dofs, excluded from the balance
+  F             PlanarAttachmentConstraint: lambda / h ([Fx, Fy, Mz], fixture axes), acting through
+                the rows H the mappings propagate (applyJT); FreeMotionAnimationLoop solves the free
+                motion, then the correction A x = H^T lambda (the linear system's last solve)
   C(q,q') q'    also carries the explicit convective term -sum_f J_f^T w_f, w_f = -m_f (dJ_f/dt) q'
                 when the optional ConstantForceField "convectiveInertia" is enabled
                 (cosserat_model.add_convective_inertia; zero with the default config)
   J_g(q)        DiscreteCosseratMapping.applyJ probed with unit velocities (the J SOFA uses)
-  J_g^T lambda  DiscreteCosseratMapping.applyJT (strain/base force minus Hooke and clamp)
+  H^T F         the propagated attachment rows times the reaction (== (G J_g)^T F)
 
 The derivative of the mapping's apply() (central differences) is computed as well and
 asserted equal to applyJ: the pinned Cosserat release rotated the distal rod about the
@@ -49,7 +52,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cable_identification.coupling import _q_conj, _q_mul
+from cable_identification.coupling import _q_conj, _q_mul, _q_rot
 
 
 NB = 6  # Rigid3d base: 3 translations + 3 rotations = first block of every vector/matrix
@@ -152,6 +155,25 @@ def mapped_wrench(jacobians, wrench):
     return np.einsum("fij,fi->j", jacobians, wrench)
 
 
+def constraint_rows(mo, n_rows):
+    """Constraint matrix SOFA propagated to ``mo`` in the last step, dense (rows x dofs), nnz."""
+    matrix = mo.constraint.value  # scipy CSR: rows = constraint ids, columns = scalar dofs
+    dense = np.zeros((n_rows, mo.velocity.value.size))
+    if matrix.shape[0] and matrix.shape[1]:
+        block = matrix.toarray()
+        dense[:block.shape[0], :block.shape[1]] = block
+    return dense, int(matrix.nnz)
+
+
+def attachment_axes(cable):
+    """Rows of the planar attachment in the end frame's twist space: [e_x 0; e_y 0; 0 n]."""
+    q = tuple(cable.attachment.planeOrientation.value)
+    G = np.zeros((3, 6))
+    for row, (block, axis) in enumerate(((0, (1, 0, 0)), (0, (0, 1, 0)), (3, (0, 0, 1)))):
+        G[row, block:block + 3] = _q_rot(q, axis)
+    return G
+
+
 def read_export(path):
     """GlobalSystemMatrixExporter txt: '[' newline, one '[ a b c ]' row per line, ' ]'."""
     rows = [line.strip(" []\n") for line in Path(path).read_text().splitlines()]
@@ -177,9 +199,6 @@ def read_exports(cable, export_dir):
 def drive(cable, coupling, cfg, drag_steps, tip_offset, exporters):
     """Attach and drag; returns (state before the last step, n_steps) after that step."""
     import Sofa.Simulation
-    if cable.attachment is not None:
-        raise NotImplementedError("the dump reads the penalty-grip and base-spring terms; the planar "
-                                  "scene uses the Lagrange attachment (dump rework: Stage C)")
     root = cable.solver_node.getRoot()
     coupling.request_attach()
     h = float(cfg["timestep_s"])
@@ -234,29 +253,30 @@ def collect(cfg, drag_steps, tip_offset, export_dir):
                     np.asarray(cable.strain_mo.force.value).ravel()]
     v_new = np.r_[np.asarray(cable.base_mo.velocity.value).ravel(),
                   np.asarray(cable.strain_mo.velocity.value).ravel()]
-    dv = np.asarray(s["x"], dtype=float)
+    # FreeMotionAnimationLoop: the system's last solve is the constraint correction
+    # A x = b = H^T lambda; the free-motion solve is the rest of the step's increment.
+    correction = np.asarray(s["x"], dtype=float)
+    dv = v_new - v_old
     frames_force = np.asarray(cable.frames_mo.force.value)
     q0_strain = np.asarray(cable.strain_mo.rest_position.value)
     base_rest = np.asarray(cable.base_mo.rest_position.value).ravel()
-    target = np.asarray(cable.grasp_target_mo.position.value).ravel()
+    target = cable.attachment_target()
+    impulse = np.asarray(cable.attachment.findData("lambda").value, dtype=float)
+    reaction = cable.attachment_reaction()
+    H = np.c_[constraint_rows(cable.base_mo, 3)[0], constraint_rows(cable.strain_mo, 3)[0]]
     exported = read_exports(cable, export_dir)
-    base_spring = cable.solver_node.rigidBase.baseSpring
 
     n = f_total.size
     f_hooke = np.zeros(n)
     f_hooke[NB:] = s["K_int"][NB:, NB:] @ (q_strain.ravel() - q0_strain.ravel())
     convective = np.asarray(cable.convective_wrench, dtype=float).copy()
-    lam = frames_force[-1] - convective[-1]
+    G = attachment_axes(cable)
     cable.restore_state(before)
     cable.refresh_mapping()
     J = tip_jacobian_sofa(cable)
     J_fd = tip_jacobian_fd(cable, q_base, q_strain)
     coriolis = -mapped_wrench(frame_jacobians(cable), convective)  # C(q, q') q' = -sum J_f^T w_f
     f_damp = s["B"] @ v_old  # Kelvin-Voigt force SOFA evaluated at the start of the step
-    # base rows: SOFA's force minus the projected gripper and convective wrenches is the clamp
-    f_clamp = np.zeros(n)
-    f_clamp[:NB] = f_total[:NB] - (J.T @ lam)[:NB] + coriolis[:NB] - f_damp[:NB]
-    jt_lambda = f_total - f_hooke - f_damp - f_clamp + coriolis
     gravity = np.asarray(root.gravity.value, dtype=float)
     section_start = np.r_[0.0, np.cumsum(np.asarray(cable.force_field.length.value))[:-1]]
 
@@ -267,36 +287,35 @@ def collect(cfg, drag_steps, tip_offset, export_dir):
     out = {
         "h": np.float64(fa["h"]), "n_steps": np.int64(n_steps),
         "q_base": q_base, "q_strain": q_strain, "q0_strain": q0_strain, "base_rest": base_rest,
-        "v": v_old, "v_plus": v_new, "dv": dv, "q_dd": q_dd,
+        "v": v_old, "v_plus": v_new, "dv": dv, "dv_free": dv - correction, "correction": correction,
+        "q_dd": q_dd,
         "M": M, "B": B, "K": K, "K_int": K_int, "K_clamp": s["K_clamp"], "K_grasp": s["K_grasp"],
         "A": s["A"].toarray(), "b": np.asarray(s["b"], dtype=float),
+        "b_free": fa["h"] * (f_total + ((fa["h"] + fa["rK"]) * K - fa["rM"] * M) @ v_old),
         "M_term": s["M_term"], "B_term": s["B_term"], "K_term": s["K_term"],
         "K_direct_term": s["K_direct_term"],
         "M_qdd": M @ q_dd, "C_qdot": c_qdot, "coriolis": coriolis, "convective_wrench": convective,
         "C_qdot_increment_part": -fa["rK_ff"] * K_int @ dv,
-        "f_int": -f_hooke, "f_damp": f_damp, "f_g": np.zeros(n), "gravity": gravity, "f_clamp": f_clamp,
-        "clamp_delta": pose_delta(q_base, base_rest),
-        "lambda": lam, "J_g": J, "J_g_fd": J_fd, "Jt_lambda": jt_lambda,
-        "Jt_lambda_J": J.T @ lam, "Jt_lambda_fd": J_fd.T @ lam,
+        "f_int": -f_hooke, "f_damp": f_damp, "f_g": np.zeros(n), "gravity": gravity,
+        "fixture_delta": pose_delta(q_base, base_rest),
+        "impulse": impulse, "reaction": reaction, "H": H, "H_J": G @ J, "H_fd": G @ J_fd,
+        "J_g": J, "J_g_fd": J_fd, "Ht_F": H.T @ reaction, "Ht_F_J": (G @ J).T @ reaction,
+        "Ht_F_fd": (G @ J_fd).T @ reaction,
         "straight_J_sofa": straight["J_sofa"], "straight_J_fd": straight["J_fd"],
         "section_start": section_start, "section_length": np.asarray(cable.force_field.length.value),
         "length_m": np.float64(cfg["length_m"]),
         "f_total": f_total, "frames_force": frames_force,
         "linearisation": fa["h"] * K @ v_new,
         "tip": tip, "target": target, "frames": np.asarray(cable.frame_poses()),
-        "grasp_stiffness": np.array([float(cable.grasp_spring.stiffness.value[0]),
-                                     float(cable.grasp_spring.angularStiffness.value[0])]),
-        "clamp_stiffness": np.array([float(base_spring.stiffness.value[0]),
-                                     float(base_spring.angularStiffness.value[0])]),
         "hooke_section": hooke_section, "damping_section": cable.kelvin_voigt_s * hooke_section,
         "mass_kg": np.float64(cfg["mass_kg"]),
         "locked_dofs": np.flatnonzero(np.all(s["A"].toarray() == np.eye(n), axis=1)),
     }
     out.update({f"factor_{k}": np.float64(v) for k, v in fa.items()})
     out.update({f"export_{k}": v for k, v in exported.items()})
-    # M q'' + C q' + f_int - f_g - f_clamp - J^T lambda - (f(q+) - f(q)) == 0 (SOFA identity)
-    out["residual"] = (out["M_qdd"] + out["C_qdot"] + out["f_int"] - out["f_g"] - out["f_clamp"]
-                       - out["Jt_lambda"] - out["linearisation"])
+    # M q'' + C q' + f_int - f_g - H^T F - (f(q+) - f(q)) == 0 on the free dofs (SOFA identity)
+    out["residual"] = (out["M_qdd"] + out["C_qdot"] + out["f_int"] - out["f_g"] - out["Ht_F"]
+                       - out["linearisation"])
     Sofa.Simulation.unload(root)
     return out
 
@@ -327,7 +346,8 @@ def collect_rom(cfg, reduction, drag_steps, tip_offset, export_dir):
     v_r_old = np.r_[before["base_velocity"], a_dot]
     v_r_new = np.r_[np.asarray(cable.base_mo.velocity.value).ravel(),
                     np.asarray(cable.modal_mo.velocity.value).ravel()]
-    da = np.asarray(s["x"], dtype=float)
+    correction = np.asarray(s["x"], dtype=float)  # constraint correction, as in collect
+    da = v_r_new - v_r_old
     f_r = np.r_[np.asarray(cable.base_mo.force.value).ravel(),
                 np.asarray(cable.modal_mo.force.value).ravel()]
     kappa = before["strain_position"]  # SOFA evaluated f, M, K at the start of the step
@@ -336,52 +356,53 @@ def collect_rom(cfg, reduction, drag_steps, tip_offset, export_dir):
     k_int_full = -np.diag(hooke.ravel())
     f_hooke_full = k_int_full @ (kappa - kappa0)
     M_r, A_r = s["M"], s["A"].toarray()
+    reaction = cable.attachment_reaction()
+    H_r = np.c_[constraint_rows(cable.base_mo, 3)[0], constraint_rows(cable.modal_mo, 3)[0]]
+    H_q = constraint_rows(cable.strain_mo, 3)[0]
     # kappa = kappa0 + Phi a: the FOM at the ROM's configuration gives the Galerkin identities
     fom = full_at(cfg, np.asarray(before["base"]).ravel(), np.reshape(kappa0 + phi @ a, (-1, 6)),
-                  cable.grasp_target_mo.position.value[0], a_dot, phi)
+                  cable.attachment_target(), a_dot, phi)
     proj = np.zeros((NB + r, NB + phi.shape[0]))
     proj[:NB, :NB] = np.eye(NB)
     proj[NB:, NB:] = phi.T
-    # the mapped stiffness carries two factors: Hooke -h(h+rK+rK_ff) K_int, grasp -h(h+rK) K_g
+    # mapped stiffness besides the Hooke law (none: the attachment is a constraint, not a spring)
     k_int_r_term = fa["kF_hooke"] * (phi.T @ k_int_full @ phi)
     k_grasp_r = (s["K_mapped_term"] - np.pad(k_int_r_term, ((NB, 0), (NB, 0)))) / fa["kF_springs"]
     K_r = phi.T @ k_int_full @ phi
     K_r_full = np.pad(K_r, ((NB, 0), (NB, 0))) + s["K_clamp"] + k_grasp_r
     sing = np.asarray(metadata["singular_values"], dtype=float)
     f_int_r = np.r_[np.zeros(NB), -phi.T @ f_hooke_full]
-    f_clamp_r = np.r_[fom["f_clamp"][:NB], np.zeros(r)]
     coriolis_r = proj @ fom["coriolis"]
     out = {
         "h": np.float64(fa["h"]), "n_steps": np.int64(n_steps), "r": np.int64(r),
         "Phi": phi, "singular_values": sing,
         "energy_captured": np.float64((sing[:r] ** 2).sum() / (sing ** 2).sum()),
-        "a": a, "a_dot": a_dot, "v_r": v_r_old, "v_r_plus": v_r_new, "da": da, "q_r_dd": da / fa["h"],
+        "a": a, "a_dot": a_dot, "v_r": v_r_old, "v_r_plus": v_r_new, "da": da,
+        "da_free": da - correction, "correction": correction, "q_r_dd": da / fa["h"],
         "kappa": kappa, "kappa0": kappa0, "kappa_from_modes": kappa0 + phi @ a,
         "M_r": M_r, "B_r": s["B"], "K_r": K_r_full, "K_int_r": K_r, "K_grasp_r": k_grasp_r,
         "K_clamp_r": s["K_clamp"], "pod_weights": np.asarray(metadata["pod_weights"], dtype=float),
         "damping_section": cable.kelvin_voigt_s * hooke,
-        "grasp_stiffness": np.array([float(cable.grasp_spring.stiffness.value[0]),
-                                     float(cable.grasp_spring.angularStiffness.value[0])]),
         "A_r": A_r, "b_r": np.asarray(s["b"], dtype=float),
+        "b_r_free": fa["h"] * (f_r + ((fa["h"] + fa["rK"]) * K_r_full - fa["rM"] * M_r) @ v_r_old),
         "M_r_term": s["M_term"], "B_r_term": s["B_term"], "K_r_term": s["K_term"],
         "K_r_direct_term": s["K_direct_term"], "K_r_mapped_term": s["K_mapped_term"],
         "M_r_qdd": M_r @ (da / fa["h"]),
         "C_r_qdot": (fa["rM"] * M_r - s["B"] - fa["rK"] * K_r_full) @ v_r_new
         - fa["rK_ff"] * np.pad(K_r, ((NB, 0), (NB, 0))) @ da + coriolis_r,
         "coriolis_r": coriolis_r, "convective_wrench": np.asarray(cable.convective_wrench, dtype=float).copy(),
-        "f_int_r": f_int_r, "f_clamp_r": f_clamp_r, "f_r": f_r,
-        # f_r = Hooke + damping + clamp + J^T lambda + convective; f_int_r is MINUS the Hooke force
-        "Jt_lambda_r": f_r + f_int_r - s["B"] @ v_r_old - f_clamp_r + coriolis_r,
+        "f_int_r": f_int_r, "f_r": f_r,
+        "impulse": np.asarray(cable.attachment.findData("lambda").value, dtype=float),
+        "reaction": reaction, "H_r": H_r, "H_q": H_q, "Ht_F_r": H_r.T @ reaction,
         "linearisation_r": fa["h"] * K_r_full @ v_r_new,
         "f_strain_mapped": np.asarray(cable.strain_mo.force.value).ravel(),
-        "lambda": np.asarray(cable.frames_mo.force.value)[-1] - np.asarray(cable.convective_wrench)[-1],
-        "tip": before["tip"], "target": np.asarray(cable.grasp_target_mo.position.value).ravel(),
+        "tip": before["tip"], "target": cable.attachment_target(),
         "frames": np.asarray(cable.frame_poses()),
         "projected_M": proj @ fom["M"] @ proj.T, "projected_K_term": proj @ fom["K_term"] @ proj.T,
         "fom_tip": fom["tip"],
         "locked_dofs": np.flatnonzero(np.all(A_r == np.eye(NB + r), axis=1)),
     }
-    out["residual_r"] = (out["M_r_qdd"] + out["C_r_qdot"] + f_int_r - f_clamp_r - out["Jt_lambda_r"]
+    out["residual_r"] = (out["M_r_qdd"] + out["C_r_qdot"] + f_int_r - out["Ht_F_r"]
                          - out["linearisation_r"])
     out.update({f"factor_{k}": np.float64(v) for k, v in fa.items()})
     out.update({f"export_{k}": v for k, v in read_exports(cable, export_dir).items()})
@@ -410,7 +431,6 @@ def full_at(cfg, base7, strains, target7, a_dot=None, phi=None):
         with cable.strain_mo.velocity.writeable() as v:
             v[:] = np.reshape(phi @ a_dot, strains.shape)
     cable.refresh_mapping()
-    cable.set_grasp_pose(list(target7))
     coupling.update_grasp(list(target7), 1.0)
     tip = np.array(cable.tip_pose())
     before = cable.save_state()
@@ -418,14 +438,10 @@ def full_at(cfg, base7, strains, target7, a_dot=None, phi=None):
     s = cable.system_matrices()
     A = s["A"].toarray()
     convective = np.asarray(cable.convective_wrench, dtype=float).copy()
-    lam = np.asarray(cable.frames_mo.force.value)[-1] - convective[-1]
-    f_base = np.asarray(cable.base_mo.force.value).ravel()
     cable.restore_state(before)
     cable.refresh_mapping()
-    J = tip_jacobian_sofa(cable)
     coriolis = -mapped_wrench(frame_jacobians(cable), convective)
     out = {"M": s["M"], "K_term": s["K_term"], "A": A, "tip": tip, "coriolis": coriolis,
-           "f_clamp": f_base - (J.T @ lam)[:NB] + coriolis[:NB],
            "locked": np.flatnonzero(np.all(A == np.eye(A.shape[0]), axis=1))}
     Sofa.Simulation.unload(root)
     return out
@@ -442,30 +458,28 @@ def check(d):
         assert close(d[f"export_{key}"], d[term], 1e-15, 1e-15 * np.abs(d[term]).max()), key
     # the solved system and its three observers
     assert close(d["A"][ix], (d["M_term"] + d["B_term"] + d["K_term"])[ix], 1e-12, 1e-9)
-    assert np.linalg.norm(d["A"] @ d["dv"] - d["b"]) <= 1e-8 * np.linalg.norm(d["b"])
-    assert close(d["v_plus"] - d["v"], d["dv"], 1e-9, 1e-12)
+    # FreeMotionAnimationLoop: free solve from the start-of-step forces, then the correction
+    # A x = b = H^T lambda (lambda: the solver's impulse); their sum is the step's increment
+    assert np.linalg.norm((d["A"] @ d["dv_free"] - d["b_free"])[free]) <= 1e-8 * np.linalg.norm(d["b_free"][free])
+    assert np.linalg.norm(d["A"] @ d["correction"] - d["b"]) <= 1e-8 * np.linalg.norm(d["b"])
+    assert close(d["b"][free], (d["H"].T @ d["impulse"])[free], 1e-12, 1e-15 * np.abs(d["b"]).max())
+    assert not d["b"][d["locked_dofs"]].any() and not d["dv"][d["locked_dofs"]].any()
     # B = df/dv: the Kelvin-Voigt law on the strains and nothing else
     assert close(d["B"][NB:, NB:], -np.diag(d["damping_section"].ravel()), 1e-12, 1e-300)
     assert not d["B"][:NB].any() and not d["B"][:, :NB].any()
     # M: symmetric positive definite, cable mass on the base translation block
     assert close(d["M"], d["M"].T, 0, 1e-12) and np.linalg.eigvalsh(d["M"]).min() > 0
     assert close(d["M"][:3, :3].diagonal(), float(d["mass_kg"]), 1e-9)
-    # K split: Hooke law per section, clamp on the base, grasp spring stiffness projected
+    # K: Hooke law per section only; the fixture (projection) and the attachment (constraint)
+    # carry no stiffness
     ns = d["q_strain"].shape[0]
     assert close(d["K_int"][NB:, NB:], -np.diag(d["hooke_section"].ravel()), 1e-12, 1e-300)
-    assert not d["K_int"][:NB].any() and not d["K_clamp"][NB:].any()
-    assert close(d["K_clamp"][:NB, :NB], -np.diag(np.repeat(d["clamp_stiffness"], 3)), 1e-12)
-    assert abs(np.abs(d["K_grasp"]).max() - d["grasp_stiffness"][0]) <= 1e-6 * d["grasp_stiffness"][0]
-    # the frames carry the convective wrench everywhere and the grasp spring wrench at the tip
-    assert close(d["frames_force"][:-1], d["convective_wrench"][:-1], 1e-12, 1e-15)
-    k, k_a = d["grasp_stiffness"]
-    assert close(d["lambda"][:3], k * (d["target"][:3] - d["tip"][:3]), 1e-9, 1e-12)
-    assert close(d["lambda"][3:], -k_a * rotvec(_q_mul(d["tip"][3:7], _q_conj(d["target"][3:7]))),
-                 1e-9, 1e-12)
-    # applyJT is the transpose of applyJ: J^T lambda from the probed J == force - Hooke - clamp
-    assert close(d["Jt_lambda_J"], d["Jt_lambda"], 1e-9, 1e-12 * np.abs(d["lambda"]).max())
-    # clamp translation follows the spring law (rotation: SOFA's RestShapeSprings deadband)
-    assert close(d["f_clamp"][:3], d["K_clamp"][:3, :3] @ d["clamp_delta"][:3], 1e-9, 1e-12)
+    assert not d["K_int"][:NB].any() and not d["K_clamp"].any() and not d["K_grasp"].any()
+    # the frames carry the convective wrench only; the attachment acts through its rows
+    assert close(d["frames_force"], d["convective_wrench"], 1e-12, 1e-15)
+    # rows SOFA propagated (applyJT) == attachment axes x probed applyJ; base columns projected out
+    assert close(d["H"][:, NB:], d["H_J"][:, NB:], 1e-9, 1e-12 * np.abs(d["H"]).max())
+    assert not d["H"][:, :NB].any() and np.abs(d["fixture_delta"]).max() <= 1e-9
     # SOFA's J is the derivative of its apply() (cosserat-patches/0002), bent and straight
     J, J_fd = d["J_g"], d["J_g_fd"]
     assert close(J[:3, :3], np.eye(3), 0, 1e-9) and close(J, J_fd, 1e-6, 1e-7 * np.abs(J).max())
@@ -476,11 +490,13 @@ def check(d):
     assert close(d["straight_J_sofa"][1, bend_z], lever_true, 1e-9)
     assert close(d["straight_J_sofa"][0, eps_x], d["section_length"], 1e-9)
     assert close(d["straight_J_fd"][1, bend_z], lever_true, 1e-6, 1e-7)
-    # the equation balances on the free dofs
+    # the equation balances on the free dofs (base and planar-locked strains excluded: their
+    # projection reaction is not reconstructed)
     scale = max(np.linalg.norm(d["M_qdd"][free]), np.linalg.norm(d["f_total"][free]))
     assert np.linalg.norm(d["residual"][free]) <= 1e-10 * scale, np.linalg.norm(d["residual"][free])
-    # planar table: torsion, bend_y and shear_z of every section locked; bend_z, eps_x, eps_y free
-    assert np.array_equal(d["locked_dofs"], np.array([NB + 6 * i + j for i in range(ns) for j in (0, 1, 5)]))
+    # fixed fixture: base locked; planar table: torsion, bend_y and shear_z of every section locked
+    assert np.array_equal(d["locked_dofs"], np.r_[np.arange(NB), [NB + 6 * i + j for i in range(ns)
+                                                                  for j in (0, 1, 5)]])
     assert not d["gravity"].any() and not d["f_g"].any()
     assert d["M_qdd"].shape == d["C_qdot"].shape == d["f_int"].shape == (n,) and d["J_g"].shape == (6, n)
 
@@ -492,30 +508,39 @@ def check_rom(d):
     close = lambda a, b, rtol, atol=0.0: np.allclose(a, b, rtol=rtol, atol=atol)  # noqa: E731
     for key, term in (("A", "A_r"), ("M", "M_r_term"), ("K", "K_r_term"), ("K_direct", "K_r_direct_term")):
         assert close(d[f"export_{key}"], d[term], 1e-15, 1e-15 * np.abs(d[term]).max()), key
-    # basis: W-orthonormal columns (strain-energy metric), planar rows zero, POD energy monotone
-    assert close(phi.T @ (d["pod_weights"][:, None] * phi), np.eye(r), 0, 1e-3) and not d["locked_dofs"].size
+    # basis: W-orthonormal columns (strain-energy metric), planar rows zero, POD energy monotone;
+    # only the fixed base is locked
+    assert close(phi.T @ (d["pod_weights"][:, None] * phi), np.eye(r), 0, 1e-3)
+    assert np.array_equal(d["locked_dofs"], np.arange(NB))
+    free = np.arange(NB, n)
     assert np.all(np.diff(d["singular_values"]) <= 0) and 0 < d["energy_captured"] <= 1
     # the mapping: kappa = kappa0 + Phi a, exactly what the strain MO holds
     assert close(d["kappa"], d["kappa_from_modes"], 1e-9, 1e-12)
-    # the solved reduced system
-    assert close(d["A_r"], d["M_r_term"] + d["B_r_term"] + d["K_r_term"], 1e-12, 1e-9)
-    assert np.linalg.norm(d["A_r"] @ d["da"] - d["b_r"]) <= 1e-8 * np.linalg.norm(d["b_r"])
-    assert close(d["v_r_plus"] - d["v_r"], d["da"], 1e-9, 1e-12)
+    # the solved reduced system: free solve, then the correction A_r x = b_r = H_r^T lambda
+    ix = np.ix_(free, free)
+    assert close(d["A_r"][ix], (d["M_r_term"] + d["B_r_term"] + d["K_r_term"])[ix], 1e-12, 1e-9)
+    assert (np.linalg.norm((d["A_r"] @ d["da_free"] - d["b_r_free"])[free])
+            <= 1e-8 * np.linalg.norm(d["b_r_free"][free]))
+    assert np.linalg.norm(d["A_r"] @ d["correction"] - d["b_r"]) <= 1e-8 * np.linalg.norm(d["b_r"])
+    assert close(d["b_r"][free], (d["H_r"].T @ d["impulse"])[free], 1e-12, 1e-15 * np.abs(d["b_r"]).max())
+    # the modal rows SOFA propagated are the strain rows through Phi
+    assert close(d["H_r"][:, NB:], d["H_q"] @ phi, 1e-12, 1e-15 * np.abs(d["H_r"]).max())
     # reduced damping = Phi^T B Phi of the Kelvin-Voigt law
     assert close(d["B_r"][NB:, NB:], -phi.T @ np.diag(d["damping_section"].ravel()) @ phi, 1e-8,
                  1e-8 * np.abs(d["B_r"]).max())
     # Galerkin: SOFA's reduced mass/stiffness == Phi^T (FOM at the same configuration) Phi
-    # (1e-8: Phi is read back from a 5-decimal text file; the FOM has a 1e8 clamp spring)
+    # (1e-8: a POD basis is read back from a 5-decimal text file)
     assert close(d["M_r"], d["projected_M"], 1e-8, 1e-8 * np.abs(d["M_r"]).max())
     assert close(d["K_r_term"], d["projected_K_term"], 1e-8, 1e-8 * np.abs(d["K_r_term"]).max())
     assert close(d["fom_tip"][:3], d["tip"][:3], 0, 1e-6)
     assert close(d["M_r"], d["M_r"].T, 0, 1e-12) and np.linalg.eigvalsh(d["M_r"]).min() > 0
-    # the reduced internal stiffness is Phi^T diag(GI l, EI l, EI l) Phi (negative definite)
+    # the reduced internal stiffness is Phi^T diag(GI l, EI l, EI l) Phi (negative definite) and
+    # no other mapped stiffness exists (fixture: projection, attachment: constraint)
     assert np.linalg.eigvalsh(d["K_int_r"]).max() < 0
-    assert abs(np.abs(d["K_grasp_r"]).max()) <= d["grasp_stiffness"][0] * (1 + 1e-6)
-    # the reduced equation balances
-    scale = max(np.linalg.norm(d["M_r_qdd"]), np.linalg.norm(d["f_r"]))
-    assert np.linalg.norm(d["residual_r"]) <= 1e-10 * scale, np.linalg.norm(d["residual_r"])
+    assert np.abs(d["K_grasp_r"]).max() <= 1e-9 * np.abs(d["K_int_r"]).max() and not d["K_clamp_r"].any()
+    # the reduced equation balances on the free (modal) dofs
+    scale = max(np.linalg.norm(d["M_r_qdd"][free]), np.linalg.norm(d["f_r"][free]))
+    assert np.linalg.norm(d["residual_r"][free]) <= 1e-10 * scale, np.linalg.norm(d["residual_r"][free])
     assert d["M_r"].shape == (n, n) and d["f_int_r"].shape == (n,)
 
 
@@ -530,11 +555,11 @@ def write_report(d, path):
     fa = {k[7:]: float(v) for k, v in d.items() if k.startswith("factor_")}
     free = np.setdiff1d(np.arange(d["M"].shape[0]), d["locked_dofs"])
     lines = [
-        "M(q) q'' + C(q,q') q' + f_int(q; EA, EI, GJ) = f_g + J_g(q)^T lambda   -- as SOFA assembles it",
+        "M(q) q'' + C(q,q') q' + f_int(q; EA, EI, GJ) = f_g + H(q)^T F   -- as SOFA assembles it",
         "",
         f"  dofs: 0..5 rigid base (tx ty tz rx ry rz), 6.. = {ns} sections x "
         "(torsion, bend_y, bend_z, eps_x, eps_y, eps_z)",
-        f"  planar table: PartialFixedProjectiveConstraint locks dofs {d['locked_dofs'].tolist()}",
+        f"  fixed fixture + planar table: projected (locked) dofs {d['locked_dofs'].tolist()}",
         f"  step {int(d['n_steps'])}, h = {h}, rM = {fa['rM']}, rK = {fa['rK']}, "
         f"Hooke rayleighStiffness rK_ff = {fa['rK_ff']}",
         "",
@@ -542,7 +567,7 @@ def write_report(d, path):
         _row("q (base)", "RigidBaseMO.position [x y z qx qy qz qw]", d["q_base"]),
         _row("q (strain)", "cosseratCoordinateMO.position [1/m, -], rest q0 = 0", d["q_strain"]),
         _row("q'", "MechanicalObject.velocity at the start of the step", d["v"]),
-        _row("q''", "(q'+ - q')/h, q'+ - q' = SparseLDLSolver solution", d["q_dd"]),
+        _row("q''", "(q'+ - q')/h, q'+ - q' = free solve + constraint correction", d["q_dd"]),
         _row("M(q)", "MatrixLinearSystem(assembleMass)/(1+h rM) = J^T diag(m) J", d["M"]),
         _row("M q''", "", d["M_qdd"]),
         _row("C(q,q') q'", "Kelvin-Voigt -B q'+ + convective -sum J_f^T w_f (Rayleigh 0)", d["C_qdot"]),
@@ -552,29 +577,29 @@ def write_report(d, path):
         _row("f_damp", "DiagonalVelocityDampingForceField: B q' at the start of the step", d["f_damp"]),
         _row("K_int", "MatrixLinearSystem(assembleStiffness, applyMapped=0), strains", d["K_int"]),
         _row("f_g", "UniformMass x root.gravity, gravity = " + str(d["gravity"].tolist()), d["f_g"]),
-        _row("f_clamp", "baseSpring (RestShapeSprings 1e8): base force - J_g^T lambda", d["f_clamp"]),
-        _row("lambda", "FramesMO.force[tip] - convective wrench = graspSpring (F, tau)", d["lambda"]),
+        _row("F", "PlanarAttachmentConstraint lambda / h, fixture axes [Fx, Fy, Mz]", d["reaction"]),
+        _row("H", "attachment rows SOFA propagated to base and strains (applyJT)", d["H"]),
         _row("J_g(q)", "DiscreteCosseratMapping.applyJ probed with unit velocities", d["J_g"]),
-        _row("J_g^T lambda", "DiscreteCosseratMapping.applyJT (force - Hooke - clamp)", d["Jt_lambda"]),
-        _row("J_g^T lambda", "probed J_g ^T lambda (== applyJT: transpose consistent)", d["Jt_lambda_J"]),
+        _row("H^T F", "propagated rows x reaction", d["Ht_F"]),
+        _row("(G J_g)^T F", "attachment axes x probed applyJ (== H^T F)", d["Ht_F_J"]),
         _row("d apply/dq", "derivative of the mapping's apply(), central differences", d["J_g_fd"]),
-        _row("(d apply/dq)^T lambda", "what a consistent Jacobian would project", d["Jt_lambda_fd"]),
-        _row("J^T K_g J", "grasp spring stiffness projected on q (part of K)", d["K_grasp"]),
+        _row("(G d apply/dq)^T F", "what a consistent Jacobian would project", d["Ht_F_fd"]),
         _row("f(q+) - f(q)", "SOFA linearisation h K q'+ (implicit Euler)", d["linearisation"]),
-        _row("residual", "M q'' + C q' + f_int - f_g - f_clamp - J^T lambda - (f(q+)-f(q))",
+        _row("residual", "M q'' + C q' + f_int - f_g - H^T F - (f(q+)-f(q)), free dofs",
              d["residual"][free]),
         "",
         "  SOFA solves  A dq' = b  with  A = (1 + h rM) M - h B - h (h + rK [+ rK_ff]) K,",
-        "  b = h (f + ((h + rK) K - rM M) q')   (EulerImplicitSolver.cpp v25.12; K = df/dq < 0 for springs).",
-        "  Rewritten:  M q'' + (rM M - B - rK K) q'+ - rK_ff K_int dq' = f(q) + h K q'+  ~  f(q+),",
+        "  b = h (f + ((h + rK) K - rM M) q')   (EulerImplicitSolver.cpp v25.12; K = df/dq < 0 for springs),",
+        "  in FreeMotionAnimationLoop as the free motion, then the correction A x = H^T lambda (the",
+        "  solver's impulse lambda = h F): q'+ - q' = dq'_free + x.",
+        "  Rewritten:  M q'' + (rM M - B - rK K) q'+ - rK_ff K_int dq' = f(q) + h K q'+ + H^T F,",
         "  i.e. the equation above at the new configuration. SOFA itself has no Coriolis/centrifugal",
         "  term (J^T M J is re-assembled every step, d(J q')/dt is dropped): the scene adds it as the",
         "  explicit frame wrench w_f = -m_f (dJ_f/dt) q' (ConstantForceField convectiveInertia).",
         "",
-        f"  lambda check: k (target - tip) = {(d['grasp_stiffness'][0] * (d['target'][:3] - d['tip'][:3])).tolist()}",
+        f"  reaction F = {np.array2string(d['reaction'], precision=6)} (impulse {np.array2string(d['impulse'], precision=6)})",
         f"  tip {np.array2string(d['tip'], precision=4)}  target {np.array2string(d['target'], precision=4)}",
-        f"  clamp: base displacement {np.array2string(d['clamp_delta'], precision=3)} -> translation force"
-        " = k dx; rotation torque 0 (RestShapeSpringsForceField ignores |dtheta| < ~1e-7 rad)",
+        f"  fixture (FixedProjectiveConstraint): base displacement {np.array2string(d['fixture_delta'], precision=3)}",
         "",
         "  Jacobian of the patched Cosserat plugin (DiscreteCosseratMapping, cosserat-patches/0002):",
         "    applyJT == applyJ^T and applyJ == d apply/dq (checked). Straight rod, tip dy per unit",
@@ -584,17 +609,17 @@ def write_report(d, path):
         "      l (L - s_i - l/2): " + np.array2string(
             d["section_length"] * (float(d["length_m"]) - d["section_start"] - d["section_length"] / 2),
             precision=5),
-        "    At this bent configuration, bend_z rows of J_g^T lambda, SOFA / finite differences:",
-        "      " + np.array2string(d["Jt_lambda"][NB + 2::6] / d["Jt_lambda_fd"][NB + 2::6], precision=6),
-        "    M = J^T diag(m, I) J, J^T K_g J and J_g^T lambda are the virtual work of the frames' motion.",
+        "    At this bent configuration, bend_z rows of H^T F, SOFA / finite differences:",
+        "      " + np.array2string(d["Ht_F"][NB + 2::6] / d["Ht_F_fd"][NB + 2::6], precision=6),
+        "    M = J^T diag(m, I) J and the attachment rows H are the virtual work of the frames' motion.",
         "",
         "  SOFA-written matrices (GlobalSystemMatrixExporter, SofaMatrix): sofa_export/{A,M,K,K_direct}*.txt",
         "",
     ]
     np.set_printoptions(linewidth=250, precision=6, suppress=False, threshold=1_000_000)
     for name in ("q_base", "q_strain", "v", "q_dd", "M", "M_qdd", "C_qdot", "f_int", "K_int", "f_g",
-                 "f_clamp", "lambda", "J_g", "J_g_fd", "Jt_lambda", "Jt_lambda_fd", "K_grasp", "K", "A",
-                 "b", "dv", "residual"):
+                 "reaction", "H", "J_g", "J_g_fd", "Ht_F", "Ht_F_fd", "K", "A",
+                 "b_free", "dv_free", "b", "correction", "dv", "residual"):
         lines += [f"=== {name} ===", np.array2string(d[name]), ""]
     Path(path).write_text("\n".join(lines))
 
@@ -631,16 +656,16 @@ def write_figure(d, path):
     fig, ax = plt.subplots(3, 4, figsize=(26, 15))
     _heat(ax[0, 0], d["M"], "M(q) [kg, kg m, kg m^2]")
     _heat(ax[0, 1], d["K_int"], "K_int = d f_int/dq (Hooke, diag(GJ, EI, EI, EA, GA, GA) l)")
-    _heat(ax[0, 2], d["K_grasp"], "J_g^T K_grasp J_g (gripper spring on q)")
+    _heat(ax[0, 2], d["H"], "H: attachment rows [x, y, yaw] propagated to base | strains")
     _heat(ax[0, 3], d["J_g"], "J_g(q) = applyJ, tip frame (rows: dx dy dz dthx dthy dthz)")
     _bars(ax[1, 0], d["M_qdd"], "M q''", locked)
     _bars(ax[1, 1], d["C_qdot"], "C(q,q') q'  (Kelvin-Voigt)", locked)
     _bars(ax[1, 2], d["f_int"], "f_int = -K_int (q - q0)", locked)
-    _bars(ax[1, 3], d["Jt_lambda"], "J_g^T lambda  (+ f_clamp on base dofs, f_g = 0)", locked)
+    _bars(ax[1, 3], d["Ht_F"], "H^T F  (attachment reaction on q, f_g = 0)", locked)
     a = ax[2, 0]
-    a.bar(range(6), d["lambda"], color=["tab:red"] * 3 + ["tab:purple"] * 3)
-    a.set_xticks(range(6)); a.set_xticklabels(["Fx", "Fy", "Fz", "tx", "ty", "tz"])
-    a.set_title("lambda = gripper wrench on the tip [N, N m]", fontsize=9)
+    a.bar(range(3), d["reaction"], color=["tab:red"] * 2 + ["tab:purple"])
+    a.set_xticks(range(3)); a.set_xticklabels(["Fx", "Fy", "Mz"])
+    a.set_title("F = lambda / h, attachment reaction on the cable (fixture axes) [N, N m]", fontsize=9)
     a = ax[2, 1]
     sec = np.arange(d["q_strain"].shape[0])
     for j, lab in enumerate(("bend_z [1/m]", "eps_x [-]", "eps_y [-]"), start=2):
@@ -652,19 +677,19 @@ def write_figure(d, path):
     a.legend(loc="upper left", fontsize=7); a2.legend(loc="upper right", fontsize=7)
     a = ax[2, 2]
     sec = np.arange(d["q_strain"].shape[0])
-    a.plot(sec, d["Jt_lambda"][NB + 2::6], "o-", label="SOFA applyJT")
-    a.plot(sec, d["Jt_lambda_fd"][NB + 2::6], "s--", label="(d apply/dq)^T lambda")
+    a.plot(sec, d["Ht_F"][NB + 2::6], "o-", label="SOFA rows H^T F")
+    a.plot(sec, d["Ht_F_fd"][NB + 2::6], "s--", label="(G d apply/dq)^T F")
     a.plot(sec, d["f_int"][NB + 2::6], "x:", label="f_int")
-    a.set_title("bend_z rows: J_g^T lambda, SOFA vs finite-difference Jacobian [N m]", fontsize=9)
+    a.set_title("bend_z rows: H^T F, SOFA vs finite-difference Jacobian [N m]", fontsize=9)
     a.set_xlabel("section"); a.legend(fontsize=7)
     a = ax[2, 3]
     fr = d["frames"]
     a.plot(fr[:, 0], fr[:, 1], "o-", ms=3, label="frames (after the step)")
-    a.plot(*d["target"][:2], "r*", ms=12, label="grasp target")
-    F = d["lambda"][:3]
+    a.plot(*d["target"][:2], "r*", ms=12, label="attachment target")
+    F = d["reaction"][:2]
     a.annotate("", xy=(d["tip"][0] + 0.1 * F[0], d["tip"][1] + 0.1 * F[1]), xytext=tuple(d["tip"][:2]),
                arrowprops=dict(color="tab:red", width=1.5))
-    a.set_aspect("equal"); a.set_title("configuration (xy) and lambda force at the tip", fontsize=9)
+    a.set_aspect("equal"); a.set_title("configuration (xy) and reaction force at the end", fontsize=9)
     a.legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(path, dpi=100)
@@ -675,11 +700,11 @@ def write_rom_report(d, path):
     fa = {k[7:]: float(v) for k, v in d.items() if k.startswith("factor_")}
     sing = d["singular_values"]
     lines = [
-        "POD-Galerkin ROM:  M_r(a) a'' + C_r a' + f_int_r(a) = f_g_r + J_r^T lambda   -- as SOFA assembles it",
+        "POD-Galerkin ROM:  M_r(a) a'' + C_r a' + f_int_r(a) = f_g_r + H_r^T F   -- as SOFA assembles it",
         "",
         f"  q = q_0 + Phi a,  Phi {phi.shape} ({phi.shape[0]} strains x r = {r} POD modes, W-orthonormal"
         f" in the strain-energy metric), ModelOrderReductionMapping",
-        f"  unknowns: 0..5 rigid base, 6..{NB + r - 1} modal coordinates a  (no locked dofs: the planar"
+        f"  unknowns: 0..5 rigid base (fixed fixture: locked), 6..{NB + r - 1} modal coordinates a (the planar"
         " rows of Phi are zero)",
         f"  POD singular values (first {min(8, sing.size)}): {np.array2string(sing[:8], precision=4)}",
         f"  energy captured by r = {r}: {float(d['energy_captured']):.6f}",
@@ -688,22 +713,22 @@ def write_rom_report(d, path):
         "  term           SOFA source                                                  shape     magnitude",
         _row("a", "modalCoordinateMO.position (start of the step)", d["a"]),
         _row("a'", "modalCoordinateMO.velocity", d["a_dot"]),
-        _row("a''", "(a'+ - a')/h, solution of the reduced system", d["q_r_dd"][NB:]),
+        _row("a''", "(a'+ - a')/h, free solve + constraint correction", d["q_r_dd"][NB:]),
         _row("kappa", "cosseratCoordinateMO.position == kappa_0 + Phi a", d["kappa"]),
         _row("M_r", "MatrixLinearSystem(assembleMass)/(1+h rM) = Phi^T J^T m J Phi", d["M_r"]),
         _row("Phi^T M Phi", "FOM mass at the same configuration, projected (== M_r)", d["projected_M"]),
         _row("K_int_r", "Phi^T K_int Phi  (Hooke law in modal coordinates)", d["K_int_r"]),
-        _row("K_grasp_r", "grasp spring through Cosserat mapping and Phi", d["K_grasp_r"]),
-        _row("K_clamp_r", "base clamp (unchanged, base dofs are not reduced)", d["K_clamp_r"]),
         _row("M_r a''", "", d["M_r_qdd"]),
         _row("C_r a'", "Kelvin-Voigt -B_r v+ + Phi^T convective (Rayleigh 0)", d["C_r_qdot"]),
         _row("  of which", "Phi^T (-sum J_f^T w_f): projected convective term", d["coriolis_r"]),
         _row("f_int_r", "-Phi^T K_int (kappa - kappa_0) = modalCoordinateMO.force part", d["f_int_r"]),
-        _row("J_r^T lambda", "Phi^T J_g^T lambda (mapped grasp wrench in modal coords)", d["Jt_lambda_r"]),
-        _row("lambda", "FramesMO.force[tip] = graspSpring wrench", d["lambda"]),
+        _row("H_r", "attachment rows SOFA propagated to base and modes (== H_q Phi)", d["H_r"]),
+        _row("H_r^T F", "propagated modal rows x reaction", d["Ht_F_r"]),
+        _row("F", "PlanarAttachmentConstraint lambda / h, fixture axes [Fx, Fy, Mz]", d["reaction"]),
         _row("A_r", "reduced implicit system, SparseLDLSolver", d["A_r"]),
-        _row("b_r", "", d["b_r"]),
-        _row("residual_r", "M_r a'' + C_r a' + f_int_r - f_clamp - J_r^T lambda - h K_r v+", d["residual_r"]),
+        _row("b_r", "last solve of the step: constraint correction H_r^T lambda", d["b_r"]),
+        _row("residual_r", "M_r a'' + C_r a' + f_int_r - H_r^T F - h K_r v+, modal dofs",
+             d["residual_r"][NB:]),
         "",
         "  Galerkin identity checked: SOFA's assembled M_r and K_r_term equal Phi^T (FOM) Phi with the FOM",
         "  placed at kappa_0 + Phi a (same base, same gripper target): the reduction is intrusive, the",
@@ -714,8 +739,8 @@ def write_rom_report(d, path):
         "",
     ]
     np.set_printoptions(linewidth=250, precision=6, suppress=False, threshold=1_000_000)
-    for name in ("Phi", "singular_values", "a", "a_dot", "kappa", "M_r", "K_int_r", "K_grasp_r", "K_r",
-                 "A_r", "b_r", "da", "f_int_r", "Jt_lambda_r", "residual_r"):
+    for name in ("Phi", "singular_values", "a", "a_dot", "kappa", "M_r", "K_int_r", "K_r",
+                 "A_r", "b_r", "da", "f_int_r", "H_r", "Ht_F_r", "residual_r"):
         lines += [f"=== {name} ===", np.array2string(d[name]), ""]
     Path(path).write_text("\n".join(lines))
 
@@ -730,7 +755,7 @@ def write_rom_figure(d, path):
     _heat(ax[0, 0], d["Phi"], "Phi: POD strain modes (rows: sections x (tors, bend_y, bend_z, eps_x, eps_y, eps_z))")
     _heat(ax[0, 1], d["M_r"], "M_r = Phi^T J^T m J Phi  [base | modal]")
     _heat(ax[0, 2], d["K_int_r"], "K_int_r = Phi^T K_int Phi (Hooke, modal)")
-    _heat(ax[0, 3], d["K_grasp_r"], "K_grasp_r (gripper spring, modal)")
+    _heat(ax[0, 3], d["H_r"], "H_r: attachment rows on base | modes")
     a = ax[1, 0]
     s = d["singular_values"]
     a.semilogy(np.arange(1, s.size + 1), s, "o-")
@@ -743,9 +768,9 @@ def write_rom_figure(d, path):
     a.axvline(NB - 0.5, color="k", lw=0.5); a.set_title("reduced inertia and internal force", fontsize=9)
     a.set_xlabel("dof (0..5 base, then a)"); a.legend(fontsize=7)
     a = ax[1, 2]
-    a.bar(idx - 0.2, d["Jt_lambda_r"], 0.4, label="J_r^T lambda")
+    a.bar(idx - 0.2, d["Ht_F_r"], 0.4, label="H_r^T F")
     a.bar(idx + 0.2, d["C_r_qdot"], 0.4, label="C_r a'")
-    a.axvline(NB - 0.5, color="k", lw=0.5); a.set_title("reduced gripper wrench and damping", fontsize=9)
+    a.axvline(NB - 0.5, color="k", lw=0.5); a.set_title("reduced attachment reaction and damping", fontsize=9)
     a.set_xlabel("dof"); a.legend(fontsize=7)
     a = ax[1, 3]
     sec = np.arange(d["kappa"].size // 6)

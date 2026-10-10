@@ -25,6 +25,8 @@ from being circular. Only the truth instance owns the grasp state.
 import time
 
 from cable_identification.coupling import IncompatibleGraspCommand
+from cable_identification.dynamics_dump import pose_delta
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
@@ -96,8 +98,8 @@ class CableSofaNode(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.frames_pub = self.create_publisher(PoseArray, frames_topic, 10)
         self.markers_pub = self.create_publisher(CableMarkerArray, markers_topic, 10)
-        # [compute_ms, dropped_steps, stepped]: real-time health of the plant,
-        # which the validation runs must record alongside the control metrics.
+        # [compute_ms, backlog_steps, stepped]: real-time health of the plant (a rising
+        # backlog = integration trails the clock), recorded alongside the control metrics.
         self.solver_pub = self.create_publisher(
             Float64MultiArray, f"/cable/{self.role}/solver_stats", 10)
 
@@ -112,7 +114,7 @@ class CableSofaNode(Node):
             self._detach_srv = self.create_service(
                 Trigger, "/cable/detach", self._on_detach)
 
-        self._sim_time = None
+        self._sim_ns = None
         self._logged_track = False
         rate = float(self.get_parameter("publish_rate_hz").value)
         self.timer = self.create_timer(1.0 / rate, self._cycle)
@@ -141,9 +143,12 @@ class CableSofaNode(Node):
         msg.in_range = bool(self.coupling.in_range())
         self.grasp_pub.publish(msg)
 
-    def _lookup(self, target):
+    def _lookup(self, target, stamp_ns=None):
+        """Pose of ``target`` in base_frame: latest, or interpolated by TF at ``stamp_ns``; None
+        when TF cannot evaluate it (never extrapolated)."""
+        stamp = Time() if stamp_ns is None else Time(nanoseconds=stamp_ns)
         try:
-            tfm = self.tf_buffer.lookup_transform(self.base_frame, target, Time())
+            tfm = self.tf_buffer.lookup_transform(self.base_frame, target, stamp)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
                 tf2_ros.ExtrapolationException):
             return None
@@ -154,52 +159,59 @@ class CableSofaNode(Node):
         now = self.get_clock().now()
         if now.nanoseconds == 0:
             return  # sim clock not up yet
+        self._advance(now.nanoseconds)
 
-        # 1. boundary poses from TF
-        if self.table_mode:
-            if not self.coupling.fixture_set:
-                fixture = self._lookup(self.fixture_frame)
-                if fixture is None:
-                    return
-                self.coupling.on_fixture(fixture)
-                self.get_logger().info(
-                    f"cable clamped at {self.fixture_frame}: "
-                    f"[{fixture[0]:.3f} {fixture[1]:.3f} {fixture[2]:.3f}]")
-            grasp = self._lookup(self.grasp_frame)
-            if grasp is not None:
-                try:
-                    if self.coupling.update_grasp(grasp, now.nanoseconds * 1e-9):
-                        self.get_logger().info("gripper latched onto the cable end")
-                except IncompatibleGraspCommand as exc:
-                    self.get_logger().error(
-                        f"gripper command rejected, end target held: {exc}", throttle_duration_sec=1.0)
-        else:
-            grasp = self._lookup(self.grasp_frame)
-            if grasp is None:
+    def _advance(self, now_ns):
+        """Integrate from the ROS time of the SOFA state (``_sim_ns``) towards ``now_ns``, at most
+        max_steps substeps. Each substep takes the gripper boundary TF interpolates over it; an
+        interval TF cannot evaluate yet stays pending (backlog kept, never extrapolated)."""
+        if self.table_mode and not self.coupling.fixture_set:
+            fixture = self._lookup(self.fixture_frame)
+            if fixture is None:
                 return
-            self.cable.set_base_pose(grasp)
+            self.coupling.on_fixture(fixture)
+            self.get_logger().info(
+                f"cable clamped at {self.fixture_frame}: "
+                f"[{fixture[0]:.3f} {fixture[1]:.3f} {fixture[2]:.3f}]")
+        dt = self.root.dt.value
+        dt_ns = round(dt * 1e9)
+        if self._sim_ns is None:
+            self._sim_ns = now_ns  # ROS time of the SOFA state, advanced by executed steps only
+        stepped = 0
+        started = time.perf_counter()
+        while stepped < self.max_steps and self._sim_ns + dt_ns <= now_ns:
+            start = self._lookup(self.grasp_frame, self._sim_ns)
+            end = self._lookup(self.grasp_frame, self._sim_ns + dt_ns)
+            if start is None or end is None:
+                break
+            self._apply_boundary(start, end, self._sim_ns + dt_ns, dt)
+            self._sofa_sim.animate(self.root, dt)
+            self._sim_ns += dt_ns
+            stepped += 1
+        compute_ms = (time.perf_counter() - started) * 1e3
+        self.solver_pub.publish(Float64MultiArray(
+            data=[compute_ms, float((now_ns - self._sim_ns) // dt_ns), float(stepped)]))
+        self._publish(Time(nanoseconds=self._sim_ns).to_msg())
+
+    def _apply_boundary(self, start, end, end_ns, dt):
+        """Gripper pose at the substep end and its twist over the substep, from one TF motion."""
+        if not self.table_mode:
+            self.cable.set_base_pose(end)
             if not self._logged_track:
                 self._logged_track = True
                 self.get_logger().info(
                     f"tracking {self.base_frame} -> {self.grasp_frame}")
+            return
+        twist = pose_delta(np.asarray(end), np.asarray(start)) / dt
+        try:
+            if self.coupling.update_grasp(end, end_ns * 1e-9, twist):
+                self.get_logger().info("gripper latched onto the cable end")
+        except IncompatibleGraspCommand as exc:
+            self.coupling.hold()
+            self.get_logger().error(
+                f"gripper command rejected, end target held: {exc}", throttle_duration_sec=1.0)
 
-        # 2. step SOFA up to sim time
-        t_now = now.nanoseconds * 1e-9
-        if self._sim_time is None:
-            self._sim_time = t_now
-        dt = self.root.dt.value
-        n = int((t_now - self._sim_time) / dt)
-        stepped = min(n, self.max_steps)
-        started = time.perf_counter()
-        for _ in range(stepped):
-            self._sofa_sim.animate(self.root, dt)
-        compute_ms = (time.perf_counter() - started) * 1e3
-        self._sim_time += n * dt  # drop backlog beyond max_steps (RT priority)
-        self.solver_pub.publish(Float64MultiArray(
-            data=[compute_ms, float(max(0, n - stepped)), float(stepped)]))
-
-        # 3. publish
-        stamp = now.to_msg()
+    def _publish(self, stamp):
         poses = self.cable.frame_poses()
 
         pa = PoseArray()

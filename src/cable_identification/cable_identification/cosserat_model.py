@@ -64,10 +64,13 @@ DEFAULT_CONFIG = {
     # False: base driven by the gripper, tip free (hanging cable)
     # True:  base clamped at the fixture, tip attached to gripper on latch
     "grasp_tip": False,
-    # latch: gripper within this 3D distance of the cable end; while attached, the
-    # commanded end target must stay within it of the fixture plane
+    # latch decision only: gripper within this 3D distance of the cable end
     "attach_distance_m": 0.010,
-    "attach_tilt_rad": 0.05,     # commanded end-section normal vs plane normal
+    # attached: the composed cable target T_gripper T_offset may leave the fixture plane by at
+    # most attach_plane_tolerance_m and tilt its section normal by at most attach_tilt_rad
+    # (numerical tolerances of the ideal planar benchmark, not gripper clearances)
+    "attach_plane_tolerance_m": 1e-8,
+    "attach_tilt_rad": 1e-8,
     # "proximity" latches on its own; "explicit" waits for a supervisor request
     "attach_mode": "proximity",
     # Legacy penalty grip (non-planar grasp_tip only; the planar scene uses the exact
@@ -248,8 +251,8 @@ def add_convective_inertia(cable, frames_node, eps=1e-6):
     SOFA rebuilds ``M(q) = J^T diag(m, I) J`` every step but drops ``d(J q')/dt`` at fixed
     ``q'``, so the frames' acceleration misses ``a_c = (dJ/dt) q'``. The wrench
     ``(-m a_c, -I_w alpha_c - omega x I_w omega)`` is written to a ConstantForceField on the
-    frames at the start of every step (finite difference of applyJ along the current
-    velocity) and reaches the independent dofs through the mapping chain as ``-J^T m a_c``
+    frames at the start of every step (centered difference of applyJ along the current
+    independent velocity) and reaches the independent dofs through the mapping chain as ``-J^T m a_c``
     (and ``-Phi^T J^T m a_c`` for the ROM: the Galerkin projection is automatic). The term is
     explicit (no B/K contribution): a few percent of the elastic force in fast transients,
     and at h = 0.01 s the explicit feedback through the under-resolved axial mode (~80 Hz)
@@ -265,24 +268,25 @@ def add_convective_inertia(cable, frames_node, eps=1e-6):
     force_field = frames_node.addObject(
         "ConstantForceField", template="Rigid3d", name="convectiveInertia",
         indices=list(range(n_frames)), forces=[[0.0] * 6] * n_frames, showArrowSize=0.0)
+    cable.convective_eps = eps
 
     class ConvectiveInertia(Sofa.Core.Controller):
         def onAnimateBeginEvent(self, event):
             cable.refresh_mapping()
             v0 = np.array(cable.frames_mo.velocity.value, dtype=float)
             state = cable.save_state()
+            key = "modal" if cable.modal_mo is not None else "strain"
+            independent = cable.modal_mo if cable.modal_mo is not None else cable.strain_mo
+            velocities = []
             try:
-                if cable.modal_mo is not None:
-                    with cable.modal_mo.position.writeable() as x:
-                        x[:] = state["modal"] + eps * state["modal_velocity"]
-                else:
-                    with cable.strain_mo.position.writeable() as x:
-                        x[:] = state["strain"] + eps * state["strain_velocity"]
-                cable.refresh_mapping()
-                v1 = np.array(cable.frames_mo.velocity.value, dtype=float)
+                for sign in (1.0, -1.0):  # centered along the current independent velocity
+                    with independent.position.writeable() as x:
+                        x[:] = state[key] + sign * eps * state[f"{key}_velocity"]
+                    cable.refresh_mapping()
+                    velocities.append(np.array(cable.frames_mo.velocity.value, dtype=float))
             finally:
                 cable.restore_state(state)
-            acceleration = (v1 - v0) / eps
+            acceleration = (velocities[0] - velocities[1]) / (2 * eps)
             poses = np.asarray(cable.frames_mo.position.value)
             x, y, z, w = poses[:, 3], poses[:, 4], poses[:, 5], poses[:, 6]
             rotation = np.empty((n_frames, 3, 3))

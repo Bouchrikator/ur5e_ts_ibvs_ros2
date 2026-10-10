@@ -77,6 +77,7 @@ class GraspCoupling:
     def __init__(self, cable, attach_mode=None):
         self.cable = cable
         self.attach_distance = float(cable.cfg["attach_distance_m"])
+        self.attach_plane_tolerance = float(cable.cfg["attach_plane_tolerance_m"])
         self.attach_tilt = float(cable.cfg["attach_tilt_rad"])
         self.attach_mode = attach_mode or cable.cfg.get("attach_mode", "proximity")
         self.exact = cable.attachment is not None
@@ -195,17 +196,23 @@ class GraspCoupling:
         return np.r_[np.asarray(grasp_twist6[:3], dtype=float) + np.cross(omega, lever), omega]
 
     def check_compatible(self, target7):
-        """Raise IncompatibleGraspCommand when the commanded end pose leaves the fixture plane
-        by more than attach_distance or tilts its section normal by more than attach_tilt."""
+        """Raise IncompatibleGraspCommand when the composed cable target leaves the fixture plane
+        by more than attach_plane_tolerance or tilts its section normal by more than attach_tilt."""
         q = tuple(self._fixture[3:7])
         normal = np.asarray(_q_rot(q, (0.0, 0.0, 1.0)))
         height = float(normal @ (np.asarray(target7[:3]) - np.asarray(self._fixture[:3])))
         section = np.asarray(_q_rot(tuple(target7[3:7]), (0.0, 0.0, 1.0)))
         tilt = math.atan2(np.linalg.norm(np.cross(section, normal)), float(section @ normal))
-        if abs(height) > self.attach_distance or tilt > self.attach_tilt:
+        if abs(height) > self.attach_plane_tolerance or tilt > self.attach_tilt:
             raise IncompatibleGraspCommand(
-                f"commanded end pose leaves the fixture plane: height {height:.4f} m "
-                f"(limit {self.attach_distance}), tilt {tilt:.4f} rad (limit {self.attach_tilt})")
+                f"commanded end pose leaves the fixture plane: height {height:.3e} m "
+                f"(limit {self.attach_plane_tolerance:.1e}), tilt {tilt:.3e} rad "
+                f"(limit {self.attach_tilt:.1e})")
+
+    def hold(self):
+        """Held boundary after a rejected command: last accepted target pose, zero prescribed motion."""
+        if self.exact and self.latched:
+            self.cable.set_grasp_pose(self.cable.attachment_target(), np.zeros(6))
 
     def _command(self, grasp_pose7, now_s, grasp_twist6):
         target = self.grasp_target(grasp_pose7)

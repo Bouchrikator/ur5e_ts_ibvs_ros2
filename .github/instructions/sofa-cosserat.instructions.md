@@ -86,8 +86,10 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
 - Planar table scene: latch only within `attach_distance_m` (0.010 m, 3D) of the end
   s = L (mapping refreshed first); `T_offset = T_g^-1 T_end` is captured once and the
   target is `T_g T_offset` with twist `v_g + w_g x (R_g p_offset), w_g` until release.
-  Commands leaving the plane (> `attach_distance_m`) or tilting the section normal
-  (> `attach_tilt_rad`) raise `IncompatibleGraspCommand` (the live nodes log it, the
+  Commands whose composed target leaves the plane (> `attach_plane_tolerance_m`) or tilts
+  the section normal (> `attach_tilt_rad`; both 1e-8, numerical tolerances of the ideal
+  planar benchmark; `attach_distance_m` is the latch distance only) raise
+  `IncompatibleGraspCommand` (the live nodes log it, the
   target is held); never project them silently. Release only removes the rows. The
   fixture is placed once per run; a moved fixture needs `reset_fixture`.
   `checkpoint()`/`restore()` is the rollout replay state (mechanics, time, attachment).
@@ -106,8 +108,8 @@ Check [docs/cable_ts_status_and_diagnosis.md](../../docs/cable_ts_status_and_dia
   scene [cable_scene.py](../../src/cable_identification/cable_identification/cable_scene.py)
   when `sofa_gui:=true` (the node is then disabled by the launch). Both publish the
   same `/cable/truth/{frames,markers}` + `/cable/grasp_state` contract; the node also
-  publishes `/cable/truth/solver_stats` = `[compute_ms, dropped_steps, stepped]`, and a
-  rising `dropped_steps` means CPU starvation (the estimator then rejects most
+  publishes `/cable/truth/solver_stats` = `[compute_ms, backlog_steps, stepped]`, and a
+  rising backlog means CPU starvation (the estimator then rejects most
   observations): fix the load, never the gate.
 - runSofa evaluates `createScene` twice: guard `rclpy` init with `rclpy.ok()` and
   use a unique node name.
